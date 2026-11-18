@@ -1,6 +1,6 @@
 import React from 'react'
 import { Box, Text } from '@chakra-ui/react'
-import { ui } from '../theme'
+import { ui, fonts } from '../theme'
 
 /** 行内格式：**粗体**、`代码`、*斜体* */
 function renderInline(text, keyPrefix = 'i') {
@@ -30,8 +30,8 @@ function renderInline(text, keyPrefix = 'i') {
           borderRadius="4px"
           bg={ui.accent.soft}
           color={ui.accent.strong}
-          fontFamily="Monaco, Consolas, monospace"
-          fontSize="0.92em"
+          fontFamily={fonts.mono}
+          fontSize="13px"
         >
           {token.slice(1, -1)}
         </Box>
@@ -80,12 +80,13 @@ export default function MarkdownText({ text = '', color = ui.canvas.text }) {
           my={2}
           p={3}
           bg={ui.canvas.codeBg}
-          borderWidth="1px"
+          borderWidth={ui.dividerWidth}
           borderColor={ui.canvas.border}
           borderRadius="8px"
           overflowX="auto"
-          fontSize="12px"
-          fontFamily="Monaco, Consolas, monospace"
+          fontSize="13px"
+          lineHeight={1.6}
+          fontFamily={fonts.mono}
           color={ui.canvas.codeText}
           whiteSpace="pre-wrap"
           wordBreak="break-word"
@@ -104,7 +105,7 @@ export default function MarkdownText({ text = '', color = ui.canvas.text }) {
         <Text
           key={`b${key++}`}
           fontWeight={700}
-          fontSize={level <= 2 ? '15px' : '14px'}
+          fontSize={level <= 2 ? '17px' : '16px'}
           color={ui.accent.base}
           mt={2}
           mb={1}
@@ -126,7 +127,7 @@ export default function MarkdownText({ text = '', color = ui.canvas.text }) {
       blocks.push(
         <Box key={`b${key++}`} as="ul" pl={4} my={1.5} css={{ listStyleType: 'disc' }}>
           {items.map((item, idx) => (
-            <Box as="li" key={idx} fontSize="13.5px" lineHeight={1.7} color={color} mb="2px">
+            <Box as="li" key={idx} fontSize="15px" lineHeight={1.7} color={color} mb="2px">
               {renderInline(item, `ul${key}-${idx}`)}
             </Box>
           ))}
@@ -145,7 +146,7 @@ export default function MarkdownText({ text = '', color = ui.canvas.text }) {
       blocks.push(
         <Box key={`b${key++}`} as="ol" pl={4} my={1.5} css={{ listStyleType: 'decimal' }}>
           {items.map((item, idx) => (
-            <Box as="li" key={idx} fontSize="13.5px" lineHeight={1.7} color={color} mb="2px">
+            <Box as="li" key={idx} fontSize="15px" lineHeight={1.7} color={color} mb="2px">
               {renderInline(item, `ol${key}-${idx}`)}
             </Box>
           ))}
@@ -176,7 +177,7 @@ export default function MarkdownText({ text = '', color = ui.canvas.text }) {
     blocks.push(
       <Text
         key={`b${key++}`}
-        fontSize="13.5px"
+        fontSize="15px"
         lineHeight={1.7}
         color={color}
         whiteSpace="pre-wrap"

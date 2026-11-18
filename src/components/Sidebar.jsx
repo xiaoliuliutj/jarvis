@@ -55,19 +55,19 @@ function RoleChip({ role }) {
       as="span"
       gap="4px"
       px="6px"
-      py="1px"
+      py="2px"
       borderRadius="full"
       bg={owner ? S.accentSoft : S.hover}
       color={owner ? ACCENT : SUBTEXT}
-      fontSize="9.5px"
+      fontSize="11px"
       fontWeight={500}
       letterSpacing="0.01em"
       flexShrink={0}
     >
       <Box
         as="span"
-        w="4px"
-        h="4px"
+        w="5px"
+        h="5px"
         borderRadius="full"
         bg={owner ? ACCENT : OVERLAY}
       />
@@ -79,11 +79,11 @@ function RoleChip({ role }) {
 function SectionLabel({ children, count }) {
   return (
     <HStack w="100%" px="10px" justify="space-between" mt="14px" mb="5px">
-      <Text fontSize="10px" fontWeight={600} letterSpacing="0.08em" color={OVERLAY}>
+      <Text fontSize="11px" fontWeight={600} letterSpacing="0.08em" color={OVERLAY}>
         {children}
       </Text>
       {count !== undefined && (
-        <Text fontSize="9.5px" color={OVERLAY} opacity={0.8}>{count}</Text>
+        <Text fontSize="11px" color={OVERLAY} opacity={0.8}>{count}</Text>
       )}
     </HStack>
   )
@@ -103,7 +103,7 @@ function UserGroup({ user, current, onSelectUser }) {
           display="flex"
           alignItems="center"
           justifyContent="center"
-          fontSize="11px"
+          fontSize="12px"
           fontWeight={600}
           color={TEXT}
           bg={SURFACE}
@@ -113,7 +113,7 @@ function UserGroup({ user, current, onSelectUser }) {
         </Box>
         <HStack gap="7px" minW={0} flex="1">
           <Text
-            fontSize="12.5px"
+            fontSize="14px"
             fontWeight={500}
             color={TEXT}
             whiteSpace="nowrap"
@@ -128,7 +128,7 @@ function UserGroup({ user, current, onSelectUser }) {
 
       <VStack align="stretch" gap="2px" pl="36px" pr="4px">
         {(user.sessions || []).length === 0 && (
-          <Text px="10px" py="6px" fontSize="10.5px" color={OVERLAY}>暂无会话</Text>
+          <Text px="10px" py="6px" fontSize="12px" color={OVERLAY}>暂无会话</Text>
         )}
         {(user.sessions || []).map(session => {
           const active = current.kind === 'user'
@@ -142,7 +142,7 @@ function UserGroup({ user, current, onSelectUser }) {
               title={session.name || '会话'}
               aria-current={active ? 'page' : undefined}
               {...rowBase}
-              h="34px"
+              h="36px"
               px="10px"
               bg={active ? S.accentSoft : 'transparent'}
               _hover={{ bg: S.hover }}
@@ -160,7 +160,7 @@ function UserGroup({ user, current, onSelectUser }) {
                 <Text
                   flex="1"
                   minW={0}
-                  fontSize="12px"
+                  fontSize="13px"
                   fontWeight={active ? 500 : 400}
                   color={active ? TEXT : SUBTEXT}
                   whiteSpace="nowrap"
@@ -169,7 +169,7 @@ function UserGroup({ user, current, onSelectUser }) {
                 >
                   {session.name || '会话'}
                 </Text>
-                <Text fontSize="9.5px" color={OVERLAY} flexShrink={0}>
+                <Text fontSize="11px" color={OVERLAY} flexShrink={0}>
                   {formatTime(session.lastActiveAt)}
                 </Text>
               </HStack>
@@ -193,7 +193,7 @@ export default function Sidebar({ mainSessions, users, current, onSelectMain, on
       minH={0}
       flexShrink={0}
       bg={S.bg}
-      borderRightWidth={1}
+      borderRightWidth={ui.dividerWidth}
       borderColor={S.border}
       gap={0}
       overflow="hidden"
@@ -221,7 +221,7 @@ export default function Sidebar({ mainSessions, users, current, onSelectMain, on
               title={session.name || '主会话'}
               aria-current={active ? 'page' : undefined}
               {...rowBase}
-              h="52px"
+              h="54px"
               px="10px"
               mb="2px"
               bg={active ? S.accentSoft : 'transparent'}
@@ -237,17 +237,17 @@ export default function Sidebar({ mainSessions, users, current, onSelectMain, on
                   display="flex"
                   alignItems="center"
                   justifyContent="center"
-                  fontSize="13px"
+                  fontSize="14px"
                   color={ACCENT}
                   bg={S.accentSoft}
                 >
                   ✦
                 </Box>
                 <VStack align="flex-start" gap="1px" flex="1" minW={0}>
-                  <Text fontSize="12.5px" fontWeight={600} color={TEXT} whiteSpace="nowrap" overflow="hidden" textOverflow="ellipsis">
+                  <Text fontSize="14px" fontWeight={600} color={TEXT} whiteSpace="nowrap" overflow="hidden" textOverflow="ellipsis">
                     {session.name || '主会话'}
                   </Text>
-                  <Text fontSize="9.5px" color={OVERLAY}>{formatTime(session.lastActiveAt)}</Text>
+                  <Text fontSize="11px" color={OVERLAY}>{formatTime(session.lastActiveAt)}</Text>
                 </VStack>
                 {active && <Box w="5px" h="5px" borderRadius="full" bg={ACCENT} flexShrink={0} />}
               </HStack>
@@ -255,11 +255,11 @@ export default function Sidebar({ mainSessions, users, current, onSelectMain, on
           )
         })}
 
-        <Box h="1px" bg={S.divider} mx="10px" my="10px" />
+        <Box h={`${ui.dividerWidth}px`} bg={S.divider} mx="10px" my="10px" />
 
         <SectionLabel count={users.length}>用户</SectionLabel>
         {users.length === 0 && (
-          <Text px="10px" py="10px" fontSize="10.5px" color={OVERLAY}>暂无其他用户</Text>
+          <Text px="10px" py="10px" fontSize="12px" color={OVERLAY}>暂无其他用户</Text>
         )}
         {users.map(user => (
           <UserGroup

@@ -206,13 +206,13 @@ export default function ChatArea({
       </Box>
 
       {isUserSession ? (
-        <HStack w="100%" px={4} py={3} bg={ui.canvas.surface} borderTopWidth={1} borderColor={ui.canvas.border} justify="center">
+        <HStack w="100%" px={4} py={3} bg={ui.canvas.surface} borderTopWidth={ui.dividerWidth} borderColor={ui.canvas.border} justify="center">
           <Text fontSize="12px" color={ui.canvas.muted}>
             🔒 这是 {current.displayName} 的会话，只读；请通过用户自己的渠道回复
           </Text>
         </HStack>
       ) : (
-        <HStack w="100%" px={4} py={3} bg={ui.canvas.surface} borderTopWidth={1} borderColor={ui.canvas.border} gap={2}>
+        <HStack w="100%" px={4} py={3} bg={ui.canvas.surface} borderTopWidth={ui.dividerWidth} borderColor={ui.canvas.border} gap={2}>
           <Textarea
             flex={1}
             value={input}
@@ -223,7 +223,9 @@ export default function ChatArea({
             rows={1}
             resize="none"
             maxH="120px"
-            fontSize="13.5px"
+            fontSize="15px"
+            lineHeight={1.5}
+            borderWidth={ui.dividerWidth}
             borderRadius="12px"
             bg={ui.canvas.surface}
             color={ui.canvas.text}

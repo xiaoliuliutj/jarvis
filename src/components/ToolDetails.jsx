@@ -1,6 +1,6 @@
 import React from 'react'
 import { Box, Text } from '@chakra-ui/react'
-import { ui } from '../theme'
+import { ui, fonts } from '../theme'
 
 function preview(input) {
   let str = ''
@@ -28,13 +28,13 @@ export default function ToolDetails({ records = [] }) {
       as="details"
       mt={1}
       mb={1}
-      borderWidth="1px"
+      borderWidth={ui.dividerWidth}
       borderColor={ui.canvas.border}
       borderRadius="8px"
       bg={ui.canvas.surfaceMuted}
       px={3}
       py={2}
-      fontSize="11.5px"
+      fontSize="12px"
       color={ui.canvas.muted}
       maxW="90%"
     >
@@ -45,8 +45,8 @@ export default function ToolDetails({ records = [] }) {
         {tools.map((tool, idx) => (
           <Box
             key={`tool-${idx}`}
-            fontFamily="Monaco, Consolas, monospace"
-            fontSize="11px"
+            fontFamily={fonts.mono}
+            fontSize="12px"
             color={ui.canvas.codeText}
             whiteSpace="pre-wrap"
             wordBreak="break-all"
@@ -57,11 +57,11 @@ export default function ToolDetails({ records = [] }) {
         {thinking.map((item, idx) => (
           <Text
             key={`thinking-${idx}`}
-            fontSize="11.5px"
+            fontSize="12px"
             color={ui.canvas.muted}
             whiteSpace="pre-wrap"
             wordBreak="break-word"
-            borderTopWidth={tools.length > 0 ? 1 : 0}
+            borderTopWidth={tools.length > 0 ? ui.dividerWidth : 0}
             borderColor={ui.canvas.border}
             pt={tools.length > 0 ? 1 : 0}
           >

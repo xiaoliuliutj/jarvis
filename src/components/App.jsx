@@ -3,7 +3,7 @@ import { Box, VStack, HStack, Button } from '@chakra-ui/react'
 import Sidebar from './Sidebar'
 import ChatArea from './ChatArea'
 import SettingsPanel from './SettingsPanel'
-import { ui } from '../theme'
+import { ui, fonts } from '../theme'
 
 /** 标题栏按钮共用样式，保证 hover/focus 一致 */
 const titleButton = {
@@ -93,22 +93,35 @@ export default function App() {
   }
 
   return (
-    <VStack h="100vh" w="100%" gap={0} bg={ui.canvas.bg} align="stretch">
+    <VStack
+      h="100vh"
+      w="100%"
+      gap={0}
+      bg={ui.canvas.bg}
+      align="stretch"
+      css={{
+        fontFamily: fonts.sans,
+        // 显式启用 Windows ClearType；antialiased 会让小字号发虚
+        WebkitFontSmoothing: 'subpixel-antialiased',
+        textRendering: 'auto',
+        '& button, & input, & textarea': { fontFamily: fonts.sans },
+      }}
+    >
       {/* 标题栏 */}
       <HStack
         h="40px"
         w="100%"
         px={3}
         bg={ui.titleBar.bg}
-        borderBottomWidth={1}
+        borderBottomWidth={ui.dividerWidth}
         borderColor={ui.titleBar.border}
         justify="space-between"
         flex="none"
         css={{ WebkitAppRegion: 'drag' }}
       >
         <HStack gap={2} css={{ WebkitAppRegion: 'no-drag' }}>
-          <Box fontSize="16px" color={ui.sidebar.accent}>✦</Box>
-          <Box fontWeight={600} fontSize="14px" color={ui.sidebar.accent}>Jarvis</Box>
+          <Box fontSize="17px" color={ui.sidebar.accent}>✦</Box>
+          <Box fontWeight={600} fontSize="15px" color={ui.sidebar.accent}>Jarvis</Box>
         </HStack>
         <HStack gap={1} css={{ WebkitAppRegion: 'no-drag' }}>
           <Button {...titleButton} onClick={() => setShowSettings(!showSettings)} title="设置">⚙</Button>

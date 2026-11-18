@@ -38,13 +38,13 @@ function groupMessages(messages) {
 
 const userBubble = {
   bg: ui.userBubble.bg,
-  border: `1px solid ${ui.userBubble.border}`,
+  border: `${ui.dividerWidth}px solid ${ui.userBubble.border}`,
   borderRadius: '16px 16px 4px 16px',
   px: 3,
   py: 2,
   maxW: '72%',
-  fontSize: '13.5px',
-  lineHeight: 1.6,
+  fontSize: '15px',
+  lineHeight: 1.65,
   whiteSpace: 'pre-wrap',
   wordBreak: 'break-word',
   color: ui.userBubble.text,
@@ -53,13 +53,13 @@ const userBubble = {
 // 不用左侧色条（anti-slop），用底色 + 全边框建立层级
 const assistantBubble = {
   bg: ui.canvas.surface,
-  border: `1px solid ${ui.canvas.border}`,
+  border: `${ui.dividerWidth}px solid ${ui.canvas.border}`,
   borderRadius: '4px 16px 16px 16px',
   px: 3,
   py: 2,
   maxW: '72%',
-  fontSize: '13.5px',
-  lineHeight: 1.6,
+  fontSize: '15px',
+  lineHeight: 1.65,
   wordBreak: 'break-word',
   color: ui.canvas.text,
 }
@@ -74,7 +74,7 @@ export default function MessageList({ messages = [], pending = null, userName = 
           return (
             <VStack key={idx} align="flex-end" w="100%" gap={0.5}>
               {isUserSession && (
-                <Text fontSize="10px" color={ui.canvas.muted}>{userName || '用户'}</Text>
+                <Text fontSize="11px" color={ui.canvas.muted}>{userName || '用户'}</Text>
               )}
               <Box {...userBubble}>{group.text}</Box>
             </VStack>
@@ -86,7 +86,7 @@ export default function MessageList({ messages = [], pending = null, userName = 
             <VStack key={idx} align="flex-start" w="100%" gap={0.5}>
               <HStack gap="6px" align="center">
                 <Box w="5px" h="5px" borderRadius="full" bg={ui.accent.base} />
-                <Text fontSize="10.5px" fontWeight={500} color={ui.canvas.muted} letterSpacing="0.02em">Jarvis</Text>
+                <Text fontSize="11px" fontWeight={500} color={ui.canvas.muted} letterSpacing="0.02em">Jarvis</Text>
               </HStack>
               <ToolDetails records={group.extras} />
               <Box {...assistantBubble}>
@@ -106,12 +106,12 @@ export default function MessageList({ messages = [], pending = null, userName = 
               key={idx}
               alignSelf="flex-start"
               bg={ui.error.bg}
-              border={`1px solid ${ui.error.border}`}
+              border={`${ui.dividerWidth}px solid ${ui.error.border}`}
               borderRadius="8px"
               px={3}
               py={2}
               color={ui.error.text}
-              fontSize="13.5px"
+              fontSize="15px"
               maxW="72%"
               whiteSpace="pre-wrap"
               wordBreak="break-word"
@@ -123,7 +123,7 @@ export default function MessageList({ messages = [], pending = null, userName = 
 
         if (group.kind === 'system') {
           return (
-            <Text key={idx} alignSelf="center" fontSize="11px" color={ui.canvas.muted} px={3} py={1}>
+            <Text key={idx} alignSelf="center" fontSize="12px" color={ui.canvas.muted} px={3} py={1}>
               {group.text}
             </Text>
           )
@@ -136,7 +136,7 @@ export default function MessageList({ messages = [], pending = null, userName = 
         <VStack align="flex-start" w="100%" gap={0.5}>
           <HStack gap="6px" align="center">
             <Box w="5px" h="5px" borderRadius="full" bg={ui.accent.base} />
-            <Text fontSize="10.5px" fontWeight={500} color={ui.canvas.muted} letterSpacing="0.02em">Jarvis</Text>
+            <Text fontSize="11px" fontWeight={500} color={ui.canvas.muted} letterSpacing="0.02em">Jarvis</Text>
           </HStack>
           <ToolDetails records={pending.tools || []} />
           {pending.text ? (
@@ -144,7 +144,7 @@ export default function MessageList({ messages = [], pending = null, userName = 
               <MarkdownText text={pending.text} />
             </Box>
           ) : (
-            <Box bg={ui.canvas.surfaceMuted} borderWidth="1px" borderColor={ui.canvas.border} borderRadius="12px" px={3} py={2} fontSize="12px" color={ui.canvas.muted}>
+            <Box bg={ui.canvas.surfaceMuted} borderWidth={ui.dividerWidth} borderColor={ui.canvas.border} borderRadius="12px" px={3} py={2} fontSize="14px" color={ui.canvas.muted}>
               Jarvis 思考中…
             </Box>
           )}
