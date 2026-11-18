@@ -1,6 +1,6 @@
 {
   "name": "cron__add",
-  "description": "向 config/bridge.json 的 crons 数组中添加一个新的 cron 任务",
+  "description": "为当前用户创建定时任务；任务使用该用户的人设/记忆/权限，结果发回该用户",
   "createdAt": "2026-11-14T18:10:00.071Z",
   "version": "1.0.0"
 }

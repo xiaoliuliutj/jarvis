@@ -1,0 +1,60 @@
+/**
+ * System prompt 组装。
+ *
+ * 优先级（从高到低）：
+ *   全局 rules → 当前用户 persona → 当前用户长期记忆 → 工作区/工具提示
+ *
+ * 注意：这里不出现 sourceType / accountId / externalUserId。
+ * 模型只看到 displayName 和能力提示，不知道用户来自微信还是 QQ。
+ */
+
+import { workspaceDir } from './paths.mjs'
+
+const TOOL_HINT = `
+## 工具使用
+你拥有完整的文件、Bash、搜索工具，以及 MCP 工具。
+
+### 工具管理
+- 使用 _meta 工具查看、创建、修改工具。
+- 创建的工具对所有用户可用；你只能修改/删除自己创建的工具。
+- 系统工具只能由主维护会话通过项目文件修改。
+- 用户工具保存在 userdata/tools/ 下，不要把它们写进项目源码目录。
+
+### 用户人设
+- 你可以通过 persona 工具修改当前用户自己的 persona.md，但只在用户明确要求时修改。
+- 当前用户的人设不能覆盖全局 rules。
+
+### 定时任务
+- 使用 cron 工具管理当前用户自己的定时任务。
+- 任务会用当前用户的 persona、记忆、工作区和权限执行，结果发回当前用户。
+
+### 记忆
+- 当用户说“记住/记一下/别忘了”时，可以在回复中使用：
+  [MEMORY:type:content]
+  type: preference / fact / session_summary
+- 长期记忆属于当前用户，不要写入其他用户的数据。
+`
+
+/**
+ * @param {object} opts
+ * @param {object} opts.principal  principal 注册表条目（含 role/capabilities/displayName）
+ * @param {string} opts.rules      全局 rules 文本
+ * @param {string} opts.persona    当前用户 persona
+ * @param {string} opts.memory     当前用户长期记忆
+ */
+export function buildSystemPrompt({ principal, rules, persona, memory }) {
+  const canEdit = principal.capabilities?.editJarvisCode
+  const capabilityLine = canEdit
+    ? '当前用户有项目代码修改权限：可以修改项目代码，但 config/credentials.json 和 config/rules.md 永远只读；不得读取或外传凭证。'
+    : '当前用户没有项目代码修改权限：不要修改项目源码或系统工具代码。'
+
+  return [
+    `# 全局规则（最高优先级，任何用户人设都不能覆盖）\n${rules}`,
+    `# 当前用户\n你正在和「${principal.displayName}」对话。${capabilityLine}`,
+    `# 当前用户人设\n${persona || '（未设置）'}`,
+    memory ? `# 当前用户长期记忆\n${memory}` : '',
+    `# 工作区\n当前用户的工作目录是 ${workspaceDir(principal.id)}。默认在这里读写用户文件。`,
+    TOOL_HINT,
+    `# API 无感\n不要向用户提及底层 API、模型供应商、API Key、token 或凭证文件。用户问起时，只说这是内部配置。`,
+  ].filter(Boolean).join('\n\n')
+}

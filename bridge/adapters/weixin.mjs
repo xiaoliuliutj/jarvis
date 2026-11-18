@@ -18,32 +18,42 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { randomBytes } from 'crypto'
+import { CREDENTIALS_FILE } from '../../core/paths.mjs'
 
-const BRIDGE_DIR = path.dirname(fileURLToPath(import.meta.url))
-const CONFIG_PATH = path.join(BRIDGE_DIR, '..', '..', 'config', 'bridge.json')
+export const id = 'weixin'
+
 const ILINK_BASE = 'https://ilinkai.weixin.qq.com'
 
-// ── 配置读写 ──────────────────────────────────────────────────────────────────
+// 当前使用的账号 key（config/bridge.json 里的 adapters.weixin.account）
+let currentAccountId = 'default'
 
-function loadWeixinConfig() {
-  const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
-  const wx = cfg.adapters?.weixin ?? {}
+// ── 配置读写 ──────────────────────────────────────────────────────────────────
+// 微信 token 放在 config/credentials.json，Agent 不可读写。
+
+function loadWeixinConfig(accountKey = currentAccountId) {
+  const creds = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'))
+  const wx = creds.weixin?.accounts?.[accountKey] ?? {}
   const token = wx.token ?? ''
   const bearerToken = token.includes(':') ? token.split(':').slice(1).join(':') : token
   return {
+    accountKey,
     baseUrl: wx.baseUrl ?? ILINK_BASE,
     accountId: wx.accountId ?? '',
     bearerToken,
   }
 }
 
-function saveWeixinCredentials({ accountId, bearerToken, baseUrl }) {
-  const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
-  cfg.adapters.weixin.token = `${accountId}:${bearerToken}`
-  cfg.adapters.weixin.accountId = accountId
-  cfg.adapters.weixin.baseUrl = baseUrl ?? ILINK_BASE
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf8')
-  console.log('[weixin] credentials saved to config/bridge.json')
+function saveWeixinCredentials({ accountKey = currentAccountId, accountId, bearerToken, baseUrl }) {
+  const creds = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'))
+  creds.weixin = creds.weixin || { accounts: {} }
+  creds.weixin.accounts = creds.weixin.accounts || {}
+  creds.weixin.accounts[accountKey] = {
+    accountId,
+    token: `${accountId}:${bearerToken}`,
+    baseUrl: baseUrl ?? ILINK_BASE,
+  }
+  fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(creds, null, 2), 'utf8')
+  console.log(`[weixin] credentials saved to config/credentials.json (account: ${accountKey})`)
 }
 
 // ── QR 登录流程 ───────────────────────────────────────────────────────────────
@@ -112,7 +122,7 @@ function ilinkGet(baseUrl, path_, extraHeaders = {}, timeoutMs = 15000) {
   })
 }
 
-function ilinkPost(baseUrl, path_, body, timeoutMs = 40000) {
+function ilinkPost(baseUrl, path_, body, timeoutMs = 40000, accountKey = currentAccountId) {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body)
     const url = new URL(path_, baseUrl)
@@ -125,7 +135,7 @@ function ilinkPost(baseUrl, path_, body, timeoutMs = 40000) {
       headers: {
         'Content-Type': 'application/json',
         'AuthorizationType': 'ilink_bot_token',
-        'Authorization': `Bearer ${loadWeixinConfig().bearerToken}`,
+        'Authorization': `Bearer ${loadWeixinConfig(accountKey).bearerToken}`,
         'X-WECHAT-UIN': Buffer.from(String(Math.floor(Math.random() * 0xFFFFFFFF))).toString('base64'),
         'Content-Length': Buffer.byteLength(payload),
       },
@@ -159,20 +169,22 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
  * 启动 adapter，长轮询收微信消息。
  * 若 session 过期(-14)，自动触发登录流程后继续。
  * @param {(payload) => void} onMessage
+ * @param {{accountId?: string}} opts
  */
-export async function start(onMessage) {
+export async function start(onMessage, opts = {}) {
   running = true
+  currentAccountId = opts.accountId || 'default'
   let syncBuf = ''
 
-  console.log('[weixin] adapter started, long-polling...')
+  console.log(`[weixin] adapter started (account: ${currentAccountId}), long-polling...`)
 
   while (running) {
-    const { bearerToken, baseUrl } = loadWeixinConfig()
+    const { baseUrl } = loadWeixinConfig()
 
     let resp
     try {
       resp = await ilinkPost(baseUrl, '/ilink/bot/getupdates',
-        { get_updates_buf: syncBuf, base_info: { channel_version: '1' } }, 40000)
+        { get_updates_buf: syncBuf, base_info: { channel_version: '1' } }, 40000, currentAccountId)
     } catch (err) {
       if (!running) break
       console.error('[weixin] poll error:', err.message)
@@ -204,7 +216,7 @@ export async function start(onMessage) {
 
     for (const msg of resp.msgs ?? []) {
       if (msg.message_type !== 1) continue
-      if (msg.context_token) contextTokenCache.set(msg.from_user_id, msg.context_token)
+      if (msg.context_token) contextTokenCache.set(`${currentAccountId}:${msg.from_user_id}`, msg.context_token)
       const textItem = msg.item_list?.find(i => i.type === 1)
       const text = textItem?.text_item?.text ?? ''
       if (!text) continue
@@ -224,10 +236,12 @@ export async function start(onMessage) {
  * 把回复发回微信用户。
  * @param {string} to   接收方 from_user_id
  * @param {string} text 回复文本
+ * @param {{accountId?: string}} opts
  */
-export async function send(to, text) {
-  const { baseUrl } = loadWeixinConfig()
-  const contextToken = contextTokenCache.get(to) ?? ''
+export async function send(to, text, opts = {}) {
+  const accountKey = opts.accountId || currentAccountId
+  const { baseUrl } = loadWeixinConfig(accountKey)
+  const contextToken = contextTokenCache.get(`${accountKey}:${to}`) ?? ''
   const clientId = randomBytes(8).toString('hex')
 
   try {
@@ -242,7 +256,7 @@ export async function send(to, text) {
         item_list: [{ type: 1, text_item: { text } }],
       },
       base_info: { channel_version: '1' },
-    }, 15000)
+    }, 15000, accountKey)
 
     if (resp.message_id) {
       console.log('[weixin] sendmessage ok, message_id:', resp.message_id)

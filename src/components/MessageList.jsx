@@ -4,8 +4,8 @@ import ToolDetails from './ToolDetails'
 import MarkdownText from './MarkdownText'
 
 /**
- * 把 thinking/tool 记录归到紧随其后的 assistant 消息下。
- * 这样历史消息里不会再出现"思考内容 + 正式回复"两条重复气泡。
+ * 把 thinking/tool 归到紧随其后的 assistant 消息下。
+ * 历史里旧数据可能同时有 thinking 和 assistant，重复内容会藏在折叠块里。
  */
 function groupMessages(messages) {
   const groups = []
@@ -61,15 +61,7 @@ const assistantBubble = {
   color: '#cdd6f4',
 }
 
-function AssistantLabel({ isBridge, adapterId }) {
-  return (
-    <Text fontSize="11px" fontWeight={500} color="#6c7086">
-      {isBridge ? `Jarvis → 💬 ${String(adapterId || '').toUpperCase()}` : 'Jarvis'}
-    </Text>
-  )
-}
-
-export default function MessageList({ messages = [], isBridge = false, adapterId = null, pending = null }) {
+export default function MessageList({ messages = [], pending = null, userName = '', isUserSession = false }) {
   const groups = groupMessages(messages)
 
   return (
@@ -78,10 +70,8 @@ export default function MessageList({ messages = [], isBridge = false, adapterId
         if (group.kind === 'user') {
           return (
             <VStack key={idx} align="flex-end" w="100%" gap={0.5}>
-              {isBridge && (
-                <Text fontSize="10px" color="#6c7086">
-                  [💬 {String(adapterId || '').toLowerCase()}] {group.from || ''}
-                </Text>
+              {isUserSession && (
+                <Text fontSize="10px" color="#6c7086">{userName || '用户'}</Text>
               )}
               <Box {...userBubble}>{group.text}</Box>
             </VStack>
@@ -91,7 +81,7 @@ export default function MessageList({ messages = [], isBridge = false, adapterId
         if (group.kind === 'assistant') {
           return (
             <VStack key={idx} align="flex-start" w="100%" gap={0.5}>
-              <AssistantLabel isBridge={isBridge} adapterId={adapterId} />
+              <Text fontSize="11px" fontWeight={500} color="#6c7086">Jarvis</Text>
               <ToolDetails records={group.extras} />
               <Box {...assistantBubble}>
                 <MarkdownText text={group.text} />
@@ -136,26 +126,16 @@ export default function MessageList({ messages = [], isBridge = false, adapterId
         return null
       })}
 
-      {/* 正在生成中的回复 */}
       {pending && (
         <VStack align="flex-start" w="100%" gap={0.5}>
-          <AssistantLabel isBridge={isBridge} adapterId={adapterId} />
+          <Text fontSize="11px" fontWeight={500} color="#6c7086">Jarvis</Text>
           <ToolDetails records={pending.tools || []} />
           {pending.text ? (
             <Box {...assistantBubble}>
               <MarkdownText text={pending.text} />
             </Box>
           ) : (
-            <Box
-              bg="#181825"
-              borderWidth="1px"
-              borderColor="#313244"
-              borderRadius="12px"
-              px={3}
-              py={2}
-              fontSize="12px"
-              color="#6c7086"
-            >
+            <Box bg="#181825" borderWidth="1px" borderColor="#313244" borderRadius="12px" px={3} py={2} fontSize="12px" color="#6c7086">
               Jarvis 思考中…
             </Box>
           )}

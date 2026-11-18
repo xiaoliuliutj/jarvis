@@ -1,0 +1,6 @@
+{
+  "name": "persona",
+  "description": "管理当前用户自己的 AI 人设（persona.md），用户可以让 AI 修改自己的人设。",
+  "createdAt": "2026-11-18T00:00:00.000Z",
+  "version": "1.0.0"
+}

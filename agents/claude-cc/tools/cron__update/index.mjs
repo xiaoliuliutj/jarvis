@@ -1,47 +1,50 @@
+/**
+ * 修改定时任务。普通用户只能改自己的；main 可以改任意用户。
+ */
+
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { readFileSync, writeFileSync } from 'fs'
 import { z } from 'zod'
-import path from 'path'
+import { readCrons, writeCrons } from '../../../../core/user-store.mjs'
 
-const CONFIG_PATH = path.resolve(import.meta.dirname, '..', '..', '..', '..', 'config', 'bridge.json')
+const callerId = process.env.JARVIS_PRINCIPAL_ID
+const role = process.env.JARVIS_ROLE
 
-const server = new McpServer({ name: 'cron__update', version: '1.0.0' })
+const server = new McpServer({ name: 'cron__update', version: '2.0.0' })
 
 server.tool(
   'cron__update',
-  '修改 config/bridge.json 中已有的 cron 任务（按 id 查找，只更新传入的字段）',
+  '修改当前用户已有的定时任务；main 可以指定其他用户。',
   {
-    id: z.string().describe('要修改的任务 ID'),
-    enabled: z.boolean().optional().describe('是否启用'),
-    hour: z.number().int().min(0).max(23).optional().describe('触发小时（0-23）'),
-    minute: z.number().int().min(0).max(59).optional().describe('触发分钟（0-59）'),
-    adapterId: z.string().optional().describe('适配器 ID'),
-    prompt: z.string().optional().describe('触发时执行的 prompt 内容'),
+    id: z.string().describe('任务 ID'),
+    principalId: z.string().optional().describe('仅 main 可用：目标用户'),
+    enabled: z.boolean().optional(),
+    hour: z.number().int().min(0).max(23).optional(),
+    minute: z.number().int().min(0).max(59).optional(),
+    dayOfWeek: z.number().int().min(0).max(6).optional(),
+    prompt: z.string().optional(),
   },
-  async ({ id, enabled, hour, minute, adapterId, prompt }) => {
-    const config = JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'))
-    if (!config.crons) config.crons = []
-
-    const idx = config.crons.findIndex(c => c.id === id)
-    if (idx === -1) {
-      return { content: [{ type: 'text', text: `❌ 找不到 id 为 "${id}" 的 cron 任务。` }] }
+  async ({ id, principalId, enabled, hour, minute, dayOfWeek, prompt }) => {
+    const target = principalId || callerId
+    if (role !== 'maintainer' && target !== callerId) {
+      return { content: [{ type: 'text', text: '❌ 只能修改自己的定时任务。' }] }
     }
 
-    const cron = config.crons[idx]
+    const crons = readCrons(target)
+    const cron = crons.find(c => c.id === id)
+    if (!cron) return { content: [{ type: 'text', text: `❌ 找不到任务 "${id}"。` }] }
+
     if (enabled !== undefined) cron.enabled = enabled
-    if (adapterId !== undefined) cron.adapterId = adapterId
     if (prompt !== undefined) cron.prompt = prompt
-    if (hour !== undefined || minute !== undefined) {
-      if (!cron.schedule) cron.schedule = {}
+    if (hour !== undefined || minute !== undefined || dayOfWeek !== undefined) {
+      cron.schedule = cron.schedule || {}
       if (hour !== undefined) cron.schedule.hour = hour
       if (minute !== undefined) cron.schedule.minute = minute
+      if (dayOfWeek !== undefined) cron.schedule.dayOfWeek = dayOfWeek
     }
+    writeCrons(target, crons)
 
-    config.crons[idx] = cron
-    writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8')
-
-    return { content: [{ type: 'text', text: `✅ 已更新 cron 任务 "${id}"。\n当前配置：${JSON.stringify(cron, null, 2)}` }] }
+    return { content: [{ type: 'text', text: `✅ 已更新 ${target} 的任务 "${id}"。\n${JSON.stringify(cron, null, 2)}` }] }
   }
 )
 

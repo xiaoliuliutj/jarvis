@@ -1,6 +1,6 @@
 {
   "name": "cron__list",
-  "description": "列出 config/bridge.json 中的所有 cron 任务",
+  "description": "列出当前用户的定时任务；main 可以列出所有用户的任务",
   "createdAt": "2026-11-14T18:09:53.783Z",
   "version": "1.0.0"
 }

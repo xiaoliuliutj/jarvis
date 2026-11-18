@@ -1,0 +1,26 @@
+{
+  "pc-main": {
+    "id": "pc-main",
+    "role": "maintainer",
+    "displayName": "主人",
+    "sourceType": "pc",
+    "accountId": null,
+    "externalUserId": null,
+    "accounts": []
+  },
+  "user_0000000000": {
+    "id": "user_0000000000",
+    "role": "owner",
+    "displayName": "主人",
+    "sourceType": "weixin",
+    "accountId": "default",
+    "externalUserId": "",
+    "accounts": [
+      {
+        "sourceType": "weixin",
+        "accountId": "default",
+        "externalUserId": ""
+      }
+    ]
+  }
+}

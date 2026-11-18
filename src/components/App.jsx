@@ -1,67 +1,85 @@
 import React, { useState, useEffect } from 'react'
-import {
-  Box,
-  VStack,
-  HStack,
-  Button,
-} from '@chakra-ui/react'
+import { Box, VStack, HStack, Button } from '@chakra-ui/react'
 import Sidebar from './Sidebar'
 import ChatArea from './ChatArea'
 import SettingsPanel from './SettingsPanel'
 
+/**
+ * 应用顶层。
+ *
+ * current 的两种形态：
+ *   { kind:'main', sessionId, name }
+ *   { kind:'user', principalId, sessionId, displayName, role, name }
+ *
+ * 用户会话在 PC 端只读；只有主会话可以发送消息。
+ */
 export default function App() {
-  const [sessions, setSessions] = useState([])
-  const [currentSessionId, setCurrentSessionId] = useState('__main__')
-  const [currentAdapterId, setCurrentAdapterId] = useState(null)
-  const [isBridgeSession, setIsBridgeSession] = useState(false)
-  const [isMainSession, setIsMainSession] = useState(true)
+  const [config, setConfig] = useState(null)
+  const [mainSessions, setMainSessions] = useState([])
+  const [users, setUsers] = useState([])
+  const [current, setCurrent] = useState({ kind: 'main', sessionId: null, name: '主会话' })
   const [busy, setBusy] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const [config, setConfig] = useState(null)
 
-  // 初始化
   useEffect(() => {
-    initApp()
-    // Bridge 端收到结果后刷新会话列表（即使当前看的是 PC 会话）
+    init()
     const unsub = window.jarvis.onBridgeEvent?.((event) => {
-      if (event.type === 'result' || event.type === 'released') refreshSessions()
+      if (event.type === 'reload-renderer') {
+        window.location.reload()
+        return
+      }
+      if (['incoming', 'result', 'error', 'released', 'cron_result'].includes(event.type)) {
+        refreshUsers()
+      }
+      if (event.type === 'result' || event.type === 'cron_result') refreshMain()
     })
     return () => unsub?.()
   }, [])
 
-  async function initApp() {
-    try {
-      const cfg = await window.jarvis.getConfig()
-      setConfig(cfg)
+  async function init() {
+    const cfg = await window.jarvis.getConfig()
+    setConfig(cfg)
+    await refreshMain(true)
+    await refreshUsers()
+  }
 
-      const mainSession = await window.jarvis.getMainSession({ cwd: null })
-      setCurrentSessionId(mainSession?.sessionId || '__main__')
-
-      refreshSessions()
-    } catch (err) {
-      console.error('[App] 初始化失败:', err)
+  async function refreshMain(selectCurrent = false) {
+    const [cur, info] = await Promise.all([
+      window.jarvis.getMainSession(),
+      window.jarvis.getSessionInfo(),
+    ])
+    setMainSessions(info?.sessions || [])
+    if (selectCurrent) {
+      setCurrent(cur?.sessionId
+        ? { kind: 'main', sessionId: cur.sessionId, name: cur.name || '主会话' }
+        : { kind: 'main', sessionId: null, name: '主会话' })
     }
   }
 
-  async function refreshSessions() {
-    try {
-      const info = await window.jarvis.getSessionInfo()
-      setSessions(info?.sessions ?? [])
-    } catch (err) {
-      console.error('[App] 加载会话列表失败:', err)
-    }
+  async function refreshUsers() {
+    const list = await window.jarvis.getUserSessions()
+    setUsers(list || [])
   }
 
-  function handleSelectSession(sessionId, isBridge = false, adapterId = null, isMain = false) {
-    setCurrentSessionId(sessionId)
-    setIsBridgeSession(isBridge)
-    setCurrentAdapterId(adapterId)
-    setIsMainSession(isBridge ? false : !!isMain)
+  function selectMain(sessionId, name) {
+    setCurrent({ kind: 'main', sessionId: sessionId || null, name: name || '主会话' })
   }
 
-  function handleSessionChange(newSessionId) {
-    setCurrentSessionId(newSessionId)
-    refreshSessions()
+  function selectUser(user, session) {
+    setCurrent({
+      kind: 'user',
+      principalId: user.principalId,
+      sessionId: session.sessionId,
+      displayName: user.displayName,
+      role: user.role,
+      name: session.name,
+    })
+  }
+
+  function handleSessionChange(sessionId) {
+    setCurrent(c => ({ ...c, sessionId }))
+    refreshMain()
+    refreshUsers()
   }
 
   return (
@@ -79,48 +97,31 @@ export default function App() {
       >
         <HStack gap={2} css={{ WebkitAppRegion: 'no-drag' }}>
           <Box fontSize="16px" color="#89b4fa">✦</Box>
-          <Box fontWeight={600} fontSize="14px" color="#89b4fa">
-            Jarvis
-          </Box>
+          <Box fontWeight={600} fontSize="14px" color="#89b4fa">Jarvis</Box>
         </HStack>
         <HStack gap={1} css={{ WebkitAppRegion: 'no-drag' }}>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setShowSettings(!showSettings)}
-            title="设置"
-            color="#cdd6f4"
-            _hover={{ bg: '#313244' }}
-          >
-            ⚙
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => window.jarvis.minimize()} title="最小化" color="#cdd6f4" _hover={{ bg: '#313244' }}>
-            ─
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => window.jarvis.close()} title="关闭" color="#cdd6f4" _hover={{ bg: '#313244' }}>
-            ✕
-          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setShowSettings(!showSettings)} title="设置" color="#cdd6f4" _hover={{ bg: '#313244' }}>⚙</Button>
+          <Button size="sm" variant="ghost" onClick={() => window.jarvis.minimize()} title="最小化" color="#cdd6f4" _hover={{ bg: '#313244' }}>─</Button>
+          <Button size="sm" variant="ghost" onClick={() => window.jarvis.close()} title="关闭" color="#cdd6f4" _hover={{ bg: '#313244' }}>✕</Button>
         </HStack>
       </HStack>
 
       {/* 主体 */}
       <HStack flex={1} gap={0} w="100%" overflow="hidden">
         <Sidebar
-          sessions={sessions}
-          currentSessionId={currentSessionId}
-          onSelectSession={handleSelectSession}
-          onRefresh={refreshSessions}
+          mainSessions={mainSessions}
+          users={users}
+          current={current}
+          onSelectMain={selectMain}
+          onSelectUser={selectUser}
         />
-
         <ChatArea
-          sessionId={currentSessionId}
-          adapterId={currentAdapterId}
-          isBridge={isBridgeSession}
-          isMain={isMainSession}
+          current={current}
           busy={busy}
           onBusyChange={setBusy}
           onSessionChange={handleSessionChange}
-          onRefreshSessions={refreshSessions}
+          onRefreshMain={refreshMain}
+          onRefreshUsers={refreshUsers}
         />
       </HStack>
 

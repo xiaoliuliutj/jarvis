@@ -1,0 +1,255 @@
+# Jarvis 多用户后端需求与实现方案
+
+> 本文件是当前实现基线。后续改动先改这里，再改代码。
+> 个人项目：优先简单、可扩展、可读；不做过度防御性编程，问题暴露出来再修。
+
+---
+
+## 1. 目标
+
+Jarvis 是一个本机运行的 AI 助手，包含：
+
+- **一个 PC 主会话**：用于维护 Jarvis 本身，可以修改项目代码（受保护文件除外）。
+- **多个外部数据源**：微信、QQ、邮件等；数据源只负责收发消息，不参与 AI 逻辑。
+- **多个用户**：每个用户有自己的会话、工作区、长期记忆、AI 人设和定时任务。
+- **统一模型调用**：主会话和所有用户共用同一套 `agent.run` 和 `ConversationService`，只是 principal/权限/数据目录不同。
+
+---
+
+## 2. 角色与权限
+
+| 角色 | 说明 | 工具 | 项目代码 | 受保护文件 |
+|---|---|---|---|---|
+| `maintainer` | PC 主会话，唯一 | 全部 | ✅ 可改 | 只读，不可外传 |
+| `owner` | 手机上的你 | 与 main 相同 | ✅ 可改 | 只读，不可外传 |
+| `user` | 家人等普通用户 | 全部可用 | ❌ 不可改 | 只读，不可外传 |
+
+- owner 和普通用户在 persona/记忆/工作区上没有区别，只是能力位不同。
+- 所有用户都不能修改项目代码（除 maintainer/owner）。
+- 代码修改权限是 prompt/策略级，不做 OS 沙箱。
+- 所有工具对所有用户可用；创建者可改/删自己的工具，main 可管理全部。
+
+---
+
+## 3. 数据目录
+
+```text
+E:\Jarvis\
+├─ config\
+│   ├─ credentials.json      # API Key、微信 token；Agent 不可读写
+│   ├─ agent.json            # 模型等普通配置
+│   ├─ bridge.json           # 端口、adapter、系统配置（不含 token）
+│   ├─ rules.md              # 全局 rules；可读，只人工改
+│   ├─ principals.json       # source/account → principal、角色、能力
+│   └─ *.example.*           # 入库模板
+├─ userdata\                 # 全部 gitignore
+│   ├─ pc-main\
+│   │   ├─ persona.md
+│   │   ├─ sessions\         # index.json + *.messages.jsonl
+│   │   ├─ workspace\
+│   │   ├─ memory\long-term.jsonl
+│   │   └─ crons.json
+│   ├─ <principalId>\        # 每个用户同结构
+│   └─ tools\
+│       └─ <ownerId>\<toolName>\   # 用户工具，所有用户加载
+└─ agents\claude-cc\tools\   # 系统工具，所有用户可用，仅 main 可改
+```
+
+---
+
+## 4. 需求表
+
+| ID | 类别 | 需求 | 实现 |
+|---|---|---|---|
+| A1 | 身份 | PC 主会话唯一 | `pc-main` principal，maintainer，独立 main lane |
+| A2 | 身份 | 手机 owner | 普通用户数据 + `editJarvisCode` 能力 |
+| A3 | 身份 | 家人用户 | 普通用户，全工具，无代码修改 |
+| A4 | 身份 | 模型不感知数据源 | prompt 只含 displayName；source/account 仅路由和 UI |
+| A5 | 身份 | 多数据源/多用户 | `principals.json` 映射 source+account+externalUserId |
+| B1 | 会话 | 每用户独立会话 | `userdata/<id>/sessions`；支持多会话，main 只有主会话 |
+| B2 | 工作区 | 每用户独立工作区 | `userdata/<id>/workspace` |
+| B3 | 记忆 | 每用户独立长期记忆 | `userdata/<id>/memory/long-term.jsonl` |
+| B4 | 人设 | 每用户独立 persona | `persona.md`；用户可让 AI 通过 `persona__update` 改自己 |
+| B5 | 规则 | 全局 rules | `config/rules.md`；可读；只人工写；优先级高于 persona |
+| C1 | 配置 | 凭证与普通配置分离 | `credentials.json` vs `agent.json`/`bridge.json` |
+| C2 | 保密 | 凭证不可读写/外传 | prompt + Read/Glob/Grep/Write/Edit 路径拒绝；Bash 为信任级绕过点 |
+| C3 | 无感 | 用户对 API 无感 | 回复/错误/UI 不出现 Key、供应商、token |
+| C4 | 规则 | 全局 rules 只读 | Agent 不可写 |
+| C5 | 授权 | principals.json 不保护 | 可正常编辑 |
+| C6 | 仓库 | 配置不入库 | 实际配置、userdata 全部 gitignore |
+| D1 | 工具 | 工具全局可用 | 所有启用工具对所有会话加载 |
+| D2 | 工具 | 工具所有权 | 创建者改/删；main 全权；系统工具仅 main 改 |
+| D3 | 工具 | 用户工具目录 | `userdata/tools/<ownerId>/<toolName>`；名字全局唯一 |
+| D4 | 工具 | 不做沙箱 | 用户工具与主进程同权限，信任家人 |
+| D5 | 权限 | 代码修改 | 仅 maintainer/owner |
+| E1 | Cron | 每用户定时任务 | `userdata/<id>/crons.json`；用 owner 上下文执行 |
+| E2 | Cron | Cron 权限 | 用户管自己；main 管全部；只能发回自己的账号 |
+| E3 | Cron | 现有任务迁移 | 现有 `test-greeting` 迁移到微信 principal |
+| F1 | 并发 | main lane + 用户池 | main 并发 1；Bridge 用户池并发 2 |
+| F2 | 并发 | 同用户串行 | 每 principal FIFO/锁；不同用户并行 |
+| F3 | 并发 | Cron | 用户 cron 走用户池；main cron 走 main lane |
+| G1 | Adapter | 统一接口 | manifest/自动发现；统一入站/出站 |
+| G2 | Bridge | 只跑本机 | HTTP/WS 绑定 127.0.0.1 |
+| G3 | 事件 | 前端契约 | 事件带 principalId/sessionId/source |
+| H1 | 权限 | 凭证读取拒绝 | 所有 Agent（含 main）不可读 credentials.json |
+| H2 | 规则 | 全局 rules 只读 | 仅人工修改 |
+| H3 | 主会话 | 权限模式 | 不用 rulesOnly，maintainer 可写项目代码 |
+| I1 | 存储 | 不建数据库 | 文件型 JSON/JSONL |
+| I2 | 迁移 | 旧数据迁移 | 会话/记忆/cron/config/tools |
+| I3 | 运维 | 备份 | userdata 定期备份；日志本地 |
+
+---
+
+## 5. 实现要点
+
+### 5.1 统一入口
+
+所有消息都进入同一个 `ConversationService.runTurn(principalId, sessionId, prompt)`：
+
+- PC：Electron IPC → ConversationService（`pc-main`）
+- 微信/QQ：Adapter → Bridge → Scheduler → ConversationService（用户 principal）
+
+`ConversationService` 负责：
+1. 读取 principal 和用户数据；
+2. 组装 system prompt（全局 rules + persona + memory + displayName）；
+3. 选择/创建会话；
+4. 加 principal 锁；
+5. 调 `agent.run`；
+6. 后端落盘 user/tool/assistant；
+7. 发出统一事件。
+
+### 5.2 Prompt 结构
+
+```text
+[config/rules.md]       全局规则（可读，不可写）
+[persona.md]            当前用户人设（本人 AI 可改）
+[long-term.jsonl]       当前用户记忆
+[工作区/工具提示]
+```
+
+- 不包含 source/account/from_user_id。
+- 全局 rules 明确：凭证不可读/不可写/不可外传；API 无感；persona 不能覆盖全局 rules。
+- main 也走同一结构，只是 principal 是 `pc-main`。
+
+### 5.3 权限
+
+`core/permissions.mjs` 生成 `canUseTool`：
+
+- `config/credentials.json`：Read/Glob/Grep/Write/Edit 全部拒绝。
+- `config/rules.md`：允许读，拒绝写。
+- 自己的 persona/workspace/memory：允许。
+- 其他用户的数据：拒绝。
+- 项目代码：`editJarvisCode` 为 true 才允许（maintainer/owner）。
+- 系统工具目录：family 可读，只有 main 可写。
+- 用户工具目录：owner 可写自己的；main 可写全部。
+- Bash：不做路径解析，按 prompt 约束；这是个人项目的信任边界。
+
+### 5.4 工具
+
+- 系统工具：`agents/claude-cc/tools`。
+- 用户工具：`userdata/tools/<ownerId>/<toolName>`。
+- 所有工具对所有会话加载。
+- `_meta` 按 principal 运行：
+  - `list_tools` 返回系统 + 所有用户工具；
+  - `create_tool` 写入当前 principal 的目录；
+  - `update/delete` 只允许创建者；main 例外；
+  - 系统工具只能 main 通过项目文件修改。
+- 工具名全局唯一。
+
+### 5.5 并发
+
+- Electron main lane：并发 1，主会话 + main cron。
+- Bridge 用户池：并发 2，每 principal FIFO。
+- 同一 principal 串行，不同 principal 并行。
+- 删除现有全局 `activeAdapterId` / `activeRunPromise`。
+
+### 5.6 Cron
+
+- 每用户 `crons.json`。
+- 用户 cron 在 Bridge 执行；main cron 在 Electron 执行。
+- 任务使用 owner 的 persona/记忆/工作区/权限。
+- 结果发回 owner 自己的账号。
+- 现有全局 inactivity 暂不启用；后续按用户实现。
+
+### 5.7 存储
+
+- 不建数据库；JSON/JSONL。
+- 会话：`index.json` + `*.messages.jsonl`。
+- 记忆：`long-term.jsonl`。
+- 配置：JSON。
+- 备份：复制 `userdata/` 即可。
+
+---
+
+## 6. 迁移
+
+1. 旧 `config/agent.json` 的 `env` 密钥 → `config/credentials.json`；非敏感设置留在 `agent.json`。
+2. 旧 `config/bridge.json` 的微信 token → `credentials.json`；端口/adapter/crons 拆分。
+3. 旧 `config/global.md` → `config/rules.md`（规则）+ `userdata/pc-main/persona.md`（主会话人设）。
+4. PC 主会话消息 → `userdata/pc-main/sessions/`。
+5. 微信会话 → `userdata/<weixin-principal>/sessions/`；如有多用户按 `from` 拆分。
+6. 旧全局 `long-term.jsonl` 按 cwd/来源归属到 main 或微信用户。
+7. 旧 `test-greeting` cron → 微信 principal 的 `crons.json`。
+8. 旧工具全部视为系统工具。
+
+---
+
+## 7. 不做的事情
+
+- 不建数据库（SQLite/Postgres）。
+- 不做 Redis/消息队列/Docker。
+- 不做密钥 vault/模型代理/OS 沙箱。
+- 不做跨进程锁（main 与用户数据分进程处理）。
+- 不做过度防御性编程；出错直接暴露日志。
+
+---
+
+## 8. 实施顺序
+
+1. 配置拆分、`userdata/`、principals、rules/persona、迁移。
+2. 用户存储层 + principal 上下文 + prompt/permissions。
+3. `ConversationService` + main/Bridge 接入。
+4. 工具全局加载 + `_meta` 所有权 + persona/cron 工具。
+5. 调度器（并发 2）+ per-user cron。
+6. Adapter 注册、localhost、事件。
+7. PC 前端适配；删除不可复用代码。
+8. 测试与重启。
+
+---
+
+## 9. 实现状态（2026-11-18）
+
+### 已完成
+
+- 配置拆分：`config/credentials.json`（受保护）+ `agent.json` / `bridge.json` / `rules.md` / `principals.json`
+- `userdata/` 结构：`pc-main` + 外部 principal，各自的 persona / sessions / workspace / memory / crons
+- 一次性迁移：主会话、微信会话、长期记忆、test-greeting cron、旧配置备份
+- `core/` 模块：paths / config / principals / user-store / prompt / permissions / tools / conversation / scheduler / cron / adapters
+- 统一 `ConversationService.runTurn`：PC 主会话和 Bridge 用户共用
+- 每用户工具：所有工具全局可用；创建者/main 所有权；用户工具在 `userdata/tools/<ownerId>`
+- 人设工具：用户可以让 AI 修改自己的 persona
+- 每用户 cron：`crons.json`；用户 cron 在 Bridge，main cron 在 Electron
+- 并发：Bridge 用户池 2，每 principal FIFO；main 在 Electron 独立 lane
+- Bridge 绑定 127.0.0.1；adapter 自动发现；微信 adapter 从 credentials 读取 token
+- PC 前端：主会话 + 用户只读会话；Markdown/工具折叠；删除旧 renderer/InputBar/styles
+- 启动：`npm run dev` 修复为 concurrently + wait-for-vite
+
+### 验证
+
+- `vite build` 通过
+- 真实模型端到端：`runTurn` 返回 OK、落盘 user/assistant
+- 真实工具调用：`_meta.list_tools` 在精简 env 下工作
+- 工具所有权：创建者/main 可改，其他用户不可改
+- per-user cron 调度器触发并 deliver
+- 真实 Electron + Bridge + Vite 启动，主会话/owner 会话渲染正常，无前端异常
+
+### 暂未实现 / 已知边界
+
+- 旧的全局 inactivity 主动消息已停用；后续需要按 principal 重做
+- 一个 adapter 当前一个账号；多 bot 账号需要账号实例层
+- 用户工具不做 OS 沙箱（按决定）
+- 凭证保护是 prompt + 文件工具路径级；Bash 仍可绕过（按决定）
+- PC UI 只能查看用户当前会话；多会话切换/新建 UI 未做（存储层已支持）
+- principal 管理通过 `config/principals.json` 手动编辑；没有 UI
+- 旧 `agents/claude-cc/memory`、`bridge/sessions`、`config/_legacy-*` 作为历史数据保留（gitignore）
+- main cron 只推送到 PC UI，不主动发外部渠道

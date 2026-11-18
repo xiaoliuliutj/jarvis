@@ -20,7 +20,7 @@ const server = new McpServer({ name: 'restart', version: '1.0.0' })
 
 server.tool(
   'restart__renderer',
-  '刷新 Electron 渲染层（renderer）。适用于修改了 renderer/app.js 或 renderer/styles.css 之后。不影响 agent 会话和 Bridge Server。',
+  '刷新 Electron React 渲染层。适用于修改了 src/ 下的前端文件之后。不影响 agent 会话和 Bridge Server。',
   {},
   async () => {
     try {
@@ -34,7 +34,7 @@ server.tool(
 
 server.tool(
   'restart__bridge',
-  '重启 Bridge Server（bridge/server.mjs）。适用于修改了 bridge/ 目录下的任何文件之后（server.mjs、adapter-manager.mjs、adapters/weixin.mjs、cron-manager.mjs 等）。不影响 Electron 主进程。',
+  '重启 Bridge Server（bridge/server.mjs）。适用于修改了 bridge/ 或 core/ 之后。不影响 Electron 主进程。',
   {},
   async () => {
     try {
@@ -48,7 +48,7 @@ server.tool(
 
 server.tool(
   'restart__electron',
-  '完整重启 Electron 应用。适用于修改了 electron/main.js、electron/preload.js 或 agents/claude-cc/agent.mjs 之后。会关闭当前窗口并重新启动。',
+  '完整重启 Electron 应用。适用于修改了 electron/、core/ 或 agents/claude-cc/agent.mjs 之后。会关闭当前窗口并重新启动。',
   {},
   async () => {
     try {

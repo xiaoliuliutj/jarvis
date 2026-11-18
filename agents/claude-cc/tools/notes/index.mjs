@@ -3,8 +3,13 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import fs from 'fs'
 import path from 'path'
+import { ensureUser, workspaceDir } from '../../../../core/user-store.mjs'
 
-const NOTES_DIR = path.join(import.meta.dirname, '..', 'memory', 'notes')
+// 笔记属于当前用户，写在 userdata/<principalId>/workspace/notes 下。
+const principalId = process.env.JARVIS_PRINCIPAL_ID
+if (!principalId) throw new Error('缺少 JARVIS_PRINCIPAL_ID')
+ensureUser(principalId)
+const NOTES_DIR = path.join(workspaceDir(principalId), 'notes')
 fs.mkdirSync(NOTES_DIR, { recursive: true })
 
 const TASKS_FILE    = path.join(NOTES_DIR, 'tasks.md')

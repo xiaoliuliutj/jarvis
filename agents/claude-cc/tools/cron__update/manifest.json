@@ -1,6 +1,6 @@
 {
   "name": "cron__update",
-  "description": "修改 config/bridge.json 中已有的 cron 任务（按 id 查找，只更新传入的字段）",
+  "description": "修改当前用户的定时任务；main 可以指定其他用户",
   "createdAt": "2026-11-14T18:10:06.086Z",
   "version": "1.0.0"
 }

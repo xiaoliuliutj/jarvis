@@ -8,28 +8,28 @@
   },
   {
     "name": "cron__list",
-    "description": "列出 config/bridge.json 中的所有 cron 任务",
+    "description": "列出当前用户的定时任务；main 可以列出所有用户的任务",
     "enabled": true,
     "createdAt": "2026-11-14T18:09:53.783Z",
     "version": "1.0.0"
   },
   {
     "name": "cron__add",
-    "description": "向 config/bridge.json 的 crons 数组中添加一个新的 cron 任务",
+    "description": "为当前用户创建定时任务；任务使用该用户的人设/记忆/权限，结果发回该用户",
     "enabled": true,
     "createdAt": "2026-11-14T18:10:00.071Z",
     "version": "1.0.0"
   },
   {
     "name": "cron__update",
-    "description": "修改 config/bridge.json 中已有的 cron 任务（按 id 查找，只更新传入的字段）",
+    "description": "修改当前用户的定时任务；main 可以指定其他用户",
     "enabled": true,
     "createdAt": "2026-11-14T18:10:06.086Z",
     "version": "1.0.0"
   },
   {
     "name": "cron__delete",
-    "description": "从 config/bridge.json 的 crons 数组中删除指定的 cron 任务（按 id 查找）",
+    "description": "删除当前用户的定时任务；main 可以指定其他用户",
     "enabled": true,
     "createdAt": "2026-11-14T18:10:11.299Z",
     "version": "1.0.0"
@@ -43,14 +43,14 @@
   },
   {
     "name": "restart",
-    "description": "重启 Jarvis 各组件。restart__renderer 刷新 Electron 渲染层（改了 renderer/ 后用）；restart__bridge 重启 Bridge Server（改了 bridge/ 后用）；restart__electron 完整重启 Electron（改了 electron/ 或 agent.mjs 后用）。",
+    "description": "重启 Jarvis 组件。restart__renderer 刷新 React 渲染层（改了 src/ 后用）；restart__bridge 重启 Bridge Server（改了 bridge/ 或 core/ 后用）；restart__electron 完整重启 Electron（改了 electron/ 或 agent.mjs 后用）。",
     "enabled": true,
     "createdAt": "2026-11-15T00:00:00.000Z",
     "version": "1.0.0"
   },
   {
     "name": "notes",
-    "description": "记录工具，支持任务(task)、笔记(note)、日程(schedule)三类写入文件，落到 E:\\Jarvis\\agents\\claude-cc\\memory\\notes\\ 目录",
+    "description": "记录工具：待办/笔记/日程，写入当前用户自己的工作区 notes 目录",
     "enabled": true,
     "createdAt": "2026-11-15T04:24:39.364Z",
     "version": "1.0.0"
@@ -67,6 +67,13 @@
     "description": "解析 Word (.docx) 文件，提取纯文本或转换为 Markdown",
     "enabled": true,
     "createdAt": "2026-11-16T17:17:22.449Z",
+    "version": "1.0.0"
+  },
+  {
+    "name": "persona",
+    "description": "管理当前用户自己的 AI 人设（persona.md），用户可以让自己的人设由 AI 修改",
+    "enabled": true,
+    "createdAt": "2026-11-18T15:10:13.907Z",
     "version": "1.0.0"
   }
 ]
