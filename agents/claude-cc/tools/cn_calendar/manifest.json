@@ -1,0 +1,6 @@
+{
+  "name": "cn_calendar",
+  "description": "查询中国法定日历：某天是否工作日、是否调休上班、节假日名称。数据来源 NateScarlet/holiday-cn，支持调休判断。",
+  "createdAt": "2026-11-14T18:28:02.088Z",
+  "version": "1.0.0"
+}

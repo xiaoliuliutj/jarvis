@@ -1,0 +1,6 @@
+{
+  "name": "weather_query",
+  "description": "查询指定地点的当前天气信息，支持中文地名、英文地名、城市名等",
+  "createdAt": "2026-11-14T03:29:29.553Z",
+  "version": "1.0.0"
+}

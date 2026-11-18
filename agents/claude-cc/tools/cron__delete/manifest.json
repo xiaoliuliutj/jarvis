@@ -1,0 +1,6 @@
+{
+  "name": "cron__delete",
+  "description": "从 config/bridge.json 的 crons 数组中删除指定的 cron 任务（按 id 查找）",
+  "createdAt": "2026-11-14T18:10:11.299Z",
+  "version": "1.0.0"
+}

@@ -1,0 +1,56 @@
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--titlebar-h);
+  padding: 0 14px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+  flex-shrink: 0;
+}
+
+.titlebar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  -webkit-app-region: no-drag;
+}
+
+.app-icon {
+  font-size: 16px;
+}
+
+.titlebar-right {
+  display: flex;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 16px;
+  color: var(--text-dim);
+  transition: color 0.2s;
+}
+
+.titlebar button:hover {
+  color: var(--text);
+}
+
+.main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}

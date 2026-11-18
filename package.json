@@ -1,0 +1,38 @@
+{
+  "name": "jarvis",
+  "version": "0.1.0",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite & sleep 3 && electron .",
+    "build": "vite build",
+    "start": "electron .",
+    "start:backend": "node --experimental-vm-modules main.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "latest",
+    "@chakra-ui/react": "^3.38.0",
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@vitejs/plugin-react": "^6.3.0",
+    "7zip-min": "^3.0.1",
+    "canvas": "^3.2.3",
+    "concurrently": "^10.0.7",
+    "framer-motion": "^14.14.0",
+    "mammoth": "^1.13.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "vite": "^8.3.8",
+    "ws": "^8.23.0"
+  },
+  "devDependencies": {
+    "electron": "latest"
+  },
+  "description": "",
+  "directories": {
+    "doc": "docs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}

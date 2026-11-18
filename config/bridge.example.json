@@ -1,0 +1,29 @@
+{
+  "httpPort": 7779,
+  "wsPort": 7780,
+  "mainAdapter": "weixin",
+  "inactivityTimeoutMs": 300000,
+  "inactivity": {
+    "enabled": false,
+    "thresholdHours": 2,
+    "minHours": 1,
+    "maxHours": 5,
+    "quietHours": {
+      "start": 22,
+      "end": 8
+    },
+    "prompt": "（可选）长时间无活动时，让 Jarvis 主动联系用户的提示词。"
+  },
+  "crons": [],
+  "adapters": {
+    "weixin": {
+      "enabled": false,
+      "isMain": true,
+      "permissionMode": "default",
+      "baseUrl": "https://ilinkai.weixin.qq.com",
+      "accountId": "",
+      "token": "",
+      "systemPrompt": ""
+    }
+  }
+}

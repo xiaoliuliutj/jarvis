@@ -1,0 +1,6 @@
+{
+  "name": "unzip_file",
+  "description": "解压 zip 文件到指定目录",
+  "createdAt": "2026-11-16T16:38:57.460Z",
+  "version": "1.0.0"
+}

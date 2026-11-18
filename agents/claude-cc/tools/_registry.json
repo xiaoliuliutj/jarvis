@@ -1,0 +1,72 @@
+[
+  {
+    "name": "weather_query",
+    "description": "查询指定地点的当前天气信息，支持中文地名、英文地名、城市名等",
+    "enabled": true,
+    "createdAt": "2026-11-14T03:29:29.553Z",
+    "version": "1.0.0"
+  },
+  {
+    "name": "cron__list",
+    "description": "列出 config/bridge.json 中的所有 cron 任务",
+    "enabled": true,
+    "createdAt": "2026-11-14T18:09:53.783Z",
+    "version": "1.0.0"
+  },
+  {
+    "name": "cron__add",
+    "description": "向 config/bridge.json 的 crons 数组中添加一个新的 cron 任务",
+    "enabled": true,
+    "createdAt": "2026-11-14T18:10:00.071Z",
+    "version": "1.0.0"
+  },
+  {
+    "name": "cron__update",
+    "description": "修改 config/bridge.json 中已有的 cron 任务（按 id 查找，只更新传入的字段）",
+    "enabled": true,
+    "createdAt": "2026-11-14T18:10:06.086Z",
+    "version": "1.0.0"
+  },
+  {
+    "name": "cron__delete",
+    "description": "从 config/bridge.json 的 crons 数组中删除指定的 cron 任务（按 id 查找）",
+    "enabled": true,
+    "createdAt": "2026-11-14T18:10:11.299Z",
+    "version": "1.0.0"
+  },
+  {
+    "name": "cn_calendar",
+    "description": "查询中国法定日历：某天是否工作日、是否调休上班、节假日名称。数据来源 NateScarlet/holiday-cn，支持调休判断。",
+    "enabled": true,
+    "createdAt": "2026-11-14T18:28:02.088Z",
+    "version": "1.0.0"
+  },
+  {
+    "name": "restart",
+    "description": "重启 Jarvis 各组件。restart__renderer 刷新 Electron 渲染层（改了 renderer/ 后用）；restart__bridge 重启 Bridge Server（改了 bridge/ 后用）；restart__electron 完整重启 Electron（改了 electron/ 或 agent.mjs 后用）。",
+    "enabled": true,
+    "createdAt": "2026-11-15T00:00:00.000Z",
+    "version": "1.0.0"
+  },
+  {
+    "name": "notes",
+    "description": "记录工具，支持任务(task)、笔记(note)、日程(schedule)三类写入文件，落到 E:\\Jarvis\\agents\\claude-cc\\memory\\notes\\ 目录",
+    "enabled": true,
+    "createdAt": "2026-11-15T04:24:39.364Z",
+    "version": "1.0.0"
+  },
+  {
+    "name": "unzip_file",
+    "description": "解压 zip 文件到指定目录",
+    "enabled": true,
+    "createdAt": "2026-11-16T16:38:57.460Z",
+    "version": "1.0.0"
+  },
+  {
+    "name": "read_word",
+    "description": "解析 Word (.docx) 文件，提取纯文本或转换为 Markdown",
+    "enabled": true,
+    "createdAt": "2026-11-16T17:17:22.449Z",
+    "version": "1.0.0"
+  }
+]

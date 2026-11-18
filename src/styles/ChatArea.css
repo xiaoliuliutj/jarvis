@@ -1,0 +1,116 @@
+.chat-column {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  background: var(--bg-chat);
+  overflow: hidden;
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  gap: 8px;
+}
+
+/* 基础消息气泡 */
+.msg {
+  padding: 10px 14px;
+  line-height: 1.6;
+  font-size: 13.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  animation: fadeIn 0.16s ease;
+  user-select: text;
+}
+
+/* 用户消息（PC + 微信用户）：右对齐，绿色浅背景 */
+.msg-user,
+.msg-bridge-incoming {
+  align-self: flex-end;
+  background: var(--accent-light);
+  color: var(--text);
+  border-radius: 16px 16px 4px 16px;
+  border: 1px solid #c8e8d8;
+  max-width: 72%;
+}
+
+/* AI 消息（PC + 微信 Jarvis）：左对齐，白色卡片 */
+.msg-assistant,
+.msg-bridge-result {
+  align-self: flex-start;
+  background: #ffffff;
+  color: var(--text);
+  border-radius: 4px 16px 16px 16px;
+  border: 1px solid var(--border);
+  max-width: 72%;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}
+
+.msg-thinking {
+  font-size: 12.5px;
+  opacity: 0.8;
+  background: #f5f5f3;
+}
+
+.msg-error {
+  align-self: flex-start;
+  background: #ffe6e6;
+  border: 1px solid #ffcccc;
+  border-radius: 8px;
+  color: #d94f4f;
+}
+
+.tool-tag {
+  align-self: flex-start;
+  background: #f5f5f3;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-family: 'Monaco', 'Courier New', monospace;
+  color: var(--text-dim);
+  max-width: 90%;
+  word-break: break-all;
+}
+
+/* Bridge 消息包裹器（名字 + 气泡 竖排） */
+.bridge-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0;
+}
+
+.bridge-wrapper-incoming {
+  align-items: flex-end;
+}
+
+.bridge-wrapper-result {
+  align-items: flex-start;
+}
+
+/* 用户名标签（气泡外，右对齐） */
+.bridge-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-right: 2px;
+  user-select: text;
+}
+
+/* 来源标签（气泡外，左对齐，绿色） */
+.bridge-source {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  margin-left: 2px;
+  user-select: text;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}

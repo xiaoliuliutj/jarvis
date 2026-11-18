@@ -1,0 +1,45 @@
+# ── 依赖 ──────────────────────────────────────────────
+node_modules/
+
+# ── 构建产物 ──────────────────────────────────────────
+dist/
+out/
+.vite/
+
+# ── 日志 ──────────────────────────────────────────────
+*.log
+logs/
+
+# ── 配置目录：实际配置一律不入库，只保留示例模板 ──────
+config/*
+!config/*.example.json
+!config/*.example.md
+
+# ── 个人内容 / 运行时记录（一律不入库） ───────────────
+agents/claude-cc/memory/
+agents/claude-cc/tools/memory/
+bridge/sessions/
+agents/claude-cc/workspace.json
+**/*.jsonl
+**/*.messages.jsonl
+
+# ── 旧路径兜底（防止残留配置被误提交） ────────────────
+bridge/config.json
+agents/claude-cc/config.json
+agents/claude-cc/memory/global.md
+agents/claude-cc/tools/_reload.signal
+
+# ── 环境变量文件 ──────────────────────────────────────
+.env
+.env.*
+
+# ── 参考资料（第三方书籍） ────────────────────────────
+deep-dive-claude-code-main/
+taste-skill-main/
+
+# ── 系统 / 编辑器 ─────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+*.swp

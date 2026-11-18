@@ -1,0 +1,6 @@
+{
+  "name": "read_word",
+  "description": "解析 Word (.docx) 文件，提取纯文本或转换为 Markdown",
+  "createdAt": "2026-11-16T17:17:22.449Z",
+  "version": "1.0.0"
+}
