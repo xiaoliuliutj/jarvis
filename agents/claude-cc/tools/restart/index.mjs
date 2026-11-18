@@ -22,6 +22,35 @@ function bridgePost(pathname) {
   })
 }
 
+function bridgeGet(pathname) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(BRIDGE_HTTP + pathname, { method: 'GET', timeout: 1000 }, res => {
+      let d = ''
+      res.on('data', c => { d += c })
+      res.on('end', () => {
+        try { resolve(JSON.parse(d || '{}')) } catch (err) { reject(err) }
+      })
+    })
+    req.on('timeout', () => req.destroy(new Error('timeout')))
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+/** Bridge 重启后等它重新监听；避免“指令成功但新进程没起来”。 */
+async function waitForBridgeHealth(timeoutMs = 8000) {
+  const startedAt = Date.now()
+  await new Promise(r => setTimeout(r, 1200)) // 旧进程 500ms 后退出，给新进程留启动时间
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const health = await bridgeGet('/health')
+      if (health?.ok) return true
+    } catch {}
+    await new Promise(r => setTimeout(r, 500))
+  }
+  return false
+}
+
 /** 重启前静态检查；失败时不重启，把错误交给模型修。 */
 async function runPreflight(noBuild = false) {
   const args = [path.join(ROOT, 'scripts', 'restart-preflight.mjs')]
@@ -39,7 +68,7 @@ async function runPreflight(noBuild = false) {
   }
 }
 
-async function checkedRestart({ skipChecks, noBuild, request, successText }) {
+async function checkedRestart({ skipChecks, noBuild, request, successText, verify }) {
   if (!skipChecks) {
     const check = await runPreflight(noBuild)
     if (!check.ok) {
@@ -55,6 +84,15 @@ async function checkedRestart({ skipChecks, noBuild, request, successText }) {
 
   try {
     const result = await request()
+    if (verify && !(await verify())) {
+      return {
+        isError: true,
+        content: [{
+          type: 'text',
+          text: `⚠️ 重启指令已发送，但服务未在预期时间内恢复。请查看 bridge/bridge.err.log。\n${JSON.stringify(result)}`,
+        }],
+      }
+    }
     return { content: [{ type: 'text', text: `${successText}\n${JSON.stringify(result)}` }] }
   } catch (err) {
     return { isError: true, content: [{ type: 'text', text: `❌ 失败：${err.message}（Bridge Server 是否在运行？）` }] }
@@ -88,7 +126,8 @@ server.tool(
       skipChecks,
       noBuild: true,
       request: () => bridgePost('/restart-bridge'),
-      successText: '✅ Bridge Server 重启指令已发送，将在 500ms 后重启。',
+      successText: '✅ Bridge Server 已重启并通过健康检查。',
+      verify: waitForBridgeHealth,
     })
   }
 )

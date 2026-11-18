@@ -62,7 +62,7 @@ userdata/               每用户数据 + 用户工具（gitignore）
 Jarvis 的工具：
 
 - `restart__renderer`：只刷新 React。
-- `restart__bridge`：重启 Bridge。
+- `restart__bridge`：重启 Bridge，并等待 `/health` 恢复。
 - `restart__electron`：重启 Electron，等待当前主回合结束；`force` 可强制中断。
 - `restart__all`：同时重启 Bridge 和 Electron。
 

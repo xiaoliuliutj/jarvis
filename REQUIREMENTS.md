@@ -199,6 +199,7 @@ E:\Jarvis\
 - `restart__electron` → Bridge → Electron：主会话回合结束后再执行重启，消息先落盘。
 - Electron 再调用 supervisor `/restart-electron`：只重启 Electron，Vite 保持运行。
 - 重启前运行 `scripts/restart-preflight.mjs`：后端语法 + 配置 JSON + 前端构建，失败则拒绝重启。
+- `restart__bridge` 重启后会轮询 `/health`，确认新 Bridge 已恢复。
 - `force` 参数可立即重启；普通请求等待超过 10 分钟也会强制重启。
 - `restart__all` 同时重启 Bridge 和 Electron，适合 `core/` 两端都引用的改动；同样支持 `force`。
 - 自行 detach 的常驻后台进程不在等待范围内，重启前应避免启动。
