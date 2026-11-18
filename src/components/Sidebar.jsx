@@ -40,20 +40,22 @@ export default function Sidebar({ sessions, currentSessionId, onSelectSession, o
     })
   }
 
-  const SessionEntry = ({ session, isActive, isBridge = false, adapterId = null }) => (
-    <Button
-      variant="ghost"
-      w="100%"
-      h="auto"
-      px={3}
-      py={2}
-      justifyContent="flex-start"
-      bg={isActive ? 'rgba(137,180,250,0.12)' : 'transparent'}
-      borderLeftWidth={isActive ? 2 : 0}
-      borderLeftColor={isActive ? '#89b4fa' : 'transparent'}
-      _hover={{ bg: '#1a1a22' }}
-      onClick={() => onSelectSession(session.sessionId, isBridge, adapterId)}
-    >
+  const SessionEntry = ({ session, isActive, isBridge = false, adapterId = null }) => {
+    const sid = session.sessionId || (session.isMain ? '__main__' : '__new__')
+    return (
+      <Button
+        variant="ghost"
+        w="100%"
+        h="auto"
+        px={3}
+        py={2}
+        justifyContent="flex-start"
+        bg={isActive ? 'rgba(137,180,250,0.12)' : 'transparent'}
+        borderLeftWidth={isActive ? 2 : 0}
+        borderLeftColor={isActive ? '#89b4fa' : 'transparent'}
+        _hover={{ bg: '#1a1a22' }}
+        onClick={() => onSelectSession(sid, isBridge, adapterId, !isBridge && !!session.isMain)}
+      >
       <VStack align="flex-start" gap={0.5} w="100%">
         <Text fontSize="12.5px" fontWeight={450} color={isActive ? '#89b4fa' : '#cdd6f4'}>
           {session.name || '新会话'}
@@ -62,8 +64,9 @@ export default function Sidebar({ sessions, currentSessionId, onSelectSession, o
           {formatTime(session.lastActiveAt)}
         </Text>
       </VStack>
-    </Button>
-  )
+      </Button>
+    )
+  }
 
   return (
     <VStack
@@ -84,7 +87,11 @@ export default function Sidebar({ sessions, currentSessionId, onSelectSession, o
         colorPalette="blue"
         fontSize="12.5px"
         justifyContent="flex-start"
-        onClick={() => window.jarvis.newSession()}
+        onClick={async () => {
+          await window.jarvis.newSession()
+          onRefresh?.()
+          onSelectSession('__new__', false, null, false)
+        }}
         color="#89b4fa"
         borderColor="#313244"
         _hover={{ bg: '#1a1a22' }}
@@ -95,9 +102,9 @@ export default function Sidebar({ sessions, currentSessionId, onSelectSession, o
       <VStack w="100%" flex={1} overflow="auto" gap={0} px={1.5} py={1}>
         {mainSessions.map(s => (
           <SessionEntry
-            key={s.sessionId}
+            key={s.sessionId || '__main__'}
             session={s}
-            isActive={currentSessionId === s.sessionId}
+            isActive={currentSessionId === (s.sessionId || '__main__')}
           />
         ))}
 

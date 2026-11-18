@@ -173,6 +173,8 @@ async function runWithAdapter(adapterId, payload, messageId) {
     }, pendingTimeoutMs)
   }
 
+  const toolRecords = []
+
   activeRunPromise = (async () => {
     for await (const event of run(enrichedPrompt, {
       model,
@@ -186,6 +188,12 @@ async function runWithAdapter(adapterId, payload, messageId) {
       jarvisCodeWritable: false,  // 非 PC adapter 不允许写 Jarvis 项目文件
     })) {
       if (event.type === 'tool') {
+        toolRecords.push({
+          type: 'tool',
+          name: event.name,
+          input: event.input,
+          timestamp: new Date().toISOString(),
+        })
         broadcast({ type: 'tool', adapterId, messageId, name: event.name, input: event.input })
       } else if (event.type === 'memory') {
         broadcast({ type: 'memory', adapterId, messageId, ...event })
@@ -218,6 +226,9 @@ async function runWithAdapter(adapterId, payload, messageId) {
           from: payload.from,
           timestamp: payload.timestamp,
         })
+      }
+      for (const rec of toolRecords) {
+        appendSessionMessage(adapterCwd, finalSessionId, rec)
       }
       appendSessionMessage(adapterCwd, finalSessionId, {
         type: 'assistant',

@@ -3,97 +3,169 @@ import {
   VStack,
   HStack,
   Box,
+  Text,
   Textarea,
   Button,
 } from '@chakra-ui/react'
 import MessageList from './MessageList'
 
-export default function ChatArea({ sessionId, adapterId, isBridge, isMain, busy, onBusyChange }) {
+export default function ChatArea({
+  sessionId,
+  adapterId,
+  isBridge,
+  isMain,
+  busy,
+  onBusyChange,
+  onSessionChange,
+  onRefreshSessions,
+}) {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
+  const [pending, setPending] = useState(null)
+  const pendingRef = useRef(null)
   const scrollRef = useRef(null)
 
   // 加载会话历史
   useEffect(() => {
-    loadSessionHistory()
+    let cancelled = false
+    pendingRef.current = null
+    setPending(null)
+    setMessages([])
+
+    async function load() {
+      try {
+        if (isBridge && adapterId) {
+          const history = await window.jarvis.readBridgeSessionMessages(adapterId, sessionId)
+          if (!cancelled) setMessages(history || [])
+        } else if (sessionId && !String(sessionId).startsWith('__')) {
+          const history = await window.jarvis.readSessionMessages(sessionId)
+          if (!cancelled) setMessages(history || [])
+        }
+      } catch (err) {
+        console.error('[ChatArea] 加载历史失败:', err)
+      }
+    }
+
+    load()
+    return () => { cancelled = true }
   }, [sessionId, isBridge, adapterId])
 
-  async function loadSessionHistory() {
-    try {
-      if (isBridge && adapterId) {
-        const history = await window.jarvis.readBridgeSessionMessages(adapterId, sessionId)
-        setMessages(history || [])
-      } else {
-        const history = await window.jarvis.readSessionMessages(sessionId)
-        setMessages(history || [])
-      }
-    } catch (err) {
-      console.error('[ChatArea] 加载历史失败:', err)
-    }
-  }
-
-  function handleNewMessage(record) {
-    setMessages(prev => [...prev, record])
-  }
-
-  // 监听流事件
+  // PC 端流式事件：合并到同一个"正在生成"的回复中
   useEffect(() => {
     const unsubText = window.jarvis.onStreamText?.((data) => {
-      handleNewMessage({ type: 'thinking', text: data.text })
+      const prev = pendingRef.current || { text: '', tools: [] }
+      const next = { ...prev, text: (prev.text || '') + (data.text || '') }
+      pendingRef.current = next
+      setPending(next)
     })
 
     const unsubTool = window.jarvis.onStreamTool?.((data) => {
-      handleNewMessage({ type: 'tool', name: data.name, input: data.input })
-    })
-
-    const unsubResult = window.jarvis.onResult?.((data) => {
-      if (!data.isError && data.text) {
-        handleNewMessage({ type: 'assistant', text: data.text })
-      } else if (data.isError) {
-        handleNewMessage({ type: 'error', text: data.text })
+      const prev = pendingRef.current || { text: '', tools: [] }
+      const next = {
+        ...prev,
+        tools: [...(prev.tools || []), { type: 'tool', name: data.name, input: data.input }],
       }
-      onBusyChange(false)
+      pendingRef.current = next
+      setPending(next)
     })
 
     return () => {
       unsubText?.()
       unsubTool?.()
-      unsubResult?.()
     }
   }, [])
 
+  // Bridge 端实时事件（微信消息进入时立即显示）
+  useEffect(() => {
+    if (!isBridge || !adapterId) return
+    const unsub = window.jarvis.onBridgeEvent?.((event) => {
+      if (event.adapterId && event.adapterId !== adapterId) return
+
+      if (event.type === 'incoming') {
+        setMessages(prev => [...prev, {
+          type: 'user',
+          text: event.payload?.text || '',
+          from: event.payload?.from,
+        }])
+      } else if (event.type === 'tool') {
+        setMessages(prev => [...prev, {
+          type: 'tool',
+          name: event.name,
+          input: event.input,
+        }])
+      } else if (event.type === 'result') {
+        setMessages(prev => [...prev, {
+          type: 'assistant',
+          text: event.text || '',
+        }])
+        onRefreshSessions?.()
+      }
+    })
+    return () => unsub?.()
+  }, [isBridge, adapterId, onRefreshSessions])
+
   // 自动滚到底部
   useEffect(() => {
-    if (scrollRef.current) {
-      setTimeout(() => {
-        scrollRef.current?.scrollIntoView({ behavior: 'smooth' })
-      }, 0)
-    }
-  }, [messages])
+    const id = setTimeout(() => {
+      scrollRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }, 0)
+    return () => clearTimeout(id)
+  }, [messages, pending])
 
   async function handleSend() {
-    if (!input.trim() || busy) return
+    if (!input.trim() || busy || isBridge) return
 
     const text = input.trim()
     setInput('')
     onBusyChange(true)
 
-    handleNewMessage({ type: 'user', text })
+    setMessages(prev => [...prev, { type: 'user', text }])
+    const turn = { text: '', tools: [] }
+    pendingRef.current = turn
+    setPending(turn)
+
+    // __main__ / __new__ 是前端占位 ID，不传给主进程
+    const sessionArg = sessionId && !String(sessionId).startsWith('__') ? sessionId : null
 
     try {
       const result = await window.jarvis.sendMessage(
         text,
         'claude-sonnet-5-5',
         'rulesOnly',
-        sessionId.startsWith('__new__') ? null : sessionId,
-        false,
+        sessionArg,
+        !!isMain,
       )
 
-      if (result.isError) {
-        handleNewMessage({ type: 'error', text: result.text })
+      const finalTurn = pendingRef.current || turn
+      pendingRef.current = null
+      setPending(null)
+
+      if (result?.isError) {
+        setMessages(prev => [
+          ...prev,
+          ...(finalTurn.tools || []),
+          { type: 'error', text: result.text || '未知错误' },
+        ])
+      } else {
+        const finalText = result?.text || finalTurn.text || ''
+        setMessages(prev => [
+          ...prev,
+          ...(finalTurn.tools || []),
+          ...(finalText ? [{ type: 'assistant', text: finalText }] : []),
+        ])
       }
+
+      // SDK 首次分配的真实 sessionId 同步给 App，后续消息才能续接同一会话
+      if (result?.sessionId && onSessionChange) {
+        onSessionChange(result.sessionId)
+      }
+      onRefreshSessions?.()
     } catch (err) {
-      handleNewMessage({ type: 'error', text: err.message })
+      pendingRef.current = null
+      setPending(null)
+      setMessages(prev => [...prev, { type: 'error', text: err.message }])
+      onRefreshSessions?.()
+    } finally {
       onBusyChange(false)
     }
   }
@@ -108,11 +180,30 @@ export default function ChatArea({ sessionId, adapterId, isBridge, isMain, busy,
   return (
     <VStack flex={1} bg="#1e1e2e" gap={0} overflow="hidden">
       <Box flex={1} w="100%" overflow="auto" px={4} py={4}>
-        <MessageList messages={messages} isBridge={isBridge} adapterId={adapterId} />
+        <MessageList
+          messages={messages}
+          isBridge={isBridge}
+          adapterId={adapterId}
+          pending={pending}
+        />
         <div ref={scrollRef} />
       </Box>
 
-      {!isBridge && (
+      {isBridge ? (
+        <HStack
+          w="100%"
+          px={4}
+          py={3}
+          bg="#181825"
+          borderTopWidth={1}
+          borderColor="#313244"
+          justify="center"
+        >
+          <Text fontSize="12px" color="#6c7086">
+            🔒 该会话只能通过 {String(adapterId || '').toUpperCase()} 回复
+          </Text>
+        </HStack>
+      ) : (
         <HStack w="100%" px={4} py={3} bg="#181825" borderTopWidth={1} borderColor="#313244" gap={2}>
           <Textarea
             flex={1}
@@ -142,7 +233,7 @@ export default function ChatArea({ sessionId, adapterId, isBridge, isMain, busy,
             _hover={{ bg: '#a8c5ff' }}
             _disabled={{ bg: '#45475a', color: '#6c7086', cursor: 'not-allowed' }}
           >
-            发送
+            {busy ? '运行中…' : '发送'}
           </Button>
         </HStack>
       )}

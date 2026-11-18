@@ -22,6 +22,11 @@ export default function App() {
   // 初始化
   useEffect(() => {
     initApp()
+    // Bridge 端收到结果后刷新会话列表（即使当前看的是 PC 会话）
+    const unsub = window.jarvis.onBridgeEvent?.((event) => {
+      if (event.type === 'result' || event.type === 'released') refreshSessions()
+    })
+    return () => unsub?.()
   }, [])
 
   async function initApp() {
@@ -30,9 +35,7 @@ export default function App() {
       setConfig(cfg)
 
       const mainSession = await window.jarvis.getMainSession({ cwd: null })
-      if (mainSession?.sessionId) {
-        setCurrentSessionId(mainSession.sessionId)
-      }
+      setCurrentSessionId(mainSession?.sessionId || '__main__')
 
       refreshSessions()
     } catch (err) {
@@ -49,11 +52,16 @@ export default function App() {
     }
   }
 
-  function handleSelectSession(sessionId, isBridge = false, adapterId = null) {
+  function handleSelectSession(sessionId, isBridge = false, adapterId = null, isMain = false) {
     setCurrentSessionId(sessionId)
     setIsBridgeSession(isBridge)
     setCurrentAdapterId(adapterId)
-    setIsMainSession(sessionId.startsWith('__main__') || !isBridge)
+    setIsMainSession(isBridge ? false : !!isMain)
+  }
+
+  function handleSessionChange(newSessionId) {
+    setCurrentSessionId(newSessionId)
+    refreshSessions()
   }
 
   return (
@@ -111,6 +119,8 @@ export default function App() {
           isMain={isMainSession}
           busy={busy}
           onBusyChange={setBusy}
+          onSessionChange={handleSessionChange}
+          onRefreshSessions={refreshSessions}
         />
       </HStack>
 

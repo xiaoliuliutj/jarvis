@@ -209,7 +209,9 @@ ipcMain.handle('send-message', async (event, { prompt, model, permissionMode, se
 
   // 读取会话工作目录（用于权限控制）
   const store = memoryStoreCache.get(agentId)
-  const workDirs = store && sessionId ? store.getSessionWorkDirs(cwd, sessionId) : []
+  // 前端占位会话 ID（__main__ / __new__）不参与续接和工作目录查询
+  const providedSessionId = sessionId && !String(sessionId).startsWith('__') ? sessionId : null
+  const workDirs = store && providedSessionId ? store.getSessionWorkDirs(cwd, providedSessionId) : []
 
   let agent
   try {
@@ -219,14 +221,32 @@ ipcMain.handle('send-message', async (event, { prompt, model, permissionMode, se
   }
 
   // 主会话：从 store 取真实 sessionId，确保每次都能续接上一次的会话
-  let resumeSessionId = sessionId || null
+  let resumeSessionId = providedSessionId
   if (isMain && store) {
     const mainSession = store.getOrCreateMainSession(cwd)
-    if (mainSession?.sessionId) resumeSessionId = mainSession.sessionId
+    resumeSessionId = mainSession?.sessionId || null
   }
   // 新建会话（没有 sessionId 且非主会话）：强制不续接任何会话
   // 普通会话（有 sessionId）：直接用 sessionId 续接
-  const forceNew = !isMain && !sessionId
+  const forceNew = !isMain && !providedSessionId
+
+  // 后端统一落盘：不依赖前端是否调用 appendSessionMessage。
+  // 只记录 user / tool / assistant，中间流式文本不重复记录。
+  const turnRecords = [
+    { type: 'user', text: prompt, timestamp: new Date().toISOString() },
+  ]
+  const persistTurn = (finalSessionId, resultEvent) => {
+    if (!store || !finalSessionId) return
+    for (const rec of turnRecords) {
+      store.appendSessionMessage(cwd, finalSessionId, rec)
+    }
+    store.appendSessionMessage(cwd, finalSessionId, {
+      type: 'assistant',
+      text: resultEvent.text,
+      timestamp: new Date().toISOString(),
+    })
+    store.updateSessionName(cwd, finalSessionId, prompt.slice(0, 20))
+  }
 
   for await (const event_ of agent.run(prompt, {
     model: resolvedModel,
@@ -240,16 +260,26 @@ ipcMain.handle('send-message', async (event, { prompt, model, permissionMode, se
     forceNew,
   })) {
     if (event_.type === 'tool') {
+      turnRecords.push({
+        type: 'tool',
+        name: event_.name,
+        input: event_.input,
+        timestamp: new Date().toISOString(),
+      })
       event.sender.send('stream-tool', { name: event_.name, input: event_.input })
     } else if (event_.type === 'text') {
       event.sender.send('stream-text', { text: event_.text })
     } else if (event_.type === 'memory') {
       event.sender.send('memory-event', event_)
     } else if (event_.type === 'result') {
+      const finalSessionId = event_.sessionId || resumeSessionId
       // 主会话首次发消息后，把 SDK 分配的真实 sessionId 持久化到 index
-      if (isMain && event_.sessionId && store) {
-        store.setMainSessionId(cwd, event_.sessionId)
+      if (isMain && finalSessionId && store) {
+        store.setMainSessionId(cwd, finalSessionId)
       }
+      persistTurn(finalSessionId, event_)
+      // 保留 result 事件，兼容依赖 onResult 的旧渲染层
+      event.sender.send('result', event_)
       return event_
     }
   }
