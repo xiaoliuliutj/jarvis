@@ -5,7 +5,7 @@ import {
   Box,
   Button,
   Text,
-  Select,
+  NativeSelect,
 } from '@chakra-ui/react'
 
 export default function SettingsPanel({ config, onClose }) {
@@ -23,7 +23,7 @@ export default function SettingsPanel({ config, onClose }) {
       zIndex={100}
       overflow="auto"
     >
-      <VStack align="flex-start" spacing={0} h="100%">
+      <VStack align="flex-start" gap={0} h="100%">
         {/* 标题栏 */}
         <HStack w="100%" px={4} py={3} justify="space-between" borderBottomWidth={1} borderColor="#313244" flex="none">
           <Text fontWeight={600} fontSize="14px" color="#cdd6f4">
@@ -35,10 +35,10 @@ export default function SettingsPanel({ config, onClose }) {
         </HStack>
 
         {/* 内容 */}
-        <VStack w="100%" flex={1} px={3} py={3} spacing={4} align="flex-start" overflow="auto">
+        <VStack w="100%" flex={1} px={3} py={3} gap={4} align="flex-start" overflow="auto">
           {config && (
             <>
-              <VStack w="100%" spacing={1} align="flex-start">
+              <VStack w="100%" gap={1} align="flex-start">
                 <Text fontSize="12px" fontWeight={500} color="#6c7086">
                   当前模型
                 </Text>
@@ -57,14 +57,24 @@ export default function SettingsPanel({ config, onClose }) {
                 </Box>
               </VStack>
 
-              <VStack w="100%" spacing={1} align="flex-start">
+              <VStack w="100%" gap={1} align="flex-start">
                 <Text fontSize="12px" fontWeight={500} color="#6c7086">
                   权限模式
                 </Text>
-                <Select fontSize="12px" borderRadius="4px" defaultValue="rulesOnly" bg="#1a1a22" color="#cdd6f4" borderColor="#313244">
-                  <option value="rulesOnly">规则模式</option>
-                  <option value="full">完全访问</option>
-                </Select>
+                <NativeSelect.Root w="100%" size="sm">
+                  <NativeSelect.Field
+                    fontSize="12px"
+                    borderRadius="4px"
+                    defaultValue="rulesOnly"
+                    bg="#1a1a22"
+                    color="#cdd6f4"
+                    borderColor="#313244"
+                  >
+                    <option value="rulesOnly">规则模式</option>
+                    <option value="full">完全访问</option>
+                  </NativeSelect.Field>
+                  <NativeSelect.Indicator />
+                </NativeSelect.Root>
               </VStack>
             </>
           )}

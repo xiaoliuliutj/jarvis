@@ -3,13 +3,13 @@ import { VStack, HStack, Box, Text } from '@chakra-ui/react'
 
 export default function MessageList({ messages, isBridge = false, adapterId = null }) {
   return (
-    <VStack align="flex-start" w="100%" spacing={2}>
+    <VStack align="flex-start" w="100%" gap={2}>
       {messages.map((msg, idx) => {
         if (isBridge) {
           // Bridge 消息格式
           if (msg.type === 'user') {
             return (
-              <VStack key={idx} align="flex-end" w="100%" spacing={0.5}>
+              <VStack key={idx} align="flex-end" w="100%" gap={0.5}>
                 <Box
                   bg="#313244"
                   border="1px solid #45475a"
@@ -29,7 +29,7 @@ export default function MessageList({ messages, isBridge = false, adapterId = nu
             )
           } else if (msg.type === 'assistant') {
             return (
-              <VStack key={idx} align="flex-start" w="100%" spacing={0.5}>
+              <VStack key={idx} align="flex-start" w="100%" gap={0.5}>
                 <Text fontSize="11px" fontWeight={500} color="#6c7086">
                   Jarvis → {adapterId?.toUpperCase()}
                 </Text>

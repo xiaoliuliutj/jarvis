@@ -18,7 +18,6 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [config, setConfig] = useState(null)
-  const { colorMode } = useColorMode()
 
   // 初始化
   useEffect(() => {
@@ -58,7 +57,7 @@ export default function App() {
   }
 
   return (
-    <VStack h="100vh" spacing={0} bg="#1e1e2e">
+    <VStack h="100vh" gap={0} bg="#1e1e2e">
       {/* 标题栏 */}
       <HStack
         h="40px"
@@ -70,13 +69,13 @@ export default function App() {
         flex="none"
         css={{ WebkitAppRegion: 'drag' }}
       >
-        <HStack spacing={2} css={{ WebkitAppRegion: 'no-drag' }}>
+        <HStack gap={2} css={{ WebkitAppRegion: 'no-drag' }}>
           <Box fontSize="16px" color="#89b4fa">✦</Box>
           <Box fontWeight={600} fontSize="14px" color="#89b4fa">
             Jarvis
           </Box>
         </HStack>
-        <HStack spacing={1} css={{ WebkitAppRegion: 'no-drag' }}>
+        <HStack gap={1} css={{ WebkitAppRegion: 'no-drag' }}>
           <Button
             size="sm"
             variant="ghost"
@@ -97,7 +96,7 @@ export default function App() {
       </HStack>
 
       {/* 主体 */}
-      <HStack flex={1} spacing={0} w="100%" overflow="hidden">
+      <HStack flex={1} gap={0} w="100%" overflow="hidden">
         <Sidebar
           sessions={sessions}
           currentSessionId={currentSessionId}

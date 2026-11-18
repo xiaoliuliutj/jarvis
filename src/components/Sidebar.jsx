@@ -54,7 +54,7 @@ export default function Sidebar({ sessions, currentSessionId, onSelectSession, o
       _hover={{ bg: '#1a1a22' }}
       onClick={() => onSelectSession(session.sessionId, isBridge, adapterId)}
     >
-      <VStack align="flex-start" spacing={0.5} w="100%">
+      <VStack align="flex-start" gap={0.5} w="100%">
         <Text fontSize="12.5px" fontWeight={450} color={isActive ? '#89b4fa' : '#cdd6f4'}>
           {session.name || '新会话'}
         </Text>
@@ -72,7 +72,7 @@ export default function Sidebar({ sessions, currentSessionId, onSelectSession, o
       bg="#181825"
       borderRightWidth={1}
       borderColor="#313244"
-      spacing={0}
+      gap={0}
       overflow="hidden"
     >
       <Button
@@ -81,7 +81,7 @@ export default function Sidebar({ sessions, currentSessionId, onSelectSession, o
         py={2}
         m={2.5}
         variant="outline"
-        colorScheme="brand"
+        colorPalette="blue"
         fontSize="12.5px"
         justifyContent="flex-start"
         onClick={() => window.jarvis.newSession()}
@@ -92,7 +92,7 @@ export default function Sidebar({ sessions, currentSessionId, onSelectSession, o
         ＋ 新建会话
       </Button>
 
-      <VStack w="100%" flex={1} overflow="auto" spacing={0} px={1.5} py={1}>
+      <VStack w="100%" flex={1} overflow="auto" gap={0} px={1.5} py={1}>
         {mainSessions.map(s => (
           <SessionEntry
             key={s.sessionId}
@@ -133,7 +133,7 @@ export default function Sidebar({ sessions, currentSessionId, onSelectSession, o
         {/* Bridge 适配器会话 */}
         {bridgeAdapters.map(({ adapterId, sessions: adapterSessions }) => (
           adapterSessions && adapterSessions.length > 0 && (
-            <VStack key={adapterId} w="100%" spacing={1}>
+            <VStack key={adapterId} w="100%" gap={1}>
               <Text fontSize="11px" fontWeight={500} color="#6c7086" w="100%">
                 {ADAPTER_ICONS[adapterId] || '🔗'} {adapterId.toUpperCase()}
               </Text>

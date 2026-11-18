@@ -106,14 +106,14 @@ export default function ChatArea({ sessionId, adapterId, isBridge, isMain, busy,
   }
 
   return (
-    <VStack flex={1} bg="#1e1e2e" spacing={0} overflow="hidden">
+    <VStack flex={1} bg="#1e1e2e" gap={0} overflow="hidden">
       <Box flex={1} w="100%" overflow="auto" px={4} py={4}>
         <MessageList messages={messages} isBridge={isBridge} adapterId={adapterId} />
         <div ref={scrollRef} />
       </Box>
 
       {!isBridge && (
-        <HStack w="100%" px={4} py={3} bg="#181825" borderTopWidth={1} borderColor="#313244" spacing={2}>
+        <HStack w="100%" px={4} py={3} bg="#181825" borderTopWidth={1} borderColor="#313244" gap={2}>
           <Textarea
             flex={1}
             value={input}
@@ -133,7 +133,7 @@ export default function ChatArea({ sessionId, adapterId, isBridge, isMain, busy,
             _focus={{ borderColor: '#89b4fa', boxShadow: '0 0 0 1px #89b4fa' }}
           />
           <Button
-            colorScheme="brand"
+            colorPalette="blue"
             onClick={handleSend}
             disabled={busy || !input.trim()}
             flexShrink={0}
