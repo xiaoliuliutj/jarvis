@@ -38,10 +38,10 @@ function clearState(principalId) {
 }
 
 function presetFromText(text) {
-  if (/^1$|默认|default|随便|跳过|不设置|不用设置/i.test(text)) return 'default'
-  if (/^2$|简洁|高效|concise/i.test(text)) return 'concise'
-  if (/^3$|温柔|陪伴|warm/i.test(text)) return 'warm'
-  if (/^4$|元气|活泼|lively/i.test(text)) return 'lively'
+  if (/^1\b|默认|default|随便|跳过|不设置|不用设置/i.test(text)) return 'default'
+  if (/^2\b|简洁|高效|concise/i.test(text)) return 'concise'
+  if (/^3\b|温柔|陪伴|warm/i.test(text)) return 'warm'
+  if (/^4\b|元气|活泼|lively/i.test(text)) return 'lively'
   return null
 }
 
@@ -92,7 +92,7 @@ function handleReply(principalId, text) {
     return { handled: true, reply: askForCustom(principalId) }
   }
 
-  if (/^5$/.test(raw)) {
+  if (/^5\b/.test(raw)) {
     return { handled: true, reply: askForCustom(principalId) }
   }
 
