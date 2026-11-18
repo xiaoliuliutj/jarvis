@@ -8,7 +8,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { writePersona, readPersona } from '../../../../core/user-store.mjs'
+import { writePersona, readPersona } from '../../../core/user-store.mjs'
 
 const principalId = process.env.JARVIS_PRINCIPAL_ID
 

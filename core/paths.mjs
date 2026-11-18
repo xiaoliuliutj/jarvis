@@ -5,7 +5,8 @@
  *   config/           用户配置（实际文件不入库）
  *   userdata/         每个 principal 的会话/记忆/工作区/人设/cron，不入库
  *   userdata/tools/   用户创建的工具，所有用户共享加载
- *   agents/.../tools/ 系统工具，所有用户可用，只有 maintainer/owner 可改
+ *   agents/tools/     系统工具，所有用户可用，只有 maintainer/owner 可改
+ *   agents/memory|sessions/  历史遗留的全局记忆/会话，已停用但保留
  */
 
 import path from 'path'
@@ -16,7 +17,7 @@ export const ROOT = path.resolve(import.meta.dirname, '..')
 export const CONFIG_DIR = path.join(ROOT, 'config')
 export const USERDATA_DIR = path.join(ROOT, 'userdata')
 export const USER_TOOLS_DIR = path.join(USERDATA_DIR, 'tools')
-export const SYSTEM_TOOLS_DIR = path.join(ROOT, 'agents', 'claude-cc', 'tools')
+export const SYSTEM_TOOLS_DIR = path.join(ROOT, 'agents', 'tools')
 export const RELOAD_SIGNAL_FILE = path.join(SYSTEM_TOOLS_DIR, '_reload.signal')
 
 export const CREDENTIALS_FILE = path.join(CONFIG_DIR, 'credentials.json')
@@ -60,4 +61,8 @@ export function personaFile(principalId) {
 
 export function cronsFile(principalId) {
   return path.join(principalDir(principalId), 'crons.json')
+}
+
+export function schedulesFile(principalId) {
+  return path.join(principalDir(principalId), 'schedules.json')
 }

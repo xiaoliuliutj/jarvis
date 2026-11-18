@@ -37,10 +37,11 @@ contextBridge.exposeInMainWorld('jarvis', {
   readUserSessionMessages: (principalId, sessionId) =>
     ipcRenderer.invoke('read-user-session-messages', { principalId, sessionId }),
 
-  // Bridge 实时事件 / main cron
+  // Bridge 实时事件 / main cron / main 日程提醒
   onBridgeEvent: (cb) => subscribe('bridge-event', cb),
   onCronResult: (cb) => subscribe('cron-result', cb),
   onCronEvent: (cb) => subscribe('cron-event', cb),
+  onScheduleReminder: (cb) => subscribe('schedule-reminder', cb),
 
   // 窗口
   minimize: () => ipcRenderer.send('minimize-window'),

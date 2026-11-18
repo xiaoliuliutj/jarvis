@@ -80,7 +80,7 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
       : []
 
     let result = null
-    const { run } = await import('../agents/claude-cc/agent.mjs')
+    const { run } = await import('../agents/agent.mjs')
 
     for await (const event of run(prompt, {
       model: getModel(),

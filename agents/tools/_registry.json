@@ -50,7 +50,7 @@
   },
   {
     "name": "notes",
-    "description": "记录工具：待办/笔记/日程，写入当前用户自己的工作区 notes 目录",
+    "description": "记录工具：待办、笔记、纯文本日程记录；需要定时提醒请用 schedule 工具",
     "enabled": true,
     "createdAt": "2026-11-15T04:24:39.364Z",
     "version": "1.0.0"
@@ -74,6 +74,13 @@
     "description": "管理当前用户自己的 AI 人设（persona.md），用户可以让自己的人设由 AI 修改",
     "enabled": true,
     "createdAt": "2026-11-18T15:10:13.907Z",
+    "version": "1.0.0"
+  },
+  {
+    "name": "schedule",
+    "description": "日程工具：添加、查看、修改、删除当前用户自己的日程，并按提前量提醒",
+    "enabled": true,
+    "createdAt": "2026-11-18T17:00:25.832Z",
     "version": "1.0.0"
   }
 ]

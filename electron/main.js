@@ -17,6 +17,7 @@ const PC_MAIN_ID = 'pc-main'
 
 let core = null
 let mainCron = null
+let mainSchedule = null
 let win = null
 
 // ── 重启调度 ──────────────────────────────────────────────────────────────────
@@ -126,6 +127,7 @@ async function initCore() {
     principals: await imp('core/principals.mjs'),
     conversation: await imp('core/conversation.mjs'),
     cron: await imp('core/cron.mjs'),
+    schedule: await imp('core/schedule.mjs'),
   }
 }
 
@@ -184,12 +186,30 @@ function startMainCron() {
   })
 }
 
+// ── main 日程提醒 ─────────────────────────────────────────────────────────────
+// 外部用户日程在 Bridge 里发回自己的账号；main 日程只推送到 PC UI。
+
+function startMainSchedule() {
+  mainSchedule = core.schedule.startScheduleManager({
+    principalIds: [PC_MAIN_ID],
+    enqueue: (_id, fn) => fn(),
+    deliver: async (principal, item) => {
+      console.log(`[schedule] main reminder: ${item.title}`)
+      win?.webContents.send('schedule-reminder', {
+        principalId: principal.id,
+        schedule: item,
+      })
+    },
+  })
+}
+
 // ── 启动 ──────────────────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
   await initCore()
   createWindow()
   startMainCron()
+  startMainSchedule()
   connectBridgeWS()
 })
 
@@ -244,12 +264,12 @@ ipcMain.handle('read-user-session-messages', (_event, { principalId, sessionId }
 // 配置：只暴露模型等非敏感信息；凭证不进入 UI
 ipcMain.handle('get-config', () => ({
   model: core.config.getModel(),
-  activeAgent: 'claude-cc',
-  availableAgents: ['claude-cc'],
+  activeAgent: 'jarvis',
+  availableAgents: ['jarvis'],
 }))
 
 ipcMain.handle('get-agent-meta', async () => {
-  const mod = await import(pathToFileURL(path.join(APP_DIR, 'agents', 'claude-cc', 'agent.mjs')).href)
+  const mod = await import(pathToFileURL(path.join(APP_DIR, 'agents', 'agent.mjs')).href)
   return {
     name: mod.name,
     description: mod.description,
@@ -295,6 +315,7 @@ function connectBridgeWS() {
 
 app.on('will-quit', () => {
   mainCron?.stop()
+  mainSchedule?.stop()
   if (bridgeReconnectTimer) clearTimeout(bridgeReconnectTimer)
   bridgeWs?.close()
 })

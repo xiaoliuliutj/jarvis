@@ -1,7 +1,7 @@
 /**
  * 工具注册与加载。
  *
- * 系统工具：agents/claude-cc/tools/（项目内，只有 maintainer/owner 可改）
+ * 系统工具：agents/tools/（项目内，只有 maintainer/owner 可改）
  * 用户工具：userdata/tools/<ownerId>/<toolName>/（所有用户加载和使用）
  *
  * 所有启用工具都会加载给所有会话；所有权只在 _meta 管理操作时校验。

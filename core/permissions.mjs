@@ -29,8 +29,8 @@ const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 
 // 迁移前遗留的全局会话/记忆目录：不再使用，但含个人数据，禁止文件工具访问
 const LEGACY_DATA_DIRS = [
-  path.join(ROOT, 'agents', 'claude-cc', 'memory'),
-  path.join(ROOT, 'bridge', 'sessions'),
+  path.join(ROOT, 'agents', 'memory'),
+  path.join(ROOT, 'agents', 'sessions'),
 ]
 
 const allow = () => ({ behavior: 'allow' })

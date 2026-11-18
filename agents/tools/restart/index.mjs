@@ -7,7 +7,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 
 const execFileAsync = promisify(execFile)
-const ROOT = path.resolve(import.meta.dirname, '../../../..')
+const ROOT = path.resolve(import.meta.dirname, '../../..')
 const BRIDGE_HTTP = 'http://localhost:7779'
 
 function bridgePost(pathname) {

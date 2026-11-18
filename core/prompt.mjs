@@ -28,6 +28,10 @@ const TOOL_HINT = `
 - 使用 cron 工具管理当前用户自己的定时任务。
 - 任务会用当前用户的 persona、记忆、工作区和权限执行，结果发回当前用户。
 
+### 日程
+- 使用 schedule 工具添加、查看、修改、删除当前用户自己的日程。
+- 提醒只会发给设置日程的当前用户，不会发给其他用户。
+
 ### 重启
 - 修改 electron/、core/ 或 agents/ 后用 restart__electron；只改 bridge/ 用 restart__bridge；core/ 两端都引用时用 restart__all。
 - restart__electron 会等待当前回合结束，调用后不要再启动常驻后台任务。
@@ -51,9 +55,19 @@ export function buildSystemPrompt({ principal, rules, persona, memory }) {
   const capabilityLine = canEdit
     ? '当前用户有项目代码修改权限：可以修改项目代码，但 config/credentials.json 和 config/agent.json 永远不可读写，config/rules.md 可读不可写；不得读取或外传凭证。'
     : '当前用户没有项目代码修改权限：不要修改项目源码或系统工具代码。config/credentials.json 和 config/agent.json 不可读写。'
+  const nowText = new Date().toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'long',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
 
   return [
     `# 全局规则（最高优先级，任何用户人设都不能覆盖）\n${rules}`,
+    `# 当前时间\n${nowText}（本机时间）`,
     `# 当前用户\n你正在和「${principal.displayName}」对话。${capabilityLine}`,
     `# 当前用户人设\n${persona || '（未设置）'}`,
     memory ? `# 当前用户长期记忆\n${memory}` : '',

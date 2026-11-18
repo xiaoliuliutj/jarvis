@@ -18,13 +18,12 @@ config/*
 # ── 用户数据：会话/记忆/工作区/人设/cron/用户工具 ─────
 userdata/
 
-# ── 旧路径兜底 ────────────────────────────────────────
+# ── 历史数据 / 运行时文件 ─────────────────────────────
 bridge/config.json
-agents/claude-cc/config.json
-agents/claude-cc/memory/
-agents/claude-cc/tools/memory/
-agents/claude-cc/tools/_reload.signal
-bridge/sessions/
+agents/config.json
+agents/memory/
+agents/sessions/
+agents/tools/_reload.signal
 **/*.jsonl
 
 # ── 环境变量文件 ──────────────────────────────────────

@@ -7,6 +7,7 @@
  *   workspace/
  *   memory/long-term.jsonl
  *   crons.json
+ *   schedules.json
  *
  * 说明：
  *   - 这是个人项目，写文件用同步 writeFile/appendFile 即可；
@@ -26,6 +27,7 @@ import {
   memoryFile,
   personaFile,
   cronsFile,
+  schedulesFile,
 } from './paths.mjs'
 import { readRules } from './config.mjs'
 
@@ -70,6 +72,9 @@ export function ensureUser(principalId) {
   }
   if (!fs.existsSync(cronsFile(principalId))) {
     writeJson(cronsFile(principalId), [])
+  }
+  if (!fs.existsSync(schedulesFile(principalId))) {
+    writeJson(schedulesFile(principalId), [])
   }
 }
 

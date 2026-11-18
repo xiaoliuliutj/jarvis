@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Box, VStack, HStack, Button } from '@chakra-ui/react'
+import { Box, VStack, HStack, Button, Text } from '@chakra-ui/react'
 import Sidebar from './Sidebar'
 import ChatArea from './ChatArea'
 import SettingsPanel from './SettingsPanel'
@@ -12,6 +12,19 @@ const titleButton = {
   color: ui.sidebar.subtext,
   _hover: { bg: ui.sidebar.hover },
   _focusVisible: { outline: `2px solid ${ui.sidebar.accent}`, outlineOffset: '2px' },
+}
+
+function formatScheduleTime(iso) {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
 }
 
 /**
@@ -30,6 +43,7 @@ export default function App() {
   const [current, setCurrent] = useState({ kind: 'main', sessionId: null, name: '主会话' })
   const [busy, setBusy] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [scheduleReminder, setScheduleReminder] = useState(null)
 
   useEffect(() => {
     init()
@@ -45,6 +59,20 @@ export default function App() {
     })
     return () => unsub?.()
   }, [])
+
+  // main 的日程提醒由 Electron 推送过来；30 秒后自动收起
+  useEffect(() => {
+    const unsub = window.jarvis.onScheduleReminder?.((data) => {
+      if (data?.schedule) setScheduleReminder(data.schedule)
+    })
+    return () => unsub?.()
+  }, [])
+
+  useEffect(() => {
+    if (!scheduleReminder) return
+    const timer = setTimeout(() => setScheduleReminder(null), 30_000)
+    return () => clearTimeout(timer)
+  }, [scheduleReminder])
 
   async function init() {
     const cfg = await window.jarvis.getConfig()
@@ -148,6 +176,45 @@ export default function App() {
           onRefreshUsers={refreshUsers}
         />
       </HStack>
+
+      {scheduleReminder && (
+        <Box
+          position="fixed"
+          top="52px"
+          right="16px"
+          w="320px"
+          zIndex={150}
+          bg={ui.canvas.surface}
+          borderWidth={ui.dividerWidth}
+          borderColor={ui.canvas.border}
+          borderRadius="12px"
+          boxShadow="0 10px 30px rgba(11, 31, 20, 0.16)"
+          p={3}
+        >
+          <VStack align="stretch" gap={1.5}>
+            <HStack justify="space-between" align="center">
+              <HStack gap={2} align="center">
+                <Box color={ui.accent.base} fontSize="14px">⏰</Box>
+                <Text fontSize="12px" fontWeight={600} color={ui.accent.base}>日程提醒</Text>
+              </HStack>
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => setScheduleReminder(null)}
+                color={ui.canvas.muted}
+                _hover={{ bg: ui.canvas.surfaceMuted }}
+              >✕</Button>
+            </HStack>
+            <Text fontSize="14px" fontWeight={600} color={ui.canvas.text}>{scheduleReminder.title}</Text>
+            <Text fontSize="12px" color={ui.canvas.subtext}>{formatScheduleTime(scheduleReminder.startAt)}</Text>
+            {scheduleReminder.notes && (
+              <Text fontSize="12px" color={ui.canvas.muted} whiteSpace="pre-wrap">
+                {scheduleReminder.notes}
+              </Text>
+            )}
+          </VStack>
+        </Box>
+      )}
 
       {showSettings && <SettingsPanel config={config} onClose={() => setShowSettings(false)} />}
     </VStack>

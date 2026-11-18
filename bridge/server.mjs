@@ -23,6 +23,8 @@ import { ensureUser, getCurrentSession } from '../core/user-store.mjs'
 import { runTurn } from '../core/conversation.mjs'
 import { Scheduler } from '../core/scheduler.mjs'
 import { startCronManager } from '../core/cron.mjs'
+import { startScheduleManager } from '../core/schedule.mjs'
+import { formatScheduleReminder } from '../core/schedule-store.mjs'
 import { loadAdapters } from '../core/adapters.mjs'
 
 const config = loadBridgeConfig()
@@ -62,14 +64,15 @@ const scheduler = new Scheduler({
 
 // ── 入站消息 ──────────────────────────────────────────────────────────────────
 
-function sendReply(principalId, sourceType, accountId, externalUserId, result) {
+async function sendText(principalId, sourceType, accountId, externalUserId, text) {
   const adapter = adapters[sourceType]
-  if (!adapter) {
-    console.error(`[bridge] 未知 adapter: ${sourceType}`)
-    return
-  }
+  if (!adapter) throw new Error(`未知 adapter: ${sourceType}`)
+  await adapter.send(externalUserId, text, { accountId })
+}
+
+function sendReply(principalId, sourceType, accountId, externalUserId, result) {
   if (!result.text) return
-  adapter.send(externalUserId, result.text, { accountId }).catch(err => {
+  sendText(principalId, sourceType, accountId, externalUserId, result.text).catch(err => {
     console.error(`[bridge] 回复发送失败 (${principalId}):`, err.message)
   })
 }
@@ -160,6 +163,29 @@ const cron = startCronManager({
     if (!adapter) return
     await adapter.send(account.externalUserId, result.text, { accountId: account.accountId })
     broadcast({ type: 'cron_result', principalId: principal.id, taskId: task.id, text: result.text, sessionId: result.sessionId })
+  },
+})
+
+// ── 用户日程提醒（main 的日程在 Electron 里跑） ─────────────────────────────
+
+const schedule = startScheduleManager({
+  principalFilter: (p) => p.id !== 'pc-main',
+  enqueue: (principalId, fn) => scheduler.enqueue(principalId, fn),
+  deliver: async (principal, item) => {
+    const account = getPrimaryAccount(principal)
+    if (!account) throw new Error('没有可发送的账号')
+    await sendText(
+      principal.id,
+      account.sourceType,
+      account.accountId,
+      account.externalUserId,
+      formatScheduleReminder(item)
+    )
+  },
+  onEvent: (event) => {
+    if (event.type === 'schedule_reminder') {
+      console.log(`[schedule] 提醒已发送: ${event.principalId}`)
+    }
   },
 })
 
@@ -310,6 +336,7 @@ server.on('error', (err) => {
 function shutdown() {
   console.log('[bridge] shutting down...')
   cron.stop()
+  schedule.stop()
   for (const adapter of Object.values(adapters)) adapter.stop?.()
   server.close()
   wss.close()

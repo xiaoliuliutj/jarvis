@@ -48,11 +48,16 @@ E:\Jarvis\
 │   │   ├─ sessions\         # index.json + *.messages.jsonl
 │   │   ├─ workspace\
 │   │   ├─ memory\long-term.jsonl
-│   │   └─ crons.json
+│   │   ├─ crons.json
+│   │   └─ schedules.json    # 当前用户自己的日程
 │   ├─ <principalId>\        # 每个用户同结构
 │   └─ tools\
 │       └─ <ownerId>\<toolName>\   # 用户工具，所有用户加载
-└─ agents\claude-cc\tools\   # 系统工具，所有用户可用，仅 main 可改
+└─ agents\
+    ├─ agent.mjs
+    ├─ tools\                # 系统工具，所有用户可用，仅 maintainer/owner 可改
+    ├─ memory\               # 历史全局记忆（停用，gitignore）
+    └─ sessions\             # 历史全局会话（停用，gitignore）
 ```
 
 ---
@@ -97,6 +102,13 @@ E:\Jarvis\
 | I1 | 存储 | 不建数据库 | 文件型 JSON/JSONL |
 | I2 | 迁移 | 旧数据迁移 | 会话/记忆/cron/config/tools |
 | I3 | 运维 | 备份 | userdata 定期备份；日志本地 |
+| J1 | 日程 | 每用户日程存储 | `userdata/<id>/schedules.json` |
+| J2 | 日程 | 日程工具 | `schedule__add/list/update/delete`，只操作当前用户 |
+| J3 | 日程 | 提前提醒 | `remindBeforeMinutes` 0-10080，用户自选 |
+| J4 | 日程 | 提醒投递 | 用户发回自己的 adapter 账号；main 推送到 PC UI |
+| J5 | 日程 | 隔离 | 只提醒设置者，不跨用户读取或投递 |
+| K1 | 自省 | 每日复盘（待实现） | 每天 03:00 扫描前一天 00:00-24:00 所有会话 |
+| K2 | 自省 | Git 管理（待实现） | 有 bug 才修改；修改必须 commit，可追踪回溯 |
 
 ---
 
@@ -138,7 +150,7 @@ E:\Jarvis\
 - `config/credentials.json`、`config/agent.json`：Read/Glob/Grep/Write/Edit 全部拒绝。
 - `config/` 根目录的 Grep/Glob/LS 整目录操作拒绝，防止绕过单文件检查。
 - `config/_legacy-*` 历史备份整棵子树拒绝访问。
-- `agents/claude-cc/memory/`、`bridge/sessions/` 历史会话数据拒绝访问。
+- `agents/memory/`、`agents/sessions/` 历史会话数据拒绝访问。
 - `config/rules.md`：允许读，拒绝写。
 - 自己的 persona/workspace/memory：允许。
 - 其他用户的数据：拒绝。
@@ -149,7 +161,7 @@ E:\Jarvis\
 
 ### 5.4 工具
 
-- 系统工具：`agents/claude-cc/tools`。
+- 系统工具：`agents/tools`。
 - 用户工具：`userdata/tools/<ownerId>/<toolName>`。
 - 所有工具对所有会话加载。
 - `_meta` 按 principal 运行：
@@ -206,6 +218,36 @@ E:\Jarvis\
 - 用户关闭窗口时 supervisor 一并退出，不留下后台 Vite。
 - 打包模式没有 supervisor 时回退到 `app.relaunch()`。
 - Electron 异常崩溃会在 60 秒内最多自动拉起 3 次。
+
+### 5.10 日程系统
+
+- 每个用户自己的日程存 `userdata/<principalId>/schedules.json`，字段见 `core/schedule-store.mjs`。
+- `schedule__add/list/update/delete` 只操作 `JARVIS_PRINCIPAL_ID` 自己的数据，没有跨用户参数。
+- `remindBeforeMinutes` 由用户选择，范围 0-10080 分钟；`0` 表示准时。
+- 提醒窗口：`[startAt - remindBefore, startAt + 15 分钟]`，错过窗口不补发，避免重启刷屏。
+- 用户日程在 Bridge 进程轮询，提醒发回该用户自己的 adapter 账号。
+- main 日程在 Electron 进程轮询，提醒推送到 PC UI 的提醒卡片。
+- 提醒只发给设置者，不广播给其他用户。
+- PC 端不做日程管理面板；用户通过聊天里的 schedule 工具查看和管理。
+- `notes` 工具里的 schedule 只是纯文本记录，不负责提醒。
+
+### 5.11 每日自我复盘（待实现）
+
+需求：主会话每天 03:00 运行一次，采集前一天 00:00-24:00 的**所有 principal** 会话，检查是否有 Jarvis 自身的 bug 或问题；没有问题就不改，有问题才修复。修复必须进入 git，能够追踪和回溯。
+
+设计约束（未实现）：
+
+1. main cron 在 Electron 里触发，使用独立复盘 session，不影响正常主会话。
+2. 会话读取使用系统级只读读取器，绕过普通 Agent 的用户隔离，但只把分析结果交给 main；不要把其他用户的会话内容写进代码或提交。
+3. 无问题时只写一段复盘结论，不产生 commit。
+4. 有问题时：
+   - 从当前 main 创建分支 `auto-review/YYYY-MM-DD`
+   - 只修改代码/配置模板，不提交 userdata、config 实际文件或会话内容
+   - 运行 `scripts/restart-preflight.mjs`
+   - 提交 `auto-review: YYYY-MM-DD ...`
+   - 将分支 fast-forward 合回 main，并保留分支用于回溯
+   - 需要生效时调用 `restart__electron` / `restart__all`
+5. 当前状态：仅记录需求，未创建 cron，也未实现会话采集器。
 
 ---
 
@@ -264,6 +306,8 @@ E:\Jarvis\
 - 重启：preflight 检查、回合感知、force、10 分钟兜底、restart__all
 - 权限：config 根目录整目录搜索拒绝、`_legacy-*` 备份保护
 - 目录整理：旧设计文档归档到 `docs/archive/`，README 重写，移除 wait-for-vite 和未使用的 concurrently
+- agents 拍平：`agents/agent.mjs` + `agents/tools/`；旧全局记忆/会话移到 `agents/memory`、`agents/sessions`
+- 日程：每用户 `schedules.json` + schedule 工具 + Bridge/Electron 提醒器 + main PC 提醒卡片
 
 ### 验证
 
@@ -283,5 +327,6 @@ E:\Jarvis\
 - `config/rules.md` 里仍有旧的“系统工具仅主维护会话修改”表述，需要人类手动同步为 maintainer/owner；Agent 不得修改 rules.md
 - PC UI 只能查看用户当前会话；多会话切换/新建 UI 未做（存储层已支持）
 - principal 管理通过 `config/principals.json` 手动编辑；没有 UI
-- 旧 `agents/claude-cc/memory`、`bridge/sessions`、`config/_legacy-*` 作为历史数据保留（gitignore）
+- 旧 `agents/memory`、`agents/sessions`、`config/_legacy-*` 作为历史数据保留（gitignore）
+- 每日自我复盘（K1/K2）尚未实现，也没有创建 03:00 cron；本次只写入需求
 - main cron 只推送到 PC UI，不主动发外部渠道

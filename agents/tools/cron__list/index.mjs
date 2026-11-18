@@ -6,8 +6,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { listPrincipals } from '../../../../core/principals.mjs'
-import { readCrons } from '../../../../core/user-store.mjs'
+import { listPrincipals } from '../../../core/principals.mjs'
+import { readCrons } from '../../../core/user-store.mjs'
 
 const callerId = process.env.JARVIS_PRINCIPAL_ID
 const role = process.env.JARVIS_ROLE

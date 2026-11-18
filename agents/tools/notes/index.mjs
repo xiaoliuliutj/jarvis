@@ -3,7 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import fs from 'fs'
 import path from 'path'
-import { ensureUser, workspaceDir } from '../../../../core/user-store.mjs'
+import { ensureUser, workspaceDir } from '../../../core/user-store.mjs'
 
 // 笔记属于当前用户，写在 userdata/<principalId>/workspace/notes 下。
 const principalId = process.env.JARVIS_PRINCIPAL_ID
@@ -28,7 +28,7 @@ const server = new McpServer({ name: 'notes', version: '1.0.0' })
 // ── 添加记录 ──────────────────────────────────────────────────────────────────
 server.tool(
   'notes__add',
-  '添加一条记录。type=task(待办), note(笔记/资料), schedule(日程)',
+  '添加一条记录。type=task(待办), note(笔记/资料), schedule(纯文本日程记录，不会提醒；需要提醒请用 schedule__add)',
   {
     type:    z.enum(['task', 'note', 'schedule']).describe('记录类型'),
     title:   z.string().describe('标题或简短描述'),

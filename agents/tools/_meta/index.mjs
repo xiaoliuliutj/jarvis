@@ -5,7 +5,7 @@
  *   - 所有用户都可以创建工具；创建后所有用户都能使用
  *   - 只有创建者可以修改/删除自己的工具
  *   - main（maintainer）可以修改/删除所有用户工具
- *   - 系统工具在 agents/claude-cc/tools/ 下，只能由 maintainer/owner 通过项目文件修改
+ *   - 系统工具在 agents/tools/ 下，只能由 maintainer/owner 通过项目文件修改
  *
  * 用户工具存放在 userdata/tools/<ownerId>/<toolName>/。
  */
@@ -19,7 +19,7 @@ import {
   deleteUserTool,
   toggleUserTool,
   listAllTools,
-} from '../../../../core/tools.mjs'
+} from '../../../core/tools.mjs'
 
 const principalId = process.env.JARVIS_PRINCIPAL_ID
 const role = process.env.JARVIS_ROLE

@@ -5,7 +5,7 @@
  *   config/agent.json (含 API key)
  *   config/bridge.json (含微信 token + crons)
  *   config/global.md (全局人设)
- *   agents/claude-cc/memory/sessions/<hash>/...
+ *   agents/memory/sessions/<hash>/...
  *
  * 新：
  *   config/credentials.json + agent.json + bridge.json + rules.md + principals.json
@@ -21,7 +21,7 @@ import { createHash } from 'crypto'
 const ROOT = path.resolve(import.meta.dirname, '..')
 const CONFIG_DIR = path.join(ROOT, 'config')
 const USERDATA_DIR = path.join(ROOT, 'userdata')
-const OLD_MEMORY_DIR = path.join(ROOT, 'agents', 'claude-cc', 'memory')
+const OLD_MEMORY_DIR = path.join(ROOT, 'agents', 'memory')
 const OLD_SESSIONS_DIR = path.join(OLD_MEMORY_DIR, 'sessions')
 
 function readJson(p) { return JSON.parse(fs.readFileSync(p, 'utf8')) }

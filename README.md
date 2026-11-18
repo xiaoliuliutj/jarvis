@@ -37,14 +37,15 @@ config/                 实际配置（gitignore，只保留 *.example.* 模板�
 
 core/                   通用后端：paths / config / principals / user-store /
                         prompt / permissions / tools / conversation / scheduler / cron / adapters
-agents/claude-cc/       Claude Agent SDK 适配层和系统工具
+agents/                 Claude Agent SDK 适配层（agent.mjs）、系统工具 tools/、
+                        历史全局 memory/ 和 sessions/（停用，gitignore）
 bridge/                 Bridge Server、adapter、启动脚本
 electron/               Electron 主进程 / preload
 src/                    React 前端
 scripts/                dev supervisor、重启前检查、迁移、图标生成
 docs/                   当前扩展计划；archive/ 是历史设计
 userdata/               每用户数据 + 用户工具（gitignore）
-  pc-main/              persona、sessions、workspace、memory、crons
+  pc-main/              persona、sessions、workspace、memory、crons、schedules
   <principalId>/        外部用户，结构相同
   tools/<ownerId>/      用户创建的工具，所有用户加载
 ```
@@ -56,6 +57,14 @@ userdata/               每用户数据 + 用户工具（gitignore）
 - 全局规则：[config/rules.md](config/rules.md)。Agent 只能读，不能改；需要人工修改。
 - 模板：[config/agent.example.json](config/agent.example.json)、[config/credentials.example.json](config/credentials.example.json)、[config/bridge.example.json](config/bridge.example.json)。
 - 实际配置和 `userdata/` 都不会入库。
+
+## 日程
+
+通过聊天里的 `schedule__add / list / update / delete` 管理自己的日程，`remindBeforeMinutes` 选择提前多久提醒。
+
+- 外部用户的提醒发回自己的微信账号
+- main 的提醒显示为 PC 端右上角卡片
+- 日程只属于设置者，其他用户不可见
 
 ## 重启
 

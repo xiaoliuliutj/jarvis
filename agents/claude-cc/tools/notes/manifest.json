@@ -1,6 +1,0 @@
-{
-  "name": "notes",
-  "description": "记录工具，支持任务(task)、笔记(note)、日程(schedule)三类写入文件，落到 E:\\Jarvis\\agents\\claude-cc\\memory\\notes\\ 目录",
-  "createdAt": "2026-11-15T04:24:39.364Z",
-  "version": "1.0.0"
-}
