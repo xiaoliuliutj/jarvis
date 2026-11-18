@@ -190,6 +190,14 @@ E:\Jarvis\
 - 启动 Jarvis 的 shell 中的 `ANTHROPIC_*` / `CLAUDE_CODE_*` 不会带入，避免串用当前 CLI 的凭证。
 - `agent.json` 可能包含 token，因此对所有 Agent 禁止读写。
 
+### 5.9 自重启
+
+- 开发模式由 `scripts/dev-supervisor.mjs` 托管 Vite + Electron，替代 `concurrently -k`。
+- `restart__electron` → Bridge → supervisor `/restart-electron`：只重启 Electron，Vite 保持运行。
+- 用户关闭窗口时 supervisor 一并退出，不留下后台 Vite。
+- 打包模式没有 supervisor 时回退到 `app.relaunch()`。
+- Electron 异常崩溃会在 60 秒内最多自动拉起 3 次。
+
 ---
 
 ## 6. 迁移
@@ -243,7 +251,7 @@ E:\Jarvis\
 - 并发：Bridge 用户池 2，每 principal FIFO；main 在 Electron 独立 lane
 - Bridge 绑定 127.0.0.1；adapter 自动发现；微信 adapter 从 credentials 读取 token
 - PC 前端：主会话 + 用户只读会话；Markdown/工具折叠；删除旧 renderer/InputBar/styles
-- 启动：`npm run dev` 修复为 concurrently + wait-for-vite
+- 启动：`npm run dev` 由 `scripts/dev-supervisor.mjs` 托管 Vite + Electron，自重启不会杀掉 Vite
 
 ### 验证
 

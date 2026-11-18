@@ -13,7 +13,7 @@
 
 import express from 'express'
 import { WebSocketServer } from 'ws'
-import { createServer } from 'http'
+import { createServer, request as httpRequest } from 'http'
 import { spawn } from 'child_process'
 import path from 'path'
 import { ROOT } from '../core/paths.mjs'
@@ -224,9 +224,34 @@ app.post('/reload-renderer', (_req, res) => {
   res.json({ ok: true })
 })
 
-app.post('/relaunch-electron', (_req, res) => {
-  broadcast({ type: 'relaunch-electron' })
-  res.json({ ok: true })
+// 开发模式由 scripts/dev-supervisor.mjs 托管 Vite + Electron。
+// 优先让 supervisor 只重启 Electron；没有 supervisor（打包模式）时回退到 app.relaunch。
+function postSupervisor(pathname) {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest({
+      host: '127.0.0.1',
+      port: 7781,
+      path: pathname,
+      method: 'POST',
+      timeout: 1500,
+    }, res => {
+      res.resume()
+      res.on('end', () => resolve())
+    })
+    req.on('timeout', () => req.destroy(new Error('supervisor timeout')))
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+app.post('/relaunch-electron', async (_req, res) => {
+  try {
+    await postSupervisor('/restart-electron')
+    res.json({ ok: true, mode: 'supervisor' })
+  } catch {
+    broadcast({ type: 'relaunch-electron' })
+    res.json({ ok: true, mode: 'electron' })
+  }
 })
 
 app.post('/restart-bridge', (_req, res) => {

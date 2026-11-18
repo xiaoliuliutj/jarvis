@@ -48,7 +48,7 @@ server.tool(
 
 server.tool(
   'restart__electron',
-  '完整重启 Electron 应用。适用于修改了 electron/、core/ 或 agents/claude-cc/agent.mjs 之后。会关闭当前窗口并重新启动。',
+  '完整重启 Electron 应用。适用于修改了 electron/、core/ 或 agents/claude-cc/agent.mjs 之后。开发模式下由 dev supervisor 保持 Vite 存活，只重启 Electron 窗口。',
   {},
   async () => {
     try {

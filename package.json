@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "main": "electron/main.js",
   "scripts": {
-    "dev": "concurrently -k -n vite,electron -c blue,green \"vite --port 5173 --strictPort\" \"node scripts/wait-for-vite.mjs && electron .\"",
+    "dev": "node scripts/dev-supervisor.mjs",
     "build": "vite build",
     "start": "electron ."
   },
