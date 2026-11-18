@@ -38,7 +38,8 @@ function groupMessages(messages) {
 
 const userBubble = {
   bg: ui.userBubble.bg,
-  border: `${ui.dividerWidth}px solid ${ui.userBubble.border}`,
+  // 用户气泡不要描边，保持整块纯绿
+  border: 'none',
   borderRadius: '16px 16px 4px 16px',
   px: 3,
   py: 2,

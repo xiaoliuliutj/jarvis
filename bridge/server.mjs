@@ -245,12 +245,19 @@ function postSupervisor(pathname) {
 }
 
 app.post('/relaunch-electron', async (_req, res) => {
+  // Electron 在线时交给它调度：当前主会话回合结束后再重启。
+  if (wss.clients.size > 0) {
+    broadcast({ type: 'relaunch-electron' })
+    res.json({ ok: true, mode: 'electron' })
+    return
+  }
+
+  // PC UI 没连接（例如窗口已关）时，直接让 supervisor 拉起来。
   try {
     await postSupervisor('/restart-electron')
     res.json({ ok: true, mode: 'supervisor' })
   } catch {
-    broadcast({ type: 'relaunch-electron' })
-    res.json({ ok: true, mode: 'electron' })
+    res.json({ ok: false, error: 'Electron 未连接，supervisor 也不可用' })
   }
 })
 

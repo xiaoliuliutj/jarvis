@@ -69,10 +69,9 @@ export const ui = {
     on: '#f7fbf8',
   },
 
-  // 用户消息用深绿实心，和侧栏呼应
+  // 用户消息用深绿实心，和侧栏呼应；不描边
   userBubble: {
     bg: '#2a5d45',
-    border: '#3a7357',
     text: '#f1f9f3',
   },
 

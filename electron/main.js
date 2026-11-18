@@ -9,6 +9,7 @@
 
 const { app, BrowserWindow, ipcMain } = require('electron')
 const path = require('path')
+const http = require('http')
 const { pathToFileURL } = require('url')
 
 const APP_DIR = path.resolve(__dirname, '..')
@@ -17,6 +18,66 @@ const PC_MAIN_ID = 'pc-main'
 let core = null
 let mainCron = null
 let win = null
+
+// ── 重启调度 ──────────────────────────────────────────────────────────────────
+// 重启请求会等到当前主会话回合结束、消息落盘后再执行，避免打断工具/命令。
+
+let activeMainTurns = 0
+let pendingRelaunch = false
+let relaunching = false
+
+function postSupervisor(pathname) {
+  return new Promise(resolve => {
+    const req = http.request({
+      host: '127.0.0.1',
+      port: 7781,
+      path: pathname,
+      method: 'POST',
+      timeout: 1500,
+    }, res => {
+      res.resume()
+      res.on('end', () => resolve(res.statusCode >= 200 && res.statusCode < 300))
+    })
+    req.on('timeout', () => { req.destroy(); resolve(false) })
+    req.on('error', () => resolve(false))
+    req.end()
+  })
+}
+
+async function performRelaunch() {
+  if (relaunching) return
+  relaunching = true
+  const ok = await postSupervisor('/restart-electron')
+  if (!ok) {
+    // 打包模式或 supervisor 不在：回退到 Electron 自带的 relaunch
+    app.relaunch()
+    app.exit(0)
+  }
+}
+
+function requestRelaunch() {
+  if (relaunching) return
+  if (activeMainTurns > 0) {
+    pendingRelaunch = true
+    console.log('[main] 重启请求已挂起，等待当前回合结束')
+    return
+  }
+  void performRelaunch()
+}
+
+async function withMainTurn(fn) {
+  activeMainTurns += 1
+  try {
+    return await fn()
+  } finally {
+    activeMainTurns -= 1
+    if (activeMainTurns === 0 && pendingRelaunch) {
+      pendingRelaunch = false
+      console.log('[main] 当前回合已结束，执行挂起的重启')
+      void performRelaunch()
+    }
+  }
+}
 
 // ── core 模块加载 ─────────────────────────────────────────────────────────────
 // core 是 ESM；Electron 主进程是 CJS，用动态 import 加载。
@@ -54,7 +115,8 @@ function createWindow() {
   const isDev = !app.isPackaged
   if (isDev) {
     win.loadURL('http://localhost:5173')
-    win.webContents.openDevTools()
+    // 默认不开 DevTools；需要时用 JARVIS_DEVTOOLS=1 启动，或按 Ctrl+Shift+I
+    if (process.env.JARVIS_DEVTOOLS === '1') win.webContents.openDevTools()
   } else {
     win.loadFile(path.join(APP_DIR, 'dist', 'index.html'))
   }
@@ -66,12 +128,12 @@ function createWindow() {
 function startMainCron() {
   mainCron = core.cron.startCronManager({
     principalIds: [PC_MAIN_ID],
-    runTask: (principal, task) => core.conversation.runTurn({
+    runTask: (principal, task) => withMainTurn(() => core.conversation.runTurn({
       principalId: principal.id,
       prompt: task.prompt,
       source: 'cron',
       emit: (event) => win?.webContents.send('cron-event', event),
-    }),
+    })),
     deliver: async (principal, task, result) => {
       win?.webContents.send('cron-result', {
         principalId: principal.id,
@@ -106,7 +168,7 @@ ipcMain.on('close-window', () => win?.close())
 // ── 主会话 IPC ────────────────────────────────────────────────────────────────
 
 ipcMain.handle('send-message', async (event, { prompt, sessionId }) => {
-  return core.conversation.runTurn({
+  return withMainTurn(() => core.conversation.runTurn({
     principalId: PC_MAIN_ID,
     prompt,
     sessionId: sessionId || null,
@@ -115,7 +177,7 @@ ipcMain.handle('send-message', async (event, { prompt, sessionId }) => {
       else if (ev.type === 'tool') event.sender.send('stream-tool', ev)
       else if (ev.type === 'memory') event.sender.send('memory-event', ev)
     },
-  })
+  }))
 })
 
 ipcMain.handle('get-main-session', () => core.store.getCurrentSession(PC_MAIN_ID))
@@ -181,8 +243,7 @@ function connectBridgeWS() {
   bridgeWs.on('message', (data) => {
     const event = JSON.parse(data)
     if (event.type === 'relaunch-electron') {
-      app.relaunch()
-      app.exit(0)
+      requestRelaunch()
       return
     }
     win?.webContents.send('bridge-event', event)

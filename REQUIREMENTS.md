@@ -193,7 +193,8 @@ E:\Jarvis\
 ### 5.9 自重启
 
 - 开发模式由 `scripts/dev-supervisor.mjs` 托管 Vite + Electron，替代 `concurrently -k`。
-- `restart__electron` → Bridge → supervisor `/restart-electron`：只重启 Electron，Vite 保持运行。
+- `restart__electron` → Bridge → Electron：主会话回合结束后再执行重启，消息先落盘。
+- Electron 再调用 supervisor `/restart-electron`：只重启 Electron，Vite 保持运行。
 - 用户关闭窗口时 supervisor 一并退出，不留下后台 Vite。
 - 打包模式没有 supervisor 时回退到 `app.relaunch()`。
 - Electron 异常崩溃会在 60 秒内最多自动拉起 3 次。
