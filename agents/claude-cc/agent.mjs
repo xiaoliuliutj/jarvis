@@ -38,11 +38,52 @@ const MEMORY_TRIGGER_RE = /记住|记一下|别忘了|记录一下|remember\s+th
 const SIGNAL_FILE = path.join(import.meta.dirname, 'tools', '_reload.signal')
 
 /**
+ * 构造 Agent 子进程环境。
+ *
+ * 规则：
+ *   - agent.json 的 env 优先级高于启动 Jarvis 的 shell 环境
+ *   - shell 里继承的 ANTHROPIC_* / CLAUDE_CODE_* 全部清掉，避免串用当前 CLI 的凭证
+ *   - authMode 决定注入 AUTH_TOKEN（Bearer）还是 API_KEY（x-api-key）
+ */
+export function buildInjectedEnv({
+  apiKey,
+  baseUrl,
+  authMode = 'both',
+  agentEnv = {},
+  patchedPATH,
+  baseEnv = process.env,
+} = {}) {
+  const injectedEnv = { ...baseEnv, ...agentEnv, ...(patchedPATH ? { PATH: patchedPATH } : {}) }
+
+  for (const key of Object.keys(injectedEnv)) {
+    if (key.startsWith('ANTHROPIC_') || key.startsWith('CLAUDE_CODE_')) {
+      if (!(key in agentEnv)) delete injectedEnv[key]
+    }
+  }
+  delete injectedEnv.CLAUDECODE
+
+  if (authMode === 'auth_token') {
+    injectedEnv.ANTHROPIC_AUTH_TOKEN = apiKey
+    delete injectedEnv.ANTHROPIC_API_KEY
+  } else if (authMode === 'api_key') {
+    injectedEnv.ANTHROPIC_API_KEY = apiKey
+    delete injectedEnv.ANTHROPIC_AUTH_TOKEN
+  } else {
+    injectedEnv.ANTHROPIC_API_KEY = apiKey
+    injectedEnv.ANTHROPIC_AUTH_TOKEN = apiKey
+  }
+  if (baseUrl) injectedEnv.ANTHROPIC_BASE_URL = baseUrl
+
+  return injectedEnv
+}
+
+/**
  * @param {string} prompt
  * @param {object} options
  * @param {string} options.model
  * @param {string} options.apiKey
  * @param {string} options.baseUrl
+ * @param {'auth_token'|'api_key'|'both'} options.authMode
  * @param {Record<string,string>} options.agentEnv  来自 config/agent.json 的额外环境变量
  * @param {string} options.cwd
  * @param {string|null} options.resumeSessionId
@@ -57,6 +98,7 @@ export async function* run(prompt, options = {}) {
     model,
     apiKey,
     baseUrl,
+    authMode = 'both',
     agentEnv = {},
     cwd,
     resumeSessionId,
@@ -77,15 +119,13 @@ export async function* run(prompt, options = {}) {
   const envPATH = process.env.PATH || ''
   const patchedPATH = envPATH.includes(nodeBinDir) ? envPATH : `${nodeBinDir}${path.delimiter}${envPATH}`
 
-  // agent.json 的 env 覆盖 shell 环境；凭证和 PATH 最后兜底。
-  const injectedEnv = {
-    ...process.env,
-    ...agentEnv,
-    PATH: patchedPATH,
-    ANTHROPIC_API_KEY: apiKey,
-    ANTHROPIC_AUTH_TOKEN: apiKey,
-  }
-  if (baseUrl) injectedEnv.ANTHROPIC_BASE_URL = baseUrl
+  const injectedEnv = buildInjectedEnv({
+    apiKey,
+    baseUrl,
+    authMode,
+    agentEnv,
+    patchedPATH,
+  })
 
   const queryOptions = {
     cwd,

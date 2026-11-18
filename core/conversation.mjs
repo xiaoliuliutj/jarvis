@@ -62,7 +62,7 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
     const mcpServers = buildMcpServers(principal)
     const canUseTool = buildCanUseTool({ principal, workspace })
 
-    const { apiKey, baseUrl } = getAnthropicCredentials()
+    const { apiKey, baseUrl, authMode } = getAnthropicCredentials()
     if (!apiKey) {
       return {
         text: sanitizeForUser(principal, '未配置 API Key（config/agent.json 或 config/credentials.json）'),
@@ -86,6 +86,7 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
       model: getModel(),
       apiKey,
       baseUrl,
+      authMode,
       agentEnv: getAgentEnv(),
       cwd: workspace,
       resumeSessionId: resumeId,

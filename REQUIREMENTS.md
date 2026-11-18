@@ -186,6 +186,8 @@ E:\Jarvis\
 - 顶层 `effortLevel` / `autoCompactWindow` 在 env 未设置时映射为对应的 `CLAUDE_CODE_*`。
 - 模型解析：`ANTHROPIC_MODEL` 优先；`opus` / `sonnet` / `haiku` 别名映射到 `ANTHROPIC_DEFAULT_*_MODEL`。
 - 密钥解析：`ANTHROPIC_AUTH_TOKEN` > `ANTHROPIC_API_KEY` > 旧 `apiKey` > `credentials.json`。
+- `AUTH_TOKEN` 走 Bearer；`API_KEY` 走 x-api-key；旧配置两者都注入。
+- 启动 Jarvis 的 shell 中的 `ANTHROPIC_*` / `CLAUDE_CODE_*` 不会带入，避免串用当前 CLI 的凭证。
 - `agent.json` 可能包含 token，因此对所有 Agent 禁止读写。
 
 ---

@@ -94,9 +94,19 @@ export function resolveModel(settings = {}) {
   return aliasEnv && env[aliasEnv] ? env[aliasEnv] : requested
 }
 
-/** 凭证解析顺序：settings.env > 旧 agent 字段 > credentials.json */
+/**
+ * 凭证解析顺序：settings.env > 旧 agent 字段 > credentials.json
+ * authMode 决定注入哪个环境变量：AUTH_TOKEN 走 Bearer，API_KEY 走 x-api-key；
+ * 旧配置没有 env 时两者都注入，保持原有代理兼容性。
+ */
 export function resolveAnthropicCredentials(settings = {}, credentials = {}) {
   const env = buildAgentEnv(settings)
+  const authMode = env.ANTHROPIC_AUTH_TOKEN
+    ? 'auth_token'
+    : env.ANTHROPIC_API_KEY
+      ? 'api_key'
+      : 'both'
+
   return {
     apiKey: env.ANTHROPIC_AUTH_TOKEN
       || env.ANTHROPIC_API_KEY
@@ -107,6 +117,7 @@ export function resolveAnthropicCredentials(settings = {}, credentials = {}) {
       || settings.baseUrl
       || credentials?.anthropic?.baseUrl
       || '',
+    authMode,
   }
 }
 
