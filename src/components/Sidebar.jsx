@@ -1,20 +1,22 @@
 import React from 'react'
 import { VStack, HStack, Box, Text } from '@chakra-ui/react'
+import { ui, thinScrollbar } from '../theme'
 
 /**
  * 侧边栏
  *
- * Design Read: 桌面 AI 助手侧栏，用户是小范围私人用户；冷静、技术、低饱和的暗色界面。
+ * Design Read: 桌面 AI 助手侧栏，用户是小范围私人用户；深绿底 + 偏白画布。
  * Operate 模式（dials：variance 4 / motion 3 / density 5）。
- * 规则：单一蓝色 accent；不用侧边色条；不嵌套卡片；所有行有 hover/focus/active 状态；
+ * 规则：单一绿色 accent；不用侧边色条；不嵌套卡片；所有行有 hover/focus/active 状态；
  *       间距走 4/8/12/16 节奏；信息层级靠字号、字重和颜色，而不是边框。
  */
 
-const ACCENT = '#89b4fa'
-const TEXT = '#cdd6f4'
-const SUBTEXT = '#a6adc8'
-const OVERLAY = '#6c7086'
-const SURFACE = '#313244'
+const S = ui.sidebar
+const ACCENT = S.accent
+const TEXT = S.text
+const SUBTEXT = S.subtext
+const OVERLAY = S.muted
+const SURFACE = S.surface
 
 const rowBase = {
   w: '100%',
@@ -55,7 +57,7 @@ function RoleChip({ role }) {
       px="6px"
       py="1px"
       borderRadius="full"
-      bg={owner ? 'rgba(137,180,250,0.10)' : 'rgba(205,214,244,0.06)'}
+      bg={owner ? S.accentSoft : S.hover}
       color={owner ? ACCENT : SUBTEXT}
       fontSize="9.5px"
       fontWeight={500}
@@ -105,7 +107,7 @@ function UserGroup({ user, current, onSelectUser }) {
           fontWeight={600}
           color={TEXT}
           bg={SURFACE}
-          boxShadow={user.role === 'owner' ? '0 0 0 1px rgba(137,180,250,0.25)' : 'none'}
+          boxShadow={user.role === 'owner' ? `0 0 0 1px ${S.ownerRing}` : 'none'}
         >
           {initial}
         </Box>
@@ -142,8 +144,8 @@ function UserGroup({ user, current, onSelectUser }) {
               {...rowBase}
               h="34px"
               px="10px"
-              bg={active ? 'rgba(137,180,250,0.08)' : 'transparent'}
-              _hover={{ bg: 'rgba(205,214,244,0.045)' }}
+              bg={active ? S.accentSoft : 'transparent'}
+              _hover={{ bg: S.hover }}
               onClick={() => onSelectUser(user, session)}
             >
               <HStack w="100%" gap="8px" minW={0}>
@@ -190,9 +192,9 @@ export default function Sidebar({ mainSessions, users, current, onSelectMain, on
       h="100%"
       minH={0}
       flexShrink={0}
-      bg="#181825"
+      bg={S.bg}
       borderRightWidth={1}
-      borderColor="rgba(49,50,68,0.8)"
+      borderColor={S.border}
       gap={0}
       overflow="hidden"
     >
@@ -205,15 +207,7 @@ export default function Sidebar({ mainSessions, users, current, onSelectMain, on
         px="8px"
         py="12px"
         align="stretch"
-        css={{
-          '&::-webkit-scrollbar': { width: '6px' },
-          '&::-webkit-scrollbar-track': { background: 'transparent' },
-          '&::-webkit-scrollbar-thumb': {
-            background: 'rgba(108,112,134,0.35)',
-            borderRadius: '999px',
-          },
-          '&::-webkit-scrollbar-thumb:hover': { background: 'rgba(108,112,134,0.55)' },
-        }}
+        css={thinScrollbar(S.scrollbar, S.scrollbarHover)}
       >
         {/* 主会话永远置顶，不需要再套一个重复的标题 */}
         {mainList.map(session => {
@@ -230,8 +224,8 @@ export default function Sidebar({ mainSessions, users, current, onSelectMain, on
               h="52px"
               px="10px"
               mb="2px"
-              bg={active ? 'rgba(137,180,250,0.08)' : 'transparent'}
-              _hover={{ bg: 'rgba(205,214,244,0.045)' }}
+              bg={active ? S.accentSoft : 'transparent'}
+              _hover={{ bg: S.hover }}
               onClick={() => onSelectMain(session.sessionId || null, session.name)}
             >
               <HStack w="100%" gap="10px" minW={0}>
@@ -245,7 +239,7 @@ export default function Sidebar({ mainSessions, users, current, onSelectMain, on
                   justifyContent="center"
                   fontSize="13px"
                   color={ACCENT}
-                  bg="rgba(137,180,250,0.10)"
+                  bg={S.accentSoft}
                 >
                   ✦
                 </Box>
@@ -261,7 +255,7 @@ export default function Sidebar({ mainSessions, users, current, onSelectMain, on
           )
         })}
 
-        <Box h="1px" bg="rgba(49,50,68,0.65)" mx="10px" my="10px" />
+        <Box h="1px" bg={S.divider} mx="10px" my="10px" />
 
         <SectionLabel count={users.length}>用户</SectionLabel>
         {users.length === 0 && (

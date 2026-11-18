@@ -3,6 +3,16 @@ import { Box, VStack, HStack, Button } from '@chakra-ui/react'
 import Sidebar from './Sidebar'
 import ChatArea from './ChatArea'
 import SettingsPanel from './SettingsPanel'
+import { ui } from '../theme'
+
+/** 标题栏按钮共用样式，保证 hover/focus 一致 */
+const titleButton = {
+  size: 'sm',
+  variant: 'ghost',
+  color: ui.sidebar.subtext,
+  _hover: { bg: ui.sidebar.hover },
+  _focusVisible: { outline: `2px solid ${ui.sidebar.accent}`, outlineOffset: '2px' },
+}
 
 /**
  * 应用顶层。
@@ -83,27 +93,27 @@ export default function App() {
   }
 
   return (
-    <VStack h="100vh" w="100%" gap={0} bg="#1e1e2e" align="stretch">
+    <VStack h="100vh" w="100%" gap={0} bg={ui.canvas.bg} align="stretch">
       {/* 标题栏 */}
       <HStack
         h="40px"
         w="100%"
         px={3}
-        bg="#11111b"
+        bg={ui.titleBar.bg}
         borderBottomWidth={1}
-        borderColor="#313244"
+        borderColor={ui.titleBar.border}
         justify="space-between"
         flex="none"
         css={{ WebkitAppRegion: 'drag' }}
       >
         <HStack gap={2} css={{ WebkitAppRegion: 'no-drag' }}>
-          <Box fontSize="16px" color="#89b4fa">✦</Box>
-          <Box fontWeight={600} fontSize="14px" color="#89b4fa">Jarvis</Box>
+          <Box fontSize="16px" color={ui.sidebar.accent}>✦</Box>
+          <Box fontWeight={600} fontSize="14px" color={ui.sidebar.accent}>Jarvis</Box>
         </HStack>
         <HStack gap={1} css={{ WebkitAppRegion: 'no-drag' }}>
-          <Button size="sm" variant="ghost" onClick={() => setShowSettings(!showSettings)} title="设置" color="#cdd6f4" _hover={{ bg: '#313244' }}>⚙</Button>
-          <Button size="sm" variant="ghost" onClick={() => window.jarvis.minimize()} title="最小化" color="#cdd6f4" _hover={{ bg: '#313244' }}>─</Button>
-          <Button size="sm" variant="ghost" onClick={() => window.jarvis.close()} title="关闭" color="#cdd6f4" _hover={{ bg: '#313244' }}>✕</Button>
+          <Button {...titleButton} onClick={() => setShowSettings(!showSettings)} title="设置">⚙</Button>
+          <Button {...titleButton} onClick={() => window.jarvis.minimize()} title="最小化">─</Button>
+          <Button {...titleButton} onClick={() => window.jarvis.close()} title="关闭">✕</Button>
         </HStack>
       </HStack>
 

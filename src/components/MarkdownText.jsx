@@ -1,5 +1,6 @@
 import React from 'react'
 import { Box, Text } from '@chakra-ui/react'
+import { ui } from '../theme'
 
 /** 行内格式：**粗体**、`代码`、*斜体* */
 function renderInline(text, keyPrefix = 'i') {
@@ -27,8 +28,8 @@ function renderInline(text, keyPrefix = 'i') {
           px={1}
           py="1px"
           borderRadius="4px"
-          bg="rgba(137,180,250,0.12)"
-          color="#a6e3a1"
+          bg={ui.accent.soft}
+          color={ui.accent.strong}
           fontFamily="Monaco, Consolas, monospace"
           fontSize="0.92em"
         >
@@ -53,7 +54,7 @@ function renderInline(text, keyPrefix = 'i') {
  * 轻量 Markdown 渲染（不引入额外依赖）
  * 支持：标题、无序/有序列表、围栏代码块、粗体、行内代码、斜体、换行
  */
-export default function MarkdownText({ text = '', color = '#cdd6f4' }) {
+export default function MarkdownText({ text = '', color = ui.canvas.text }) {
   const source = String(text ?? '')
   const lines = source.split('\n')
   const blocks = []
@@ -78,14 +79,14 @@ export default function MarkdownText({ text = '', color = '#cdd6f4' }) {
           as="pre"
           my={2}
           p={3}
-          bg="#11111b"
+          bg={ui.canvas.codeBg}
           borderWidth="1px"
-          borderColor="#313244"
+          borderColor={ui.canvas.border}
           borderRadius="8px"
           overflowX="auto"
           fontSize="12px"
           fontFamily="Monaco, Consolas, monospace"
-          color="#a6e3a1"
+          color={ui.canvas.codeText}
           whiteSpace="pre-wrap"
           wordBreak="break-word"
         >
@@ -104,7 +105,7 @@ export default function MarkdownText({ text = '', color = '#cdd6f4' }) {
           key={`b${key++}`}
           fontWeight={700}
           fontSize={level <= 2 ? '15px' : '14px'}
-          color="#89b4fa"
+          color={ui.accent.base}
           mt={2}
           mb={1}
         >

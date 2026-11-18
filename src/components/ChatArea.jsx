@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { VStack, HStack, Box, Text, Textarea, Button } from '@chakra-ui/react'
 import MessageList from './MessageList'
+import { ui, thinScrollbar } from '../theme'
 
 /**
  * 对话区。
@@ -185,8 +186,17 @@ export default function ChatArea({
   const isUserSession = current.kind === 'user'
 
   return (
-    <VStack flex={1} h="100%" minH={0} bg="#1e1e2e" gap={0} overflow="hidden">
-      <Box ref={scrollContainerRef} flex={1} w="100%" minH={0} overflow="auto" px={4} py={4}>
+    <VStack flex={1} h="100%" minH={0} bg={ui.canvas.bg} gap={0} overflow="hidden">
+      <Box
+        ref={scrollContainerRef}
+        flex={1}
+        w="100%"
+        minH={0}
+        overflow="auto"
+        px={4}
+        py={4}
+        css={thinScrollbar(ui.canvas.scrollbar, ui.canvas.scrollbarHover)}
+      >
         <MessageList
           messages={messages}
           pending={pending}
@@ -196,13 +206,13 @@ export default function ChatArea({
       </Box>
 
       {isUserSession ? (
-        <HStack w="100%" px={4} py={3} bg="#181825" borderTopWidth={1} borderColor="#313244" justify="center">
-          <Text fontSize="12px" color="#6c7086">
+        <HStack w="100%" px={4} py={3} bg={ui.canvas.surface} borderTopWidth={1} borderColor={ui.canvas.border} justify="center">
+          <Text fontSize="12px" color={ui.canvas.muted}>
             🔒 这是 {current.displayName} 的会话，只读；请通过用户自己的渠道回复
           </Text>
         </HStack>
       ) : (
-        <HStack w="100%" px={4} py={3} bg="#181825" borderTopWidth={1} borderColor="#313244" gap={2}>
+        <HStack w="100%" px={4} py={3} bg={ui.canvas.surface} borderTopWidth={1} borderColor={ui.canvas.border} gap={2}>
           <Textarea
             flex={1}
             value={input}
@@ -215,21 +225,23 @@ export default function ChatArea({
             maxH="120px"
             fontSize="13.5px"
             borderRadius="12px"
-            bg="#313244"
-            color="#cdd6f4"
-            borderColor="#313244"
-            _placeholder={{ color: '#9399b2' }}
-            _focus={{ borderColor: '#89b4fa', boxShadow: '0 0 0 1px #89b4fa' }}
+            bg={ui.canvas.surface}
+            color={ui.canvas.text}
+            borderColor={ui.canvas.borderStrong}
+            _placeholder={{ color: ui.canvas.placeholder }}
+            _focus={{ borderColor: ui.accent.base, boxShadow: `0 0 0 1px ${ui.accent.base}` }}
           />
           <Button
-            colorPalette="blue"
+            colorPalette="green"
             onClick={handleSend}
             disabled={busy || !input.trim()}
             flexShrink={0}
-            bg="#89b4fa"
-            color="#1e1e2e"
-            _hover={{ bg: '#a8c5ff' }}
-            _disabled={{ bg: '#45475a', color: '#6c7086', cursor: 'not-allowed' }}
+            bg={ui.accent.base}
+            color={ui.accent.on}
+            _hover={{ bg: ui.accent.strong }}
+            _active={{ bg: ui.accent.strong }}
+            _focusVisible={{ outline: `2px solid ${ui.accent.base}`, outlineOffset: '2px' }}
+            _disabled={{ bg: ui.canvas.surfaceMuted, color: ui.canvas.muted, cursor: 'not-allowed' }}
           >
             {busy ? '运行中…' : '发送'}
           </Button>

@@ -1,5 +1,6 @@
 import React from 'react'
 import { Box, Text } from '@chakra-ui/react'
+import { ui } from '../theme'
 
 function preview(input) {
   let str = ''
@@ -28,16 +29,16 @@ export default function ToolDetails({ records = [] }) {
       mt={1}
       mb={1}
       borderWidth="1px"
-      borderColor="#313244"
+      borderColor={ui.canvas.border}
       borderRadius="8px"
-      bg="#181825"
+      bg={ui.canvas.surfaceMuted}
       px={3}
       py={2}
       fontSize="11.5px"
-      color="#6c7086"
+      color={ui.canvas.muted}
       maxW="90%"
     >
-      <Box as="summary" cursor="pointer" userSelect="none" _hover={{ color: '#89b4fa' }}>
+      <Box as="summary" cursor="pointer" userSelect="none" _hover={{ color: ui.accent.base }}>
         {summaryText}
       </Box>
       <Box mt={2} display="flex" flexDirection="column" gap={1}>
@@ -46,7 +47,7 @@ export default function ToolDetails({ records = [] }) {
             key={`tool-${idx}`}
             fontFamily="Monaco, Consolas, monospace"
             fontSize="11px"
-            color="#a6e3a1"
+            color={ui.canvas.codeText}
             whiteSpace="pre-wrap"
             wordBreak="break-all"
           >
@@ -57,11 +58,11 @@ export default function ToolDetails({ records = [] }) {
           <Text
             key={`thinking-${idx}`}
             fontSize="11.5px"
-            color="#6c7086"
+            color={ui.canvas.muted}
             whiteSpace="pre-wrap"
             wordBreak="break-word"
             borderTopWidth={tools.length > 0 ? 1 : 0}
-            borderColor="#313244"
+            borderColor={ui.canvas.border}
             pt={tools.length > 0 ? 1 : 0}
           >
             {item.text}
