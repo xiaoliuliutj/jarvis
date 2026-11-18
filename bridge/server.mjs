@@ -25,6 +25,7 @@ import { Scheduler } from '../core/scheduler.mjs'
 import { startCronManager } from '../core/cron.mjs'
 import { startScheduleManager } from '../core/schedule.mjs'
 import { formatScheduleReminder } from '../core/schedule-store.mjs'
+import { handleIncomingOnboarding } from '../core/onboarding.mjs'
 import { loadAdapters } from '../core/adapters.mjs'
 
 const config = loadBridgeConfig()
@@ -99,6 +100,19 @@ export function routeIncoming({
     sessionId: current?.sessionId || null,
     payload: { from: externalUserId, text, attachments, timestamp },
   })
+
+  // 新用户先做风格引导，不进入模型
+  const onboarding = handleIncomingOnboarding({
+    principalId: principal.id,
+    isNew: !!principal.isNew,
+    text,
+  })
+  if (onboarding.handled) {
+    sendText(principal.id, sourceType, accountId, externalUserId, onboarding.reply).catch(err => {
+      console.error(`[onboarding] ${principal.id} 发送引导失败:`, err.message)
+    })
+    return { ok: true, principalId: principal.id, onboarding: true }
+  }
 
   scheduler.enqueue(principal.id, async () => {
     let result

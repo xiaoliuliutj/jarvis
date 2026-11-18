@@ -58,6 +58,18 @@ userdata/               每用户数据 + 用户工具（gitignore）
 - 模板：[config/agent.example.json](config/agent.example.json)、[config/credentials.example.json](config/credentials.example.json)、[config/bridge.example.json](config/bridge.example.json)。
 - 实际配置和 `userdata/` 都不会入库。
 
+## 新用户引导
+
+新用户第一次发消息时，Bridge 会先发送风格选择菜单：
+
+1. 默认风格
+2. 简洁高效
+3. 温柔陪伴
+4. 元气活泼
+5. 自定义（回复「自定义：描述」）
+
+选择后会写入 `userdata/<principalId>/persona.md`，之后恢复正常聊天。已存在的用户不会补发。
+
 ## 日程
 
 通过聊天里的 `schedule__add / list / update / delete` 管理自己的日程，`remindBeforeMinutes` 选择提前多久提醒。

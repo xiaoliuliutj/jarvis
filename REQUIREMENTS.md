@@ -49,7 +49,8 @@ E:\Jarvis\
 │   │   ├─ workspace\
 │   │   ├─ memory\long-term.jsonl
 │   │   ├─ crons.json
-│   │   └─ schedules.json    # 当前用户自己的日程
+│   │   ├─ schedules.json    # 当前用户自己的日程
+│   │   └─ onboarding.json   # 新用户风格引导中的临时状态
 │   ├─ <principalId>\        # 每个用户同结构
 │   └─ tools\
 │       └─ <ownerId>\<toolName>\   # 用户工具，所有用户加载
@@ -109,6 +110,8 @@ E:\Jarvis\
 | J5 | 日程 | 隔离 | 只提醒设置者，不跨用户读取或投递 |
 | K1 | 自省 | 每日复盘（待实现） | 每天 03:00 扫描前一天 00:00-24:00 所有会话 |
 | K2 | 自省 | Git 管理（待实现） | 有 bug 才修改；修改必须 commit，可追踪回溯 |
+| L1 | 引导 | 新用户风格邀请 | 第一条消息先发预设/自定义菜单，不进入模型 |
+| L2 | 引导 | 风格写入 persona | 选择预设或提交自定义描述后写自己的 persona.md |
 
 ---
 
@@ -249,6 +252,15 @@ E:\Jarvis\
    - 需要生效时调用 `restart__electron` / `restart__all`
 5. 当前状态：仅记录需求，未创建 cron，也未实现会话采集器。
 
+### 5.12 新用户风格引导
+
+- Bridge 首次看到新 principal 的消息时，先发送风格选择邀请，不把这条消息送进模型。
+- 选项：默认、简洁高效、温柔陪伴、元气活泼、自定义。
+- 用户回复数字/名称即可；自定义使用 `自定义：<描述>`。
+- 选择后写入该用户自己的 `persona.md`，删除 `onboarding.json`，下一条消息恢复正常模型调用。
+- 已存在用户不会补发；引导状态只存在 `userdata/<principalId>/onboarding.json`。
+- 引导消息不写入会话历史；PC UI 只会看到用户入站消息。
+
 ---
 
 ## 6. 迁移
@@ -308,6 +320,7 @@ E:\Jarvis\
 - 目录整理：旧设计文档归档到 `docs/archive/`，README 重写，移除 wait-for-vite 和未使用的 concurrently
 - agents 拍平：`agents/agent.mjs` + `agents/tools/`；旧全局记忆/会话移到 `agents/memory`、`agents/sessions`
 - 日程：每用户 `schedules.json` + schedule 工具 + Bridge/Electron 提醒器 + main PC 提醒卡片
+- 新用户引导：首条消息发风格菜单，预设/自定义写入自己的 persona
 
 ### 验证
 

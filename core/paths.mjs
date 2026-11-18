@@ -66,3 +66,7 @@ export function cronsFile(principalId) {
 export function schedulesFile(principalId) {
   return path.join(principalDir(principalId), 'schedules.json')
 }
+
+export function onboardingFile(principalId) {
+  return path.join(principalDir(principalId), 'onboarding.json')
+}

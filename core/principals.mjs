@@ -58,6 +58,7 @@ function makePrincipalId(sourceType, externalUserId) {
 /**
  * 根据入站消息解析 principal。
  * 未登记的家人账号会自动创建为普通 user；需要代码权限时手动改 principals.json。
+ * 返回值额外带 isNew（不写入 principals.json），供新用户风格引导使用。
  */
 export function resolvePrincipal({ sourceType, accountId = 'default', externalUserId }) {
   const registry = readRegistry()
@@ -66,7 +67,7 @@ export function resolvePrincipal({ sourceType, accountId = 'default', externalUs
       && (p.accountId || 'default') === accountId
       && p.externalUserId === externalUserId
   )
-  if (existing) return normalize(existing)
+  if (existing) return { ...normalize(existing), isNew: false }
 
   const id = makePrincipalId(sourceType, externalUserId)
   const entry = {
@@ -84,7 +85,7 @@ export function resolvePrincipal({ sourceType, accountId = 'default', externalUs
   registry[id] = entry
   writeRegistry(registry)
   console.log(`[principals] 自动创建用户 ${id} (${sourceType}:${externalUserId})`)
-  return normalize(entry)
+  return { ...normalize(entry), isNew: true }
 }
 
 /** 更新 principal（例如把家人提升为 owner）。 */

@@ -30,19 +30,9 @@ import {
   schedulesFile,
 } from './paths.mjs'
 import { readRules } from './config.mjs'
+import { DEFAULT_PERSONA } from './persona-presets.mjs'
 
 export { workspaceDir }
-
-// 新用户的默认人设。用户可以让 AI 通过 persona 工具改掉。
-const DEFAULT_PERSONA = `# 人设
-
-你是 Jarvis，一个可靠、直接的个人 AI 助手。
-
-- 默认使用中文回答
-- 回答简洁、具体，不绕弯子
-- 遇到不确定的事情先确认
-- 可以适度使用轻松的语气
-`
 
 const LOW_WEIGHT_THRESHOLD = 0.3
 
