@@ -218,7 +218,7 @@ export default function ChatArea({
             bg="#313244"
             color="#cdd6f4"
             borderColor="#313244"
-            _placeholder={{ color: '#6c7086' }}
+            _placeholder={{ color: '#9399b2' }}
             _focus={{ borderColor: '#89b4fa', boxShadow: '0 0 0 1px #89b4fa' }}
           />
           <Button

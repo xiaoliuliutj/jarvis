@@ -1,5 +1,5 @@
 import React from 'react'
-import { VStack, Box, Text } from '@chakra-ui/react'
+import { VStack, HStack, Box, Text } from '@chakra-ui/react'
 import ToolDetails from './ToolDetails'
 import MarkdownText from './MarkdownText'
 
@@ -38,7 +38,7 @@ function groupMessages(messages) {
 const userBubble = {
   bg: '#313244',
   border: '1px solid #45475a',
-  borderRadius: '18px 18px 4px 18px',
+  borderRadius: '16px 16px 4px 16px',
   px: 3,
   py: 2,
   maxW: '72%',
@@ -49,12 +49,11 @@ const userBubble = {
   color: '#cdd6f4',
 }
 
+// 不用左侧色条（anti-slop），用底色 + 全边框建立层级
 const assistantBubble = {
-  bg: '#1e1e2e',
+  bg: '#181825',
   border: '1px solid #313244',
-  borderLeftWidth: '2px',
-  borderLeftColor: '#89b4fa',
-  borderRadius: '4px 18px 18px 18px',
+  borderRadius: '4px 16px 16px 16px',
   px: 3,
   py: 2,
   maxW: '72%',
@@ -84,7 +83,10 @@ export default function MessageList({ messages = [], pending = null, userName = 
         if (group.kind === 'assistant') {
           return (
             <VStack key={idx} align="flex-start" w="100%" gap={0.5}>
-              <Text fontSize="11px" fontWeight={500} color="#6c7086">Jarvis</Text>
+              <HStack gap="6px" align="center">
+                <Box w="5px" h="5px" borderRadius="full" bg="#89b4fa" />
+                <Text fontSize="10.5px" fontWeight={500} color="#6c7086" letterSpacing="0.02em">Jarvis</Text>
+              </HStack>
               <ToolDetails records={group.extras} />
               <Box {...assistantBubble}>
                 <MarkdownText text={group.text} />
@@ -131,7 +133,10 @@ export default function MessageList({ messages = [], pending = null, userName = 
 
       {pending && (
         <VStack align="flex-start" w="100%" gap={0.5}>
-          <Text fontSize="11px" fontWeight={500} color="#6c7086">Jarvis</Text>
+          <HStack gap="6px" align="center">
+            <Box w="5px" h="5px" borderRadius="full" bg="#89b4fa" />
+            <Text fontSize="10.5px" fontWeight={500} color="#6c7086" letterSpacing="0.02em">Jarvis</Text>
+          </HStack>
           <ToolDetails records={pending.tools || []} />
           {pending.text ? (
             <Box {...assistantBubble}>

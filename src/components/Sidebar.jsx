@@ -1,99 +1,279 @@
 import React from 'react'
-import { VStack, HStack, Box, Button, Text } from '@chakra-ui/react'
+import { VStack, HStack, Box, Text } from '@chakra-ui/react'
 
 /**
- * 侧边栏：
- *   - 主会话（唯一）
- *   - 用户列表：每个用户自己的会话（只读）
- * 不再有“新建会话”按钮：main 只有一个，用户会话由各自的渠道产生。
+ * 侧边栏
+ *
+ * Design Read: 桌面 AI 助手侧栏，用户是小范围私人用户；冷静、技术、低饱和的暗色界面。
+ * Operate 模式（dials：variance 4 / motion 3 / density 5）。
+ * 规则：单一蓝色 accent；不用侧边色条；不嵌套卡片；所有行有 hover/focus/active 状态；
+ *       间距走 4/8/12/16 节奏；信息层级靠字号、字重和颜色，而不是边框。
  */
-export default function Sidebar({ mainSessions, users, current, onSelectMain, onSelectUser }) {
-  const formatTime = (iso) => {
-    if (!iso) return ''
-    return new Date(iso).toLocaleString('zh-CN', {
-      month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
-    })
-  }
 
-  const Entry = ({ active, name, time, onClick, muted = false }) => (
-    <Button
-      variant="ghost"
-      w="100%"
-      h="auto"
-      px={3}
-      py={2}
-      justifyContent="flex-start"
-      bg={active ? 'rgba(137,180,250,0.12)' : 'transparent'}
-      borderLeftWidth={active ? 2 : 0}
-      borderLeftColor={active ? '#89b4fa' : 'transparent'}
-      _hover={{ bg: '#1a1a22' }}
-      onClick={onClick}
+const ACCENT = '#89b4fa'
+const TEXT = '#cdd6f4'
+const SUBTEXT = '#a6adc8'
+const OVERLAY = '#6c7086'
+const SURFACE = '#313244'
+
+const rowBase = {
+  w: '100%',
+  display: 'flex',
+  alignItems: 'center',
+  textAlign: 'left',
+  border: 'none',
+  bg: 'transparent',
+  color: TEXT,
+  cursor: 'pointer',
+  font: 'inherit',
+  borderRadius: '10px',
+  transition: 'background-color 150ms ease-out, color 150ms ease-out, transform 120ms ease-out',
+  _focusVisible: { outline: `2px solid ${ACCENT}`, outlineOffset: '2px' },
+  _active: { transform: 'scale(0.99)' },
+}
+
+function formatTime(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const now = new Date()
+  const hm = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+  const sameDay = d.toDateString() === now.toDateString()
+  if (sameDay) return `今天 ${hm}`
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (d.toDateString() === yesterday.toDateString()) return `昨天 ${hm}`
+  return `${d.getMonth() + 1}/${d.getDate()} ${hm}`
+}
+
+function RoleChip({ role }) {
+  const owner = role === 'owner'
+  return (
+    <HStack
+      as="span"
+      gap="4px"
+      px="6px"
+      py="1px"
+      borderRadius="full"
+      bg={owner ? 'rgba(137,180,250,0.10)' : 'rgba(205,214,244,0.06)'}
+      color={owner ? ACCENT : SUBTEXT}
+      fontSize="9.5px"
+      fontWeight={500}
+      letterSpacing="0.01em"
+      flexShrink={0}
     >
-      <VStack align="flex-start" gap={0.5} w="100%">
-        <Text fontSize="12.5px" fontWeight={450} color={active ? '#89b4fa' : muted ? '#6c7086' : '#cdd6f4'} whiteSpace="nowrap" overflow="hidden" textOverflow="ellipsis">
-          {name}
-        </Text>
-        {time && <Text fontSize="10px" color="#6c7086">{time}</Text>}
-      </VStack>
-    </Button>
+      <Box
+        as="span"
+        w="4px"
+        h="4px"
+        borderRadius="full"
+        bg={owner ? ACCENT : OVERLAY}
+      />
+      {owner ? '所有者' : '成员'}
+    </HStack>
   )
+}
 
-  const mainActive = current.kind === 'main'
+function SectionLabel({ children, count }) {
+  return (
+    <HStack w="100%" px="10px" justify="space-between" mt="14px" mb="5px">
+      <Text fontSize="10px" fontWeight={600} letterSpacing="0.08em" color={OVERLAY}>
+        {children}
+      </Text>
+      {count !== undefined && (
+        <Text fontSize="9.5px" color={OVERLAY} opacity={0.8}>{count}</Text>
+      )}
+    </HStack>
+  )
+}
+
+/** 一个用户：头像 + 名字 + 角色 chip，下面是该用户的会话行 */
+function UserGroup({ user, current, onSelectUser }) {
+  const initial = (user.displayName || '?').slice(0, 1)
+  return (
+    <VStack align="stretch" gap="2px" mb="10px">
+      <HStack px="10px" py="6px" gap="10px" minW={0}>
+        <Box
+          w="26px"
+          h="26px"
+          borderRadius="full"
+          flexShrink={0}
+          display="flex"
+          alignItems="center"
+          justifyContent="center"
+          fontSize="11px"
+          fontWeight={600}
+          color={TEXT}
+          bg={SURFACE}
+          boxShadow={user.role === 'owner' ? '0 0 0 1px rgba(137,180,250,0.25)' : 'none'}
+        >
+          {initial}
+        </Box>
+        <HStack gap="7px" minW={0} flex="1">
+          <Text
+            fontSize="12.5px"
+            fontWeight={500}
+            color={TEXT}
+            whiteSpace="nowrap"
+            overflow="hidden"
+            textOverflow="ellipsis"
+          >
+            {user.displayName}
+          </Text>
+          <RoleChip role={user.role} />
+        </HStack>
+      </HStack>
+
+      <VStack align="stretch" gap="2px" pl="36px" pr="4px">
+        {(user.sessions || []).length === 0 && (
+          <Text px="10px" py="6px" fontSize="10.5px" color={OVERLAY}>暂无会话</Text>
+        )}
+        {(user.sessions || []).map(session => {
+          const active = current.kind === 'user'
+            && current.principalId === user.principalId
+            && current.sessionId === session.sessionId
+          return (
+            <Box
+              as="button"
+              type="button"
+              key={session.sessionId}
+              title={session.name || '会话'}
+              aria-current={active ? 'page' : undefined}
+              {...rowBase}
+              h="34px"
+              px="10px"
+              bg={active ? 'rgba(137,180,250,0.08)' : 'transparent'}
+              _hover={{ bg: 'rgba(205,214,244,0.045)' }}
+              onClick={() => onSelectUser(user, session)}
+            >
+              <HStack w="100%" gap="8px" minW={0}>
+                <Box
+                  w="5px"
+                  h="5px"
+                  borderRadius="full"
+                  flexShrink={0}
+                  bg={active ? ACCENT : OVERLAY}
+                  opacity={active ? 1 : 0.55}
+                />
+                <Text
+                  flex="1"
+                  minW={0}
+                  fontSize="12px"
+                  fontWeight={active ? 500 : 400}
+                  color={active ? TEXT : SUBTEXT}
+                  whiteSpace="nowrap"
+                  overflow="hidden"
+                  textOverflow="ellipsis"
+                >
+                  {session.name || '会话'}
+                </Text>
+                <Text fontSize="9.5px" color={OVERLAY} flexShrink={0}>
+                  {formatTime(session.lastActiveAt)}
+                </Text>
+              </HStack>
+            </Box>
+          )
+        })}
+      </VStack>
+    </VStack>
+  )
+}
+
+export default function Sidebar({ mainSessions, users, current, onSelectMain, onSelectUser }) {
   const mainList = mainSessions.length
     ? mainSessions
     : [{ sessionId: null, name: '主会话', lastActiveAt: null }]
 
   return (
     <VStack
-      w="220px"
+      w="240px"
       h="100%"
       minH={0}
       flexShrink={0}
       bg="#181825"
       borderRightWidth={1}
-      borderColor="#313244"
+      borderColor="rgba(49,50,68,0.8)"
       gap={0}
       overflow="hidden"
     >
-      <VStack w="100%" flex={1} overflow="auto" gap={0} px={1.5} py={2} align="stretch">
-        <Text px={2} py={1} fontSize="10px" color="#6c7086" letterSpacing="0.08em">主会话</Text>
-        {mainList.map((s, idx) => (
-          <Entry
-            key={s.sessionId || 'main'}
-            active={mainActive && (idx === 0 ? !current.sessionId || current.sessionId === s.sessionId : current.sessionId === s.sessionId)}
-            name={s.name || '主会话'}
-            time={formatTime(s.lastActiveAt)}
-            onClick={() => onSelectMain(s.sessionId || null, s.name)}
-          />
-        ))}
+      <VStack
+        w="100%"
+        flex={1}
+        minH={0}
+        overflow="auto"
+        gap={0}
+        px="8px"
+        py="12px"
+        align="stretch"
+        css={{
+          '&::-webkit-scrollbar': { width: '6px' },
+          '&::-webkit-scrollbar-track': { background: 'transparent' },
+          '&::-webkit-scrollbar-thumb': {
+            background: 'rgba(108,112,134,0.35)',
+            borderRadius: '999px',
+          },
+          '&::-webkit-scrollbar-thumb:hover': { background: 'rgba(108,112,134,0.55)' },
+        }}
+      >
+        {/* 主会话永远置顶，不需要再套一个重复的标题 */}
+        {mainList.map(session => {
+          const active = current.kind === 'main'
+            && (session.sessionId ? current.sessionId === session.sessionId : !current.sessionId)
+          return (
+            <Box
+              as="button"
+              type="button"
+              key={session.sessionId || 'main'}
+              title={session.name || '主会话'}
+              aria-current={active ? 'page' : undefined}
+              {...rowBase}
+              h="52px"
+              px="10px"
+              mb="2px"
+              bg={active ? 'rgba(137,180,250,0.08)' : 'transparent'}
+              _hover={{ bg: 'rgba(205,214,244,0.045)' }}
+              onClick={() => onSelectMain(session.sessionId || null, session.name)}
+            >
+              <HStack w="100%" gap="10px" minW={0}>
+                <Box
+                  w="28px"
+                  h="28px"
+                  borderRadius="8px"
+                  flexShrink={0}
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  fontSize="13px"
+                  color={ACCENT}
+                  bg="rgba(137,180,250,0.10)"
+                >
+                  ✦
+                </Box>
+                <VStack align="flex-start" gap="1px" flex="1" minW={0}>
+                  <Text fontSize="12.5px" fontWeight={600} color={TEXT} whiteSpace="nowrap" overflow="hidden" textOverflow="ellipsis">
+                    {session.name || '主会话'}
+                  </Text>
+                  <Text fontSize="9.5px" color={OVERLAY}>{formatTime(session.lastActiveAt)}</Text>
+                </VStack>
+                {active && <Box w="5px" h="5px" borderRadius="full" bg={ACCENT} flexShrink={0} />}
+              </HStack>
+            </Box>
+          )
+        })}
 
-        <Box h="1px" bg="#313244" my={2} mx={2} />
+        <Box h="1px" bg="rgba(49,50,68,0.65)" mx="10px" my="10px" />
 
-        <Text px={2} py={1} fontSize="10px" color="#6c7086" letterSpacing="0.08em">用户</Text>
+        <SectionLabel count={users.length}>用户</SectionLabel>
         {users.length === 0 && (
-          <Text px={2} py={2} fontSize="11px" color="#6c7086">暂无用户</Text>
+          <Text px="10px" py="10px" fontSize="10.5px" color={OVERLAY}>暂无其他用户</Text>
         )}
         {users.map(user => (
-          <VStack key={user.principalId} align="stretch" gap={0} mt={1}>
-            <HStack px={2} py={1} justify="space-between">
-              <Text fontSize="11px" color="#a6adc8" whiteSpace="nowrap" overflow="hidden" textOverflow="ellipsis">{user.displayName}</Text>
-              <Text fontSize="9px" color={user.role === 'owner' ? '#f9e2af' : '#6c7086'}>
-                {user.role === 'owner' ? 'OWNER' : 'USER'}
-              </Text>
-            </HStack>
-            {user.sessions?.map(session => (
-              <Entry
-                key={session.sessionId}
-                active={current.kind === 'user'
-                  && current.principalId === user.principalId
-                  && current.sessionId === session.sessionId}
-                name={session.name || '会话'}
-                time={formatTime(session.lastActiveAt)}
-                muted
-                onClick={() => onSelectUser(user, session)}
-              />
-            ))}
-          </VStack>
+          <UserGroup
+            key={user.principalId}
+            user={user}
+            current={current}
+            onSelectUser={onSelectUser}
+          />
         ))}
       </VStack>
     </VStack>
