@@ -4,6 +4,30 @@ import { z } from 'zod'
 
 const server = new McpServer({ name: 'cn_calendar', version: '1.0.0' })
 
+// 多个数据源镜像，依次尝试
+const SOURCES = [
+  (y) => `https://raw.githubusercontent.com/NateScarlet/holiday-cn/master/${y}.json`,
+  (y) => `https://cdn.jsdelivr.net/gh/NateScarlet/holiday-cn@master/${y}.json`,
+  (y) => `https://fastly.jsdelivr.net/gh/NateScarlet/holiday-cn@master/${y}.json`,
+  (y) => `https://gcore.jsdelivr.net/gh/NateScarlet/holiday-cn@master/${y}.json`,
+]
+
+async function fetchWithMirrors(year) {
+  let lastError = null
+  for (const makeUrl of SOURCES) {
+    const url = makeUrl(year)
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const json = await res.json()
+      return { json, source: url }
+    } catch (e) {
+      lastError = e
+    }
+  }
+  throw new Error(`所有数据源均失败，最后错误：${lastError?.message}`)
+}
+
 server.tool(
   'cn_calendar',
   '查询某天的中国法定日历信息：是否工作日、是否调休、节假日名称等。数据来源 NateScarlet/holiday-cn，包含调休安排。',
@@ -13,22 +37,41 @@ server.tool(
   async ({ date }) => {
     // 确定查询日期
     const target = date ? new Date(date) : new Date()
+    if (isNaN(target.getTime())) {
+      return { content: [{ type: 'text', text: '❌ 日期格式错误，请使用 YYYY-MM-DD 格式' }] }
+    }
     const yyyy = target.getFullYear()
     const mm = String(target.getMonth() + 1).padStart(2, '0')
     const dd = String(target.getDate()).padStart(2, '0')
     const dateStr = `${yyyy}-${mm}-${dd}`
     const weekday = target.getDay() // 0=周日, 6=周六
 
-    // 拉取当年节假日数据
-    const url = `https://raw.githubusercontent.com/NateScarlet/holiday-cn/master/${yyyy}.json`
+    // 拉取当年节假日数据（多镜像容错）
     let days = []
+    let source = ''
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const json = await res.json()
-      days = json.days || []
+      const r = await fetchWithMirrors(yyyy)
+      days = r.json.days || []
+      source = r.source
     } catch (e) {
-      return { content: [{ type: 'text', text: `❌ 获取节假日数据失败：${e.message}\n数据源：${url}` }] }
+      // 网络完全不可用时，退化为纯周末判断
+      const weekNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+      const isWorkday = weekday !== 0 && weekday !== 6
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            date: dateStr,
+            weekday: weekNames[weekday],
+            isWorkday,
+            isMakeupWork: false,
+            dayType: isWorkday ? 'normal_workday' : 'normal_weekend',
+            holidayName: null,
+            summary: `【离线判断】按星期推算：${isWorkday ? '工作日' : '周末'}（⚠️ 无法获取节假日数据，可能不准）`,
+            warning: `获取节假日数据失败：${e.message}`,
+          }, null, 2),
+        }],
+      }
     }
 
     // 在 days 中查找该日期
@@ -75,6 +118,7 @@ server.tool(
       dayType,
       holidayName,
       summary,
+      source,
     }
 
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }

@@ -52,11 +52,12 @@ function getWindDir(deg) {
 
 server.tool(
   'weather_query',
-  '查询指定地点的当前天气信息，支持中文地名、英文地名、城市名等',
+  '查询指定地点的天气信息，支持中文地名、英文地名、城市名等。可查询当前天气和未来数天的最高/最低气温预报',
   {
     location: z.string().describe('要查询天气的地点，支持中英文，例如：北京、上海、Tokyo、New York'),
+    days: z.number().int().min(1).max(7).optional().describe('预报天数（1-7），默认1=仅今天；填2可看今天+明天，以此类推'),
   },
-  async ({ location }) => {
+  async ({ location, days = 1 }) => {
     try {
       // Step 1: 地理编码，支持中英文地名
       const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=zh&format=json`
@@ -80,10 +81,10 @@ server.tool(
           'weather_code', 'wind_speed_10m', 'wind_direction_10m',
           'surface_pressure', 'visibility', 'precipitation', 'cloud_cover',
         ].join(','),
-        daily: 'temperature_2m_max,temperature_2m_min,sunrise,sunset',
+        daily: 'temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max,weather_code',
         wind_speed_unit: 'kmh',
         timezone: timezone || 'auto',
-        forecast_days: '1',
+        forecast_days: String(days),
       })
 
       const weatherUrl = `https://api.open-meteo.com/v1/forecast?${params}`
@@ -103,6 +104,23 @@ server.tool(
       const maxTemp = d?.temperature_2m_max?.[0] ?? '-'
       const minTemp = d?.temperature_2m_min?.[0] ?? '-'
 
+      // 预报部分（days > 1 时显示未来几天）
+      let forecastLines = ''
+      if (days > 1 && d?.time) {
+        forecastLines = d.time.slice(1).map((dateStr, i) => {
+          const idx = i + 1
+          const wc = d.weather_code?.[idx]
+          const wDesc = WMO_CODES[wc] ?? `代码 ${wc}`
+          const tMin = d.temperature_2m_min?.[idx] ?? '-'
+          const tMax = d.temperature_2m_max?.[idx] ?? '-'
+          const rainProb = d.precipitation_probability_max?.[idx]
+          const probStr = rainProb != null ? `，降水概率${rainProb}%` : ''
+          return `${dateStr}：${wDesc}，${tMin}°C ～ ${tMax}°C${probStr}`
+        }).join('\n')
+      }
+
+      const forecastPart = forecastLines ? `\n\n📅 未来预报\n${forecastLines}` : ''
+
       const result = `
 📍 ${locationStr} 实时天气
 
@@ -115,7 +133,7 @@ ${desc}
 🌬  风速风向：${windDir} ${c.wind_speed_10m} km/h
 👁  能见度：${(c.visibility / 1000).toFixed(1)} km
 🔵  气压：${c.surface_pressure} hPa
-🌅  日出 / 日落：${sunrise} / ${sunset}
+🌅  日出 / 日落：${sunrise} / ${sunset}${forecastPart}
       `.trim()
 
       return { content: [{ type: 'text', text: result }] }

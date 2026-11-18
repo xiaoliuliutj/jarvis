@@ -1,10 +1,10 @@
 [
   {
     "name": "weather_query",
-    "description": "查询指定地点的当前天气信息，支持中文地名、英文地名、城市名等",
+    "description": "查询指定地点的当前天气和未来 1-7 天预报，支持中英文地名",
     "enabled": true,
     "createdAt": "2026-11-14T03:29:29.553Z",
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   {
     "name": "cron__list",
@@ -36,10 +36,10 @@
   },
   {
     "name": "cn_calendar",
-    "description": "查询中国法定日历：某天是否工作日、是否调休上班、节假日名称。数据来源 NateScarlet/holiday-cn，支持调休判断。",
+    "description": "查询中国法定日历：工作日、调休、节假日；支持多数据源镜像和离线降级",
     "enabled": true,
     "createdAt": "2026-11-14T18:28:02.088Z",
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   {
     "name": "restart",
