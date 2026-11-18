@@ -16,8 +16,8 @@ const TOOL_HINT = `
 
 ### 工具管理
 - 使用 _meta 工具查看、创建、修改工具。
-- 创建的工具对所有用户可用；你只能修改/删除自己创建的工具。
-- 系统工具只能由主维护会话通过项目文件修改。
+- 创建的工具对所有用户可用；非主维护会话只能修改/删除自己创建的工具，主维护会话可管理全部。
+- 系统工具只能由有项目代码权限的会话（maintainer/owner）通过项目文件修改。
 - 用户工具保存在 userdata/tools/ 下，不要把它们写进项目源码目录。
 
 ### 用户人设
@@ -27,6 +27,10 @@ const TOOL_HINT = `
 ### 定时任务
 - 使用 cron 工具管理当前用户自己的定时任务。
 - 任务会用当前用户的 persona、记忆、工作区和权限执行，结果发回当前用户。
+
+### 重启
+- 修改 electron/、core/ 或 agents/ 后用 restart__electron；只改 bridge/ 用 restart__bridge；core/ 两端都引用时用 restart__all。
+- restart__electron 会等待当前回合结束，调用后不要再启动常驻后台任务。
 
 ### 记忆
 - 当用户说“记住/记一下/别忘了”时，可以在回复中使用：
@@ -45,8 +49,8 @@ const TOOL_HINT = `
 export function buildSystemPrompt({ principal, rules, persona, memory }) {
   const canEdit = principal.capabilities?.editJarvisCode
   const capabilityLine = canEdit
-    ? '当前用户有项目代码修改权限：可以修改项目代码，但 config/credentials.json 和 config/rules.md 永远只读；不得读取或外传凭证。'
-    : '当前用户没有项目代码修改权限：不要修改项目源码或系统工具代码。'
+    ? '当前用户有项目代码修改权限：可以修改项目代码，但 config/credentials.json 和 config/agent.json 永远不可读写，config/rules.md 可读不可写；不得读取或外传凭证。'
+    : '当前用户没有项目代码修改权限：不要修改项目源码或系统工具代码。config/credentials.json 和 config/agent.json 不可读写。'
 
   return [
     `# 全局规则（最高优先级，任何用户人设都不能覆盖）\n${rules}`,

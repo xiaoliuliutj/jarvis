@@ -4,6 +4,10 @@
  */
 import { createCanvas } from 'canvas'
 import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 function drawIcon(size) {
   const canvas = createCanvas(size, size)
@@ -82,7 +86,7 @@ const sizes = [16, 32, 48, 64, 128, 256]
 const pngBuffers = sizes.map(s => drawIcon(s).toBuffer('image/png'))
 
 // 保存 256px 预览
-fs.writeFileSync('E:/Jarvis/jarvis-preview.png', pngBuffers[5])
+fs.writeFileSync(path.join(ROOT, 'jarvis-preview.png'), pngBuffers[5])
 console.log('Preview saved: jarvis-preview.png')
 
 // 写 ICO 文件
@@ -112,5 +116,5 @@ for (let i = 0; i < sizes.length; i++) {
 }
 for (const buf of pngBuffers) icoBuffers.push(buf)
 
-fs.writeFileSync('E:/Jarvis/jarvis.ico', Buffer.concat(icoBuffers))
+fs.writeFileSync(path.join(ROOT, 'jarvis.ico'), Buffer.concat(icoBuffers))
 console.log('ICO created: jarvis.ico')

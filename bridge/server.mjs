@@ -244,11 +244,13 @@ function postSupervisor(pathname) {
   })
 }
 
-app.post('/relaunch-electron', async (_req, res) => {
+app.post('/relaunch-electron', async (req, res) => {
+  const force = req.query.force === '1'
+
   // Electron 在线时交给它调度：当前主会话回合结束后再重启。
   if (wss.clients.size > 0) {
-    broadcast({ type: 'relaunch-electron' })
-    res.json({ ok: true, mode: 'electron' })
+    broadcast({ type: 'relaunch-electron', force })
+    res.json({ ok: true, mode: 'electron', force })
     return
   }
 
@@ -261,8 +263,7 @@ app.post('/relaunch-electron', async (_req, res) => {
   }
 })
 
-app.post('/restart-bridge', (_req, res) => {
-  res.json({ ok: true, message: 'Bridge Server 将在 500ms 后重启' })
+function restartBridgeProcess(delayMs = 500) {
   setTimeout(() => {
     console.log('[bridge] 收到重启指令，正在重启...')
     const child = spawn('node', [path.join(ROOT, 'bridge', 'server.mjs')], {
@@ -272,7 +273,24 @@ app.post('/restart-bridge', (_req, res) => {
     })
     child.unref()
     process.exit(0)
-  }, 500)
+  }, delayMs)
+}
+
+app.post('/restart-bridge', (_req, res) => {
+  res.json({ ok: true, message: 'Bridge Server 将在 500ms 后重启' })
+  restartBridgeProcess()
+})
+
+// 同时重启 Bridge 和 Electron。Electron 仍走回合感知的重启队列。
+app.post('/restart-all', (req, res) => {
+  const force = req.query.force === '1'
+  if (wss.clients.size > 0) {
+    broadcast({ type: 'relaunch-electron', force })
+  } else {
+    void postSupervisor('/restart-electron').catch(() => {})
+  }
+  res.json({ ok: true, message: 'Bridge 即将重启；Electron 将在当前回合结束后重启' })
+  restartBridgeProcess(700)
 })
 
 const server = createServer(app)

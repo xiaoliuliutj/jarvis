@@ -16,7 +16,7 @@
 
 import fs from 'fs'
 import path from 'path'
-import { randomUUID, createHash } from 'crypto'
+import { randomUUID } from 'crypto'
 import {
   USERDATA_DIR,
   ensureDir,
@@ -262,12 +262,4 @@ export function readCrons(principalId) {
 export function writeCrons(principalId, crons) {
   ensureUser(principalId)
   writeJson(cronsFile(principalId), crons)
-}
-
-// ── 迁移辅助 ──────────────────────────────────────────────────────────────────
-
-/** 用稳定 hash 生成外部用户的 principalId（迁移脚本与运行时保持一致）。 */
-export function makeWeixinPrincipalId(externalUserId) {
-  const hash = createHash('sha1').update(`weixin:${externalUserId}`).digest('hex').slice(0, 10)
-  return `user_${hash}`
 }

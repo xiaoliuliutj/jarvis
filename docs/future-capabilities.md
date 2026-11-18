@@ -1,26 +1,15 @@
 # Jarvis 后续能力扩展计划
 
+当前架构以 [REQUIREMENTS.md](../REQUIREMENTS.md) 为准。
+
 ## 1. Bridge Server（消息桥接层）
 
-详细设计见 [bridge-server-design.md](bridge-server-design.md)。
-
 ### 状态
-- [x] 技术方案设计完成
-- [ ] CC Connect 接入测试（进行中）
-- [ ] Bridge Server 骨架实现
-- [ ] 微信 adapter
+- [x] Bridge Server（localhost HTTP/WS）
+- [x] 微信 adapter
+- [x] principal / 每用户会话 / 调度器 / cron
 - [ ] QQ adapter
 - [ ] 邮件 adapter
-
-### CC Connect 快速接入（临时方案）
-在 Bridge Server 完成前，用 CC Connect 先跑通微信链路：
-
-```bash
-npm install -g cc-connect
-```
-
-配置 `~/.cc-connect/config.toml`，`work_dir` 指向 `E:\Jarvis`。
-注意：CC Connect 启动的是独立会话，不共享 Jarvis 主会话。Bridge Server 完成后替换。
 
 ---
 

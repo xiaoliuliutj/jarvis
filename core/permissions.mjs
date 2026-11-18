@@ -27,6 +27,12 @@ import {
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'LS'])
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 
+// 迁移前遗留的全局会话/记忆目录：不再使用，但含个人数据，禁止文件工具访问
+const LEGACY_DATA_DIRS = [
+  path.join(ROOT, 'agents', 'claude-cc', 'memory'),
+  path.join(ROOT, 'bridge', 'sessions'),
+]
+
 const allow = () => ({ behavior: 'allow' })
 const deny = (message) => ({ behavior: 'deny', message })
 
@@ -65,9 +71,28 @@ export function buildCanUseTool({ principal, workspace }) {
       return deny('该配置包含模型凭证，不能读取或修改。')
     }
 
+    // 迁移前的历史会话/记忆：保留在磁盘，但不允许 Agent 访问
+    if (LEGACY_DATA_DIRS.some(dir => isInside(dir, abs))) {
+      return deny('历史会话数据不可访问。')
+    }
+
     // 全局 rules：可读不可写
     if (abs === path.resolve(RULES_FILE)) {
       return write ? deny('全局规则只能由用户手动修改。') : allow()
+    }
+
+    // 整目录的 Grep/Glob/LS 会绕过上面的单文件检查，直接拒绝 config 根目录
+    if ((toolName === 'Grep' || toolName === 'Glob' || toolName === 'LS')
+      && abs === path.resolve(CONFIG_DIR)) {
+      return deny('config 目录包含受保护凭证，不能整目录搜索。')
+    }
+
+    // 旧配置备份可能含历史 token，整棵子树都不可访问
+    if (isInside(CONFIG_DIR, abs)) {
+      const rel = path.relative(path.resolve(CONFIG_DIR), abs)
+      if (rel.split(path.sep)[0].startsWith('_legacy')) {
+        return deny('历史配置备份包含凭证，不能读取或修改。')
+      }
     }
 
     // 自己的用户目录：全部允许

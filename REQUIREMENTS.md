@@ -78,7 +78,7 @@ E:\Jarvis\
 | C5 | 授权 | principals.json 不保护 | 可正常编辑 |
 | C6 | 仓库 | 配置不入库 | 实际配置、userdata 全部 gitignore |
 | D1 | 工具 | 工具全局可用 | 所有启用工具对所有会话加载 |
-| D2 | 工具 | 工具所有权 | 创建者改/删；main 全权；系统工具仅 main 改 |
+| D2 | 工具 | 工具所有权 | 创建者改/删；main 全权；系统工具仅 maintainer/owner 改 |
 | D3 | 工具 | 用户工具目录 | `userdata/tools/<ownerId>/<toolName>`；名字全局唯一 |
 | D4 | 工具 | 不做沙箱 | 用户工具与主进程同权限，信任家人 |
 | D5 | 权限 | 代码修改 | 仅 maintainer/owner |
@@ -136,6 +136,9 @@ E:\Jarvis\
 `core/permissions.mjs` 生成 `canUseTool`：
 
 - `config/credentials.json`、`config/agent.json`：Read/Glob/Grep/Write/Edit 全部拒绝。
+- `config/` 根目录的 Grep/Glob/LS 整目录操作拒绝，防止绕过单文件检查。
+- `config/_legacy-*` 历史备份整棵子树拒绝访问。
+- `agents/claude-cc/memory/`、`bridge/sessions/` 历史会话数据拒绝访问。
 - `config/rules.md`：允许读，拒绝写。
 - 自己的 persona/workspace/memory：允许。
 - 其他用户的数据：拒绝。
@@ -153,7 +156,7 @@ E:\Jarvis\
   - `list_tools` 返回系统 + 所有用户工具；
   - `create_tool` 写入当前 principal 的目录；
   - `update/delete` 只允许创建者；main 例外；
-  - 系统工具只能 main 通过项目文件修改。
+  - 系统工具只能由 maintainer/owner 通过项目文件修改。
 - 工具名全局唯一。
 
 ### 5.5 并发
@@ -195,6 +198,10 @@ E:\Jarvis\
 - 开发模式由 `scripts/dev-supervisor.mjs` 托管 Vite + Electron，替代 `concurrently -k`。
 - `restart__electron` → Bridge → Electron：主会话回合结束后再执行重启，消息先落盘。
 - Electron 再调用 supervisor `/restart-electron`：只重启 Electron，Vite 保持运行。
+- 重启前运行 `scripts/restart-preflight.mjs`：后端语法 + 配置 JSON + 前端构建，失败则拒绝重启。
+- `force` 参数可立即重启；普通请求等待超过 10 分钟也会强制重启。
+- `restart__all` 同时重启 Bridge 和 Electron，适合 `core/` 两端都引用的改动；同样支持 `force`。
+- 自行 detach 的常驻后台进程不在等待范围内，重启前应避免启动。
 - 用户关闭窗口时 supervisor 一并退出，不留下后台 Vite。
 - 打包模式没有 supervisor 时回退到 `app.relaunch()`。
 - Electron 异常崩溃会在 60 秒内最多自动拉起 3 次。
@@ -237,7 +244,7 @@ E:\Jarvis\
 
 ---
 
-## 9. 实现状态（2026-11-18）
+## 9. 实现状态（2026-11-19）
 
 ### 已完成
 
@@ -253,6 +260,9 @@ E:\Jarvis\
 - Bridge 绑定 127.0.0.1；adapter 自动发现；微信 adapter 从 credentials 读取 token
 - PC 前端：主会话 + 用户只读会话；Markdown/工具折叠；删除旧 renderer/InputBar/styles
 - 启动：`npm run dev` 由 `scripts/dev-supervisor.mjs` 托管 Vite + Electron，自重启不会杀掉 Vite
+- 重启：preflight 检查、回合感知、force、10 分钟兜底、restart__all
+- 权限：config 根目录整目录搜索拒绝、`_legacy-*` 备份保护
+- 目录整理：旧设计文档归档到 `docs/archive/`，README 重写，移除 wait-for-vite 和未使用的 concurrently
 
 ### 验证
 
@@ -269,6 +279,7 @@ E:\Jarvis\
 - 一个 adapter 当前一个账号；多 bot 账号需要账号实例层
 - 用户工具不做 OS 沙箱（按决定）
 - 凭证保护是 prompt + 文件工具路径级；Bash 仍可绕过（按决定）；`agent.json` 与 `credentials.json` 同等保护
+- `config/rules.md` 里仍有旧的“系统工具仅主维护会话修改”表述，需要人类手动同步为 maintainer/owner；Agent 不得修改 rules.md
 - PC UI 只能查看用户当前会话；多会话切换/新建 UI 未做（存储层已支持）
 - principal 管理通过 `config/principals.json` 手动编辑；没有 UI
 - 旧 `agents/claude-cc/memory`、`bridge/sessions`、`config/_legacy-*` 作为历史数据保留（gitignore）

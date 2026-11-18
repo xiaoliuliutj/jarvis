@@ -15,7 +15,6 @@
     "@vitejs/plugin-react": "^6.3.0",
     "7zip-min": "^3.0.1",
     "canvas": "^3.2.3",
-    "concurrently": "^10.0.7",
     "framer-motion": "^14.14.0",
     "mammoth": "^1.13.0",
     "react": "^19.3.1",

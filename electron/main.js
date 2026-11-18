@@ -24,7 +24,11 @@ let win = null
 
 let activeMainTurns = 0
 let pendingRelaunch = false
+let pendingRelaunchTimer = null
 let relaunching = false
+
+// 回合卡死时的兜底：10 分钟后强制重启。正常回合应远小于这个时间。
+const RELAUNCH_WAIT_MS = 10 * 60 * 1000
 
 function postSupervisor(pathname) {
   return new Promise(resolve => {
@@ -55,13 +59,43 @@ async function performRelaunch() {
   }
 }
 
-function requestRelaunch() {
+function clearPendingRelaunchTimer() {
+  if (pendingRelaunchTimer) {
+    clearTimeout(pendingRelaunchTimer)
+    pendingRelaunchTimer = null
+  }
+}
+
+function requestRelaunch({ force = false } = {}) {
   if (relaunching) return
+
+  if (force) {
+    clearPendingRelaunchTimer()
+    if (activeMainTurns > 0) {
+      console.warn('[main] 强制重启，当前回合会被中断')
+    }
+    pendingRelaunch = false
+    void performRelaunch()
+    return
+  }
+
   if (activeMainTurns > 0) {
     pendingRelaunch = true
+    if (!pendingRelaunchTimer) {
+      pendingRelaunchTimer = setTimeout(() => {
+        pendingRelaunchTimer = null
+        if (!pendingRelaunch) return
+        console.warn('[main] 重启等待超过 10 分钟，强制重启')
+        pendingRelaunch = false
+        void performRelaunch()
+      }, RELAUNCH_WAIT_MS)
+    }
     console.log('[main] 重启请求已挂起，等待当前回合结束')
     return
   }
+
+  clearPendingRelaunchTimer()
+  pendingRelaunch = false
   void performRelaunch()
 }
 
@@ -73,6 +107,7 @@ async function withMainTurn(fn) {
     activeMainTurns -= 1
     if (activeMainTurns === 0 && pendingRelaunch) {
       pendingRelaunch = false
+      clearPendingRelaunchTimer()
       console.log('[main] 当前回合已结束，执行挂起的重启')
       void performRelaunch()
     }
@@ -243,7 +278,7 @@ function connectBridgeWS() {
   bridgeWs.on('message', (data) => {
     const event = JSON.parse(data)
     if (event.type === 'relaunch-electron') {
-      requestRelaunch()
+      requestRelaunch({ force: !!event.force })
       return
     }
     win?.webContents.send('bridge-event', event)
