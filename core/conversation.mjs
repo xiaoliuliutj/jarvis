@@ -17,7 +17,7 @@ import * as store from './user-store.mjs'
 import { buildSystemPrompt } from './prompt.mjs'
 import { buildCanUseTool } from './permissions.mjs'
 import { buildMcpServers } from './tools.mjs'
-import { getAnthropicCredentials, getModel } from './config.mjs'
+import { getAgentEnv, getAnthropicCredentials, getModel } from './config.mjs'
 
 const locks = new Map()
 
@@ -65,7 +65,7 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
     const { apiKey, baseUrl } = getAnthropicCredentials()
     if (!apiKey) {
       return {
-        text: sanitizeForUser(principal, '未配置 API Key（config/credentials.json）'),
+        text: sanitizeForUser(principal, '未配置 API Key（config/agent.json 或 config/credentials.json）'),
         cost: 0,
         turns: 0,
         isError: true,
@@ -86,6 +86,7 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
       model: getModel(),
       apiKey,
       baseUrl,
+      agentEnv: getAgentEnv(),
       cwd: workspace,
       resumeSessionId: resumeId,
       systemPrompt,

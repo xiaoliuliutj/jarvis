@@ -36,8 +36,8 @@ Jarvis 是一个本机运行的 AI 助手，包含：
 ```text
 E:\Jarvis\
 ├─ config\
-│   ├─ credentials.json      # API Key、微信 token；Agent 不可读写
-│   ├─ agent.json            # 模型等普通配置
+│   ├─ credentials.json      # 微信 token + 可选 API Key fallback；Agent 不可读写
+│   ├─ agent.json            # Claude Code settings 格式（env/model/effort）；Agent 不可读写
 │   ├─ bridge.json           # 端口、adapter、系统配置（不含 token）
 │   ├─ rules.md              # 全局 rules；可读，只人工改
 │   ├─ principals.json       # source/account → principal、角色、能力
@@ -71,7 +71,7 @@ E:\Jarvis\
 | B3 | 记忆 | 每用户独立长期记忆 | `userdata/<id>/memory/long-term.jsonl` |
 | B4 | 人设 | 每用户独立 persona | `persona.md`；用户可让 AI 通过 `persona__update` 改自己 |
 | B5 | 规则 | 全局 rules | `config/rules.md`；可读；只人工写；优先级高于 persona |
-| C1 | 配置 | 凭证与普通配置分离 | `credentials.json` vs `agent.json`/`bridge.json` |
+| C1 | 配置 | 模型配置兼容 Claude Code settings | 整个 settings 对象可直接粘到 `agent.json`，`env` 映射到 Agent 子进程 |
 | C2 | 保密 | 凭证不可读写/外传 | prompt + Read/Glob/Grep/Write/Edit 路径拒绝；Bash 为信任级绕过点 |
 | C3 | 无感 | 用户对 API 无感 | 回复/错误/UI 不出现 Key、供应商、token |
 | C4 | 规则 | 全局 rules 只读 | Agent 不可写 |
@@ -91,7 +91,7 @@ E:\Jarvis\
 | G1 | Adapter | 统一接口 | manifest/自动发现；统一入站/出站 |
 | G2 | Bridge | 只跑本机 | HTTP/WS 绑定 127.0.0.1 |
 | G3 | 事件 | 前端契约 | 事件带 principalId/sessionId/source |
-| H1 | 权限 | 凭证读取拒绝 | 所有 Agent（含 main）不可读 credentials.json |
+| H1 | 权限 | 凭证读取拒绝 | 所有 Agent（含 main）不可读 `credentials.json` / `agent.json` |
 | H2 | 规则 | 全局 rules 只读 | 仅人工修改 |
 | H3 | 主会话 | 权限模式 | 不用 rulesOnly，maintainer 可写项目代码 |
 | I1 | 存储 | 不建数据库 | 文件型 JSON/JSONL |
@@ -135,7 +135,7 @@ E:\Jarvis\
 
 `core/permissions.mjs` 生成 `canUseTool`：
 
-- `config/credentials.json`：Read/Glob/Grep/Write/Edit 全部拒绝。
+- `config/credentials.json`、`config/agent.json`：Read/Glob/Grep/Write/Edit 全部拒绝。
 - `config/rules.md`：允许读，拒绝写。
 - 自己的 persona/workspace/memory：允许。
 - 其他用户的数据：拒绝。
@@ -179,11 +179,20 @@ E:\Jarvis\
 - 配置：JSON。
 - 备份：复制 `userdata/` 即可。
 
+### 5.8 模型配置
+
+- `config/agent.json` 直接使用 Claude Code settings 格式，可以整段粘贴。
+- `env` 以及顶层 `ANTHROPIC_*` / `CLAUDE_CODE_*` 会注入 Agent 子进程。
+- 顶层 `effortLevel` / `autoCompactWindow` 在 env 未设置时映射为对应的 `CLAUDE_CODE_*`。
+- 模型解析：`ANTHROPIC_MODEL` 优先；`opus` / `sonnet` / `haiku` 别名映射到 `ANTHROPIC_DEFAULT_*_MODEL`。
+- 密钥解析：`ANTHROPIC_AUTH_TOKEN` > `ANTHROPIC_API_KEY` > 旧 `apiKey` > `credentials.json`。
+- `agent.json` 可能包含 token，因此对所有 Agent 禁止读写。
+
 ---
 
 ## 6. 迁移
 
-1. 旧 `config/agent.json` 的 `env` 密钥 → `config/credentials.json`；非敏感设置留在 `agent.json`。
+1. 旧 `config/agent.json` 的 `env` 密钥格式继续兼容；现在也可以把完整的 Claude Code settings 对象直接粘到 `agent.json`（文件受保护，不入库）。
 2. 旧 `config/bridge.json` 的微信 token → `credentials.json`；端口/adapter/crons 拆分。
 3. 旧 `config/global.md` → `config/rules.md`（规则）+ `userdata/pc-main/persona.md`（主会话人设）。
 4. PC 主会话消息 → `userdata/pc-main/sessions/`。
@@ -221,7 +230,7 @@ E:\Jarvis\
 
 ### 已完成
 
-- 配置拆分：`config/credentials.json`（受保护）+ `agent.json` / `bridge.json` / `rules.md` / `principals.json`
+- 配置：`agent.json` 兼容 Claude Code settings（env/model/effort）；`agent.json` 与 `credentials.json` 均受保护；`bridge.json` / `rules.md` / `principals.json` 普通配置
 - `userdata/` 结构：`pc-main` + 外部 principal，各自的 persona / sessions / workspace / memory / crons
 - 一次性迁移：主会话、微信会话、长期记忆、test-greeting cron、旧配置备份
 - `core/` 模块：paths / config / principals / user-store / prompt / permissions / tools / conversation / scheduler / cron / adapters
@@ -248,7 +257,7 @@ E:\Jarvis\
 - 旧的全局 inactivity 主动消息已停用；后续需要按 principal 重做
 - 一个 adapter 当前一个账号；多 bot 账号需要账号实例层
 - 用户工具不做 OS 沙箱（按决定）
-- 凭证保护是 prompt + 文件工具路径级；Bash 仍可绕过（按决定）
+- 凭证保护是 prompt + 文件工具路径级；Bash 仍可绕过（按决定）；`agent.json` 与 `credentials.json` 同等保护
 - PC UI 只能查看用户当前会话；多会话切换/新建 UI 未做（存储层已支持）
 - principal 管理通过 `config/principals.json` 手动编辑；没有 UI
 - 旧 `agents/claude-cc/memory`、`bridge/sessions`、`config/_legacy-*` 作为历史数据保留（gitignore）

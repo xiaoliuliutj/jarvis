@@ -43,6 +43,7 @@ const SIGNAL_FILE = path.join(import.meta.dirname, 'tools', '_reload.signal')
  * @param {string} options.model
  * @param {string} options.apiKey
  * @param {string} options.baseUrl
+ * @param {Record<string,string>} options.agentEnv  来自 config/agent.json 的额外环境变量
  * @param {string} options.cwd
  * @param {string|null} options.resumeSessionId
  * @param {string} options.systemPrompt        由 core/prompt 生成的完整 prompt
@@ -56,6 +57,7 @@ export async function* run(prompt, options = {}) {
     model,
     apiKey,
     baseUrl,
+    agentEnv = {},
     cwd,
     resumeSessionId,
     systemPrompt = '',
@@ -66,7 +68,7 @@ export async function* run(prompt, options = {}) {
   } = options
 
   if (!apiKey) {
-    yield { type: 'result', text: '未配置 API Key（config/credentials.json）', cost: 0, turns: 0, isError: true, sessionId: null }
+    yield { type: 'result', text: '未配置 API Key（config/agent.json 或 config/credentials.json）', cost: 0, turns: 0, isError: true, sessionId: null }
     return
   }
 
@@ -75,8 +77,10 @@ export async function* run(prompt, options = {}) {
   const envPATH = process.env.PATH || ''
   const patchedPATH = envPATH.includes(nodeBinDir) ? envPATH : `${nodeBinDir}${path.delimiter}${envPATH}`
 
+  // agent.json 的 env 覆盖 shell 环境；凭证和 PATH 最后兜底。
   const injectedEnv = {
     ...process.env,
+    ...agentEnv,
     PATH: patchedPATH,
     ANTHROPIC_API_KEY: apiKey,
     ANTHROPIC_AUTH_TOKEN: apiKey,

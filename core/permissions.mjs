@@ -2,7 +2,7 @@
  * 工具权限。
  *
  * 个人项目，不做 OS 沙箱；这里做路径级约束：
- *   - credentials.json：任何 Agent 都不可读/写
+ *   - credentials.json / agent.json：任何 Agent 都不可读/写（均可能包含 token）
  *   - rules.md：可读，不可写
  *   - 自己的 userdata：可读写
  *   - 其他用户的数据：不可读写
@@ -18,6 +18,7 @@ import {
   USERDATA_DIR,
   USER_TOOLS_DIR,
   CREDENTIALS_FILE,
+  AGENT_CONFIG_FILE,
   RULES_FILE,
   principalDir,
   isInside,
@@ -59,9 +60,9 @@ export function buildCanUseTool({ principal, workspace }) {
     const abs = path.resolve(raw)
     const write = WRITE_TOOLS.has(toolName)
 
-    // 凭证：不可读、不可写
-    if (abs === path.resolve(CREDENTIALS_FILE)) {
-      return deny('该配置为受保护凭证，不能读取或修改。')
+    // 凭证：不可读、不可写。agent.json 里现在也可能放 ANTHROPIC_AUTH_TOKEN
+    if (abs === path.resolve(CREDENTIALS_FILE) || abs === path.resolve(AGENT_CONFIG_FILE)) {
+      return deny('该配置包含模型凭证，不能读取或修改。')
     }
 
     // 全局 rules：可读不可写
