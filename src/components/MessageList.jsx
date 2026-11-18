@@ -12,6 +12,9 @@ function groupMessages(messages) {
   let extras = []
 
   for (const msg of messages) {
+    // 旧版本把“会话已超过 2 小时未活动”的提醒写成了 assistant 消息，数量很多，属于噪音
+    if (typeof msg.text === 'string' && msg.text.includes('会话已超过') && msg.text.includes('未活动')) continue
+
     if (msg.type === 'tool' || msg.type === 'thinking') {
       extras.push(msg)
       continue

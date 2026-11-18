@@ -47,6 +47,8 @@ export default function Sidebar({ mainSessions, users, current, onSelectMain, on
     <VStack
       w="220px"
       h="100%"
+      minH={0}
+      flexShrink={0}
       bg="#181825"
       borderRightWidth={1}
       borderColor="#313244"

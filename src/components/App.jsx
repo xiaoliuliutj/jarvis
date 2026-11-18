@@ -83,10 +83,11 @@ export default function App() {
   }
 
   return (
-    <VStack h="100vh" gap={0} bg="#1e1e2e">
+    <VStack h="100vh" w="100%" gap={0} bg="#1e1e2e" align="stretch">
       {/* 标题栏 */}
       <HStack
         h="40px"
+        w="100%"
         px={3}
         bg="#11111b"
         borderBottomWidth={1}
@@ -107,7 +108,7 @@ export default function App() {
       </HStack>
 
       {/* 主体 */}
-      <HStack flex={1} gap={0} w="100%" overflow="hidden">
+      <HStack flex={1} gap={0} w="100%" minH={0} align="stretch" overflow="hidden">
         <Sidebar
           mainSessions={mainSessions}
           users={users}

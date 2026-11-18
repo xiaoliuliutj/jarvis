@@ -21,7 +21,7 @@ export default function ChatArea({
   const [pending, setPending] = useState(null)
   const [reloadKey, setReloadKey] = useState(0)
   const pendingRef = useRef(null)
-  const scrollRef = useRef(null)
+  const scrollContainerRef = useRef(null)
   const currentRef = useRef(current)
   currentRef.current = current
 
@@ -118,12 +118,11 @@ export default function ChatArea({
     return () => unsub?.()
   }, [onRefreshMain])
 
-  // 自动滚到底部
+  // 只滚动消息容器，不能 scrollIntoView：那会把整个 HStack/页面一起滚走，
+  // 导致侧边栏被滚出屏幕、聊天区高度失控。
   useEffect(() => {
-    const id = setTimeout(() => {
-      scrollRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }, 0)
-    return () => clearTimeout(id)
+    const el = scrollContainerRef.current
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
   }, [messages, pending])
 
   async function handleSend() {
@@ -186,15 +185,14 @@ export default function ChatArea({
   const isUserSession = current.kind === 'user'
 
   return (
-    <VStack flex={1} bg="#1e1e2e" gap={0} overflow="hidden">
-      <Box flex={1} w="100%" overflow="auto" px={4} py={4}>
+    <VStack flex={1} h="100%" minH={0} bg="#1e1e2e" gap={0} overflow="hidden">
+      <Box ref={scrollContainerRef} flex={1} w="100%" minH={0} overflow="auto" px={4} py={4}>
         <MessageList
           messages={messages}
           pending={pending}
           userName={isUserSession ? current.displayName : ''}
           isUserSession={isUserSession}
         />
-        <div ref={scrollRef} />
       </Box>
 
       {isUserSession ? (
