@@ -17,10 +17,11 @@ import { createServer, request as httpRequest } from 'http'
 import { spawn } from 'child_process'
 import fs from 'fs'
 import path from 'path'
-import { ROOT } from '../core/paths.mjs'
+import { ROOT, PC_MAIN_ID } from '../core/paths.mjs'
 import { loadBridgeConfig } from '../core/config.mjs'
 import { resolvePrincipal, listPrincipals, getPrimaryAccount } from '../core/principals.mjs'
-import { ensureUser, getCurrentSession } from '../core/user-store.mjs'
+import { ensureUser, getCurrentSession, readPersona } from '../core/user-store.mjs'
+import { generateInterimNotice } from '../core/interim-notice.mjs'
 import { runTurn } from '../core/conversation.mjs'
 import { Scheduler } from '../core/scheduler.mjs'
 import { startCronManager } from '../core/cron.mjs'
@@ -34,6 +35,9 @@ const config = loadBridgeConfig()
 const HTTP_PORT = config.httpPort ?? 7779
 const WS_PORT = config.wsPort ?? 7780
 const HOST = '127.0.0.1'
+
+// 非主会话：超过这个时间还没最终回复，先发一句「正在处理」提示
+const INTERIM_NOTICE_DELAY_MS = 10_000
 
 // ── WebSocket 广播 ────────────────────────────────────────────────────────────
 
@@ -160,6 +164,25 @@ export function routeIncoming({
 
   scheduler.enqueue(principal.id, async () => {
     let result
+    let replyDone = false
+    let interimTimer = null
+
+    // 非主会话：10 秒内没有最终回复时，先发一句符合人设的「正在处理」
+    if (principal.id !== PC_MAIN_ID) {
+      interimTimer = setTimeout(async () => {
+        if (replyDone) return
+        try {
+          const persona = readPersona(principal.id)
+          const notice = await generateInterimNotice({ persona, displayName: principal.displayName })
+          if (replyDone) return
+          await sendText(principal.id, sourceType, accountId, externalUserId, notice)
+          console.log(`[bridge] 已发送「正在处理」提示 (${principal.id}): ${notice}`)
+        } catch (err) {
+          console.warn(`[bridge] 「正在处理」提示发送失败 (${principal.id}):`, err.message)
+        }
+      }, INTERIM_NOTICE_DELAY_MS)
+    }
+
     try {
       ensureFileDirs(principal.id)
       // 附件落盘 + 解析预览，拼进 prompt
@@ -186,6 +209,10 @@ export function routeIncoming({
       console.error(`[bridge] ${principal.id} 运行失败:`, err)
       result = { text: '服务暂时不可用，请稍后再试。', isError: true }
     }
+
+    // 最终回复开始发送：停掉「正在处理」计时器
+    replyDone = true
+    if (interimTimer) clearTimeout(interimTimer)
 
     // 成功或失败都给用户一条回复；失败时的文案已在 conversation 里对普通用户脱敏
     await sendReply(principal.id, sourceType, accountId, externalUserId, result)
