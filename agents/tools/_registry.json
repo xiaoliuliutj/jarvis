@@ -124,7 +124,7 @@
   },
   {
     "name": "image_gen",
-    "description": "AI 图像生成（文生图，智谱 GLM-Image），生成后可直接发回给用户（仅主人和主会话可用）",
+    "description": "AI 图像生成：文生图 / 图生图（NeCodeX gpt-image-2.5 + 智谱 GLM-Image），生成后可直接发回给用户（仅主人和主会话可用）",
     "enabled": true,
     "access": "owner",
     "createdAt": "2026-11-19T16:10:00.000Z",

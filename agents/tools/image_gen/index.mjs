@@ -57,6 +57,14 @@ function validateSize(size) {
   if (w * h > 2 ** 22) throw new Error('总像素不能超过 2^22（约 419 万像素）')
 }
 
+const IMAGE_MIME = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+}
+
 async function handleGenerate(args) {
   const prompt = String(args.prompt || '').trim()
   if (!prompt) throw new Error('prompt 不能为空')
@@ -69,10 +77,25 @@ async function handleGenerate(args) {
 
   validateSize(args.size)
 
+  // 图生图：读取本地输入图片
+  let imageBuffer, imageName, mimeType
+  if (args.imagePath) {
+    const imgPath = path.resolve(args.imagePath)
+    if (!fs.existsSync(imgPath)) throw new Error(`输入图片不存在：${imgPath}`)
+    const stat = fs.statSync(imgPath)
+    if (stat.size > 20 * 1024 * 1024) throw new Error('输入图片超过 20MB')
+    imageBuffer = fs.readFileSync(imgPath)
+    imageName = path.basename(imgPath)
+    mimeType = IMAGE_MIME[path.extname(imgPath).toLowerCase()] || 'image/png'
+  }
+
   const result = await generateImage({
     prompt,
     size: args.size,
     model: args.model,
+    imageBuffer,
+    imageName,
+    mimeType,
     providerId,
     config: providerConf,
   })
@@ -117,12 +140,13 @@ const server = new McpServer({ name: 'image_gen', version: '1.0.0' })
 
 server.tool(
   'image_gen',
-  'AI 图像生成（文生图）：根据文字描述生成图片，默认生成后自动发回给用户。' +
-  '当前 provider：智谱 GLM-Image（约 0.1 元/次，约 20 秒），支持 1:1 / 3:4 / 4:3 / 16:9 等尺寸。' +
+  'AI 图像生成：文生图（根据描述画图）和图生图（提供 imagePath 后按描述编辑该图片）。默认生成后自动发回给用户。' +
+  '当前默认 provider：NeCodeX gpt-image-2.5-flare（支持文生图+图生图）；zhipu GLM-Image 仅文生图（约 0.1 元/次）。' +
   '提示词要具体：主体、动作、场景、风格、配色、构图；需要在图里写文字时，把文字内容放进提示词并说明排版。',
   {
-    prompt: z.string().min(1).max(1000).describe('图片描述（越具体越好，可包含画面内的文字内容）'),
-    size: z.string().optional().describe('尺寸，如 1280x1280 | 1024x1024 | 1568x1056 | 1056x1568 | 1728x960；自定义需 512-2048 且为 32 的倍数'),
+    prompt: z.string().min(1).max(1000).describe('图片描述 / 编辑指令（越具体越好，可包含画面内的文字内容）'),
+    imagePath: z.string().optional().describe('可选：本地图片路径，提供后进入图生图（编辑）模式（necodex 支持）'),
+    size: z.string().optional().describe('尺寸，如 1024x1024 | 1280x1280 | 1568x1056 | 1056x1568 | 1728x960；自定义需 512-2048 且为 32 的倍数'),
     provider: z.string().optional().describe('可选：provider id（默认按配置；zhipu=智谱 GLM-Image，necodex=NeCodeX 中转）'),
     model: z.string().optional().describe('可选：模型名（zhipu 默认 glm-image；necodex 默认 gpt-image-2.5-flare，可选 gpt-image-2.5-sunburst）'),
     sendToUser: z.boolean().optional().describe('是否自动发回给用户（默认 true）'),

@@ -15,7 +15,8 @@ export default {
   supportsImageInput: false,   // 该模型只支持文生图
   supportedModels: SUPPORTED_MODELS,
 
-  async generate({ prompt, size, model }, config = {}) {
+  async generate({ prompt, size, model, imageBuffer }, config = {}) {
+    if (imageBuffer) throw new Error('智谱 GLM-Image 不支持图生图（仅文生图），请换用 necodex')
     const apiKey = config.apiKey
     if (!apiKey) throw new Error('未配置智谱 API Key（config/credentials.json → imagegen.zhipu.apiKey）')
 

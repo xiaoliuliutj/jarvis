@@ -42,13 +42,17 @@ export function listProviders() {
 }
 
 /**
- * 生成一张图片。
- * @param {{prompt: string, size?: string, model?: string, providerId: string, config: object}} opts
+ * 生成（或编辑）一张图片。
+ * @param {{prompt: string, size?: string, model?: string, imageBuffer?: Buffer,
+ *          imageName?: string, mimeType?: string, providerId: string, config: object}} opts
  */
-export async function generateImage({ prompt, size, model, providerId, config = {} }) {
+export async function generateImage({ prompt, size, model, imageBuffer, imageName, mimeType, providerId, config = {} }) {
   const provider = getProvider(providerId)
   if (!provider) {
     throw new Error(`未知图像 provider：${providerId}（支持：${providers.map(p => p.id).join(', ')}）`)
   }
-  return await provider.generate({ prompt, size, model }, config)
+  if (imageBuffer && !provider.supportsImageInput) {
+    throw new Error(`provider "${providerId}" 不支持图生图，请换用支持编辑的 provider`)
+  }
+  return await provider.generate({ prompt, size, model, imageBuffer, imageName, mimeType }, config)
 }
