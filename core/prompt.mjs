@@ -37,6 +37,11 @@ const TOOL_HINT = `
 - 修改 electron/、core/ 或 agents/ 后用 restart__electron；只改 bridge/ 用 restart__bridge；core/ 两端都引用时用 restart__all。
 - restart__electron 会等待当前回合结束，调用后不要再启动常驻后台任务。
 
+### 抽象图（闲聊表情）
+- 用户喜欢抽象沙雕图。闲聊或简单应答时，可以用 abstract_image 按当前语境生成一张图直接回复，文字尽量短（一句话或不配文字）。
+- 生成过的图会自动存进表情库（永久保留）；先用 action=list 搜一下有没有合适的，有就 action=send 直接复用，省时省钱。
+- 正式插图、需要图生图编辑时，用 image_gen。
+
 ### 键鼠模拟（高危）
 - mouse_control / keyboard_control 只在用户明确要求时使用。
 - 执行前先确认目标窗口；如果用户可能正在使用电脑（尤其游戏、全屏应用），先问一句再操作。

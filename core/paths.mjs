@@ -90,3 +90,12 @@ export function sentDir(principalId) {
 export function screenshotsDir(principalId) {
   return path.join(filesDir(principalId), 'screenshots')
 }
+
+/** 表情库（抽象图/表情包收藏，永久保留） */
+export function stickerDir(principalId) {
+  return path.join(principalDir(principalId), 'stickers')
+}
+
+export function stickerIndexFile(principalId) {
+  return path.join(stickerDir(principalId), 'index.json')
+}

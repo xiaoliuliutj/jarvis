@@ -16,6 +16,7 @@ import os from 'os'
 import path from 'path'
 import { loadCredentials } from '../../../core/config.mjs'
 import { generateImage, listProviders } from '../../../core/image-providers/index.mjs'
+import { saveSticker } from '../../../core/sticker-library.mjs'
 
 const ROOT = path.resolve(import.meta.dirname, '../../..')
 const principalId = process.env.JARVIS_PRINCIPAL_ID || ''
@@ -109,10 +110,25 @@ async function handleGenerate(args) {
   const outPath = path.join(dir, fileName)
   fs.writeFileSync(outPath, result.buffer)
 
+  // 生成的图片默认存入表情库，方便以后复用
+  let libraryId = null
+  if (args.storeToLibrary !== false) {
+    try {
+      const sticker = saveSticker(principalId, result.buffer, {
+        prompt,
+        scene: prompt,
+        source: 'image_gen',
+        ext,
+      })
+      libraryId = sticker.id
+    } catch {}
+  }
+
   return {
     path: outPath,
     sizeBytes: result.buffer.length,
     ...result.meta,
+    ...(libraryId ? { libraryId } : {}),
     note: args.sendToUser !== false
       ? '图片已放入发件箱，回合结束后会自动以图片消息发回给用户。'
       : '图片已生成，可用 Read 查看。',
@@ -152,6 +168,7 @@ server.tool(
     sendToUser: z.boolean().optional().describe('是否自动发回给用户（默认 true）'),
     fileName: z.string().optional().describe('可选：输出文件名'),
     outDir: z.string().optional().describe('可选：输出目录（默认发件箱或工作区）'),
+    storeToLibrary: z.boolean().optional().describe('是否存入表情库以便复用（默认 true）'),
   },
   async (args) => {
     try {
