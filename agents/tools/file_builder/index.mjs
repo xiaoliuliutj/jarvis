@@ -16,6 +16,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { buildFileBuffer } from '../../../core/file-writers/index.mjs'
+import { logInfo, logError } from '../../../core/logger.mjs'
 
 const ROOT = path.resolve(import.meta.dirname, '../../..')
 const principalId = process.env.JARVIS_PRINCIPAL_ID || ''
@@ -64,6 +65,8 @@ async function handleBuild(args) {
   const fileName = base.toLowerCase().endsWith(extension) ? base : base + extension
   const outPath = path.join(dir, fileName)
   fs.writeFileSync(outPath, buffer)
+
+  logInfo('file.build', '', { format: args.format, bytes: buffer.length })
 
   return {
     path: outPath,
@@ -116,6 +119,7 @@ server.tool(
       const result = await handleBuild(args)
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
     } catch (err) {
+      logError('file.build.fail', err.message, { format: args.format })
       return { content: [{ type: 'text', text: `❌ ${err.message}` }] }
     }
   }

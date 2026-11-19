@@ -30,6 +30,7 @@ import { formatScheduleReminder } from '../core/schedule-store.mjs'
 import { handleIncomingOnboarding } from '../core/onboarding.mjs'
 import { loadAdapters } from '../core/adapters.mjs'
 import { ensureFileDirs, prepareInbound, listOutboxFiles, markOutboxSent, isImageFile } from '../core/files.mjs'
+import { logInfo, logWarn, logError } from '../core/logger.mjs'
 
 const config = loadBridgeConfig()
 const HTTP_PORT = config.httpPort ?? 7779
@@ -82,7 +83,7 @@ async function sendReply(principalId, sourceType, accountId, externalUserId, res
   try {
     await sendText(principalId, sourceType, accountId, externalUserId, result.text)
   } catch (err) {
-    console.error(`[bridge] 回复发送失败 (${principalId}):`, err.message)
+    logError('reply.fail', err.message, { principalId, sourceType })
   }
 }
 
@@ -98,7 +99,7 @@ async function deliverOutbox(principalId, sourceType, accountId, externalUserId)
   try {
     files = listOutboxFiles(principalId)
   } catch (err) {
-    console.error(`[bridge] 读取发件箱失败 (${principalId}):`, err.message)
+    logError('outbox.read.fail', err.message, { principalId })
     return
   }
   if (!files.length) return
@@ -111,9 +112,9 @@ async function deliverOutbox(principalId, sourceType, accountId, externalUserId)
       await sendOne.call(adapter, externalUserId, f.path, { accountId, fileName: f.name })
       markOutboxSent(principalId, f.path)
       broadcast({ type: 'outbound_file', principalId, fileName: f.name, ok: true, kind: useImage ? 'image' : 'file' })
-      console.log(`[bridge] ${useImage ? '图片' : '文件'}已发送 (${principalId}): ${f.name}`)
+      logInfo('file.sent', f.name, { principalId, kind: useImage ? 'image' : 'file' })
     } catch (err) {
-      console.error(`[bridge] 文件发送失败 (${principalId}/${f.name}):`, err.message)
+      logError('file.fail', err.message, { principalId, file: f.name })
       broadcast({ type: 'outbound_file', principalId, fileName: f.name, ok: false, error: err.message })
     }
   }
@@ -130,6 +131,13 @@ export function routeIncoming({
   const principal = resolvePrincipal({ sourceType, accountId, externalUserId })
   ensureUser(principal.id)
   const current = getCurrentSession(principal.id)
+
+  logInfo('message.in', '', {
+    principalId: principal.id,
+    sourceType,
+    textLen: String(text || '').length,
+    attachments: attachments?.length || 0,
+  })
 
   // 让 PC 端实时看到用户发来的消息；source 只用于 UI/路由
   broadcast({
@@ -186,6 +194,7 @@ export function routeIncoming({
       }, INTERIM_NOTICE_DELAY_MS)
     }
 
+    const turnStarted = Date.now()
     try {
       ensureFileDirs(principal.id)
       // 附件落盘 + 解析预览，拼进 prompt
@@ -209,9 +218,18 @@ export function routeIncoming({
         })
       }
     } catch (err) {
-      console.error(`[bridge] ${principal.id} 运行失败:`, err)
+      logError('turn.fail', err?.message || String(err), { principalId: principal.id })
       result = { text: '服务暂时不可用，请稍后再试。', isError: true }
     }
+
+    logInfo('turn.done', '', {
+      principalId: principal.id,
+      sourceType,
+      ms: Date.now() - turnStarted,
+      isError: !!result?.isError,
+      cost: result?.cost ?? 0,
+      turns: result?.turns ?? 0,
+    })
 
     // 最终回复开始发送：停掉「正在处理」计时器
     replyDone = true
@@ -258,12 +276,18 @@ const cron = startCronManager({
     if (result.isError) return
     const account = getPrimaryAccount(principal)
     if (!account) {
-      console.warn(`[cron] ${principal.id} 没有可发送的账号`)
+      logWarn('cron.no-account', '', { principalId: principal.id, taskId: task.id })
+      return
+    }
+    // [SILENT]：夜间等场景下不打扰用户（结果一般已写入报告文件）
+    if (!result.text || result.text.includes('[SILENT]')) {
+      logInfo('cron.silent', '', { principalId: principal.id, taskId: task.id })
       return
     }
     const adapter = adapters[account.sourceType]
     if (!adapter) return
     await adapter.send(account.externalUserId, result.text, { accountId: account.accountId })
+    logInfo('cron.deliver', '', { principalId: principal.id, taskId: task.id })
     await deliverOutbox(principal.id, account.sourceType, account.accountId, account.externalUserId)
     broadcast({ type: 'cron_result', principalId: principal.id, taskId: task.id, text: result.text, sessionId: result.sessionId })
   },
@@ -284,6 +308,7 @@ const schedule = startScheduleManager({
       account.externalUserId,
       formatScheduleReminder(item)
     )
+    logInfo('schedule.remind', item.title || '', { principalId: principal.id })
   },
   onEvent: (event) => {
     if (event.type === 'schedule_reminder') {
@@ -314,9 +339,9 @@ for (const [adapterId, adapterConf] of Object.entries(config.adapters ?? {})) {
       attachments: payload.attachments,
       timestamp: payload.timestamp,
     }), { accountId }).catch(err => {
-      console.error(`[bridge] adapter ${adapterId} (${accountId}) 启动失败:`, err.message)
+      logError('adapter.fail', err.message, { adapterId, accountId })
     })
-    console.log(`[bridge] adapter started: ${adapterId} (account: ${accountId})`)
+    logInfo('adapter.start', '', { adapterId, accountId })
   }
 }
 

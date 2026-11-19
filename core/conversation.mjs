@@ -18,6 +18,7 @@ import { buildSystemPrompt } from './prompt.mjs'
 import { buildCanUseTool } from './permissions.mjs'
 import { buildMcpServers } from './tools.mjs'
 import { getAgentEnv, getAnthropicCredentials, getModel } from './config.mjs'
+import { logInfo, logError } from './logger.mjs'
 
 const locks = new Map()
 
@@ -132,6 +133,7 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
           timestamp: new Date().toISOString(),
         }
         toolRecords.push(rec)
+        logInfo('tool.call', event.name, { principalId })
         if (persistSessionId) {
           store.appendMessage(principalId, persistSessionId, rec)
           toolsPersisted++
@@ -147,6 +149,14 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
     }
 
     if (!result) throw new Error('Agent 没有返回 result')
+
+    logInfo('turn.result', '', {
+      principalId,
+      source,
+      isError: !!result.isError,
+      cost: result.cost ?? 0,
+      turns: result.turns ?? 0,
+    })
 
     const finalSessionId = result.sessionId || persistSessionId
     if (!finalSessionId) throw new Error('Agent 没有返回 sessionId')

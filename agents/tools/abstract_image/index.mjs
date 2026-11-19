@@ -28,6 +28,7 @@ import {
   getSharedSticker,
   removeSharedSticker,
 } from '../../../core/sticker-library.mjs'
+import { logInfo, logError } from '../../../core/logger.mjs'
 
 const ROOT = path.resolve(import.meta.dirname, '../../..')
 const principalId = process.env.JARVIS_PRINCIPAL_ID || ''
@@ -112,6 +113,12 @@ async function doGenerate(args) {
   if (args.sendToUser !== false) {
     sentPath = saveToOutbox(result.buffer, '.png')
   }
+
+  logInfo('sticker.gen', '', {
+    shared: shared.ok,
+    visibility: args.visibility || 'private',
+    bytes: result.buffer.length,
+  })
 
   return {
     libraryId: sticker ? sticker.id : null,
@@ -260,6 +267,7 @@ server.tool(
       const result = await handleAction(args)
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
     } catch (err) {
+      logError('sticker.fail', err.message, { action: args.action || 'generate' })
       return { content: [{ type: 'text', text: `❌ ${err.message}` }] }
     }
   }

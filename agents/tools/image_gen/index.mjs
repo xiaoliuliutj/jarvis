@@ -17,6 +17,7 @@ import path from 'path'
 import { loadCredentials } from '../../../core/config.mjs'
 import { generateImage, listProviders } from '../../../core/image-providers/index.mjs'
 import { saveSticker } from '../../../core/sticker-library.mjs'
+import { logInfo, logError } from '../../../core/logger.mjs'
 
 const ROOT = path.resolve(import.meta.dirname, '../../..')
 const principalId = process.env.JARVIS_PRINCIPAL_ID || ''
@@ -124,6 +125,13 @@ async function handleGenerate(args) {
     } catch {}
   }
 
+  logInfo('image.gen', '', {
+    provider: result.meta.provider,
+    model: result.meta.model,
+    mode: result.meta.mode || 'generate',
+    bytes: result.buffer.length,
+  })
+
   return {
     path: outPath,
     sizeBytes: result.buffer.length,
@@ -175,6 +183,7 @@ server.tool(
       const result = await handleGenerate(args)
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
     } catch (err) {
+      logError('image.fail', err.message, { provider: args.provider || '' })
       return { content: [{ type: 'text', text: `❌ ${err.message}` }] }
     }
   }

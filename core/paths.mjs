@@ -14,6 +14,10 @@ import fs from 'fs'
 
 export const ROOT = path.resolve(import.meta.dirname, '..')
 
+export function logsDir() {
+  return path.join(ROOT, 'logs')
+}
+
 export const CONFIG_DIR = path.join(ROOT, 'config')
 export const USERDATA_DIR = path.join(ROOT, 'userdata')
 export const USER_TOOLS_DIR = path.join(USERDATA_DIR, 'tools')
