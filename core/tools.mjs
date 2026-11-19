@@ -53,7 +53,7 @@ export function listAllTools() {
     enabled: e.enabled !== false,
     scope: 'system',
     ownerId: null,
-    access: 'all',
+    access: e.access === 'owner' ? 'owner' : 'all',
   }))
   const user = listUserToolDirs().map(m => ({
     name: m.name,
@@ -224,6 +224,7 @@ export function buildMcpServers(principal) {
 
   for (const entry of readSystemRegistry()) {
     if (entry.enabled === false) continue
+    if (!canAccessTool(entry, principal)) continue
     const indexFile = path.join(SYSTEM_TOOLS_DIR, entry.name, 'index.mjs')
     if (!fs.existsSync(indexFile)) continue
     servers[entry.name] = { command: 'node', args: [indexFile], env }

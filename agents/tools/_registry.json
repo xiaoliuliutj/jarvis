@@ -82,5 +82,13 @@
     "enabled": true,
     "createdAt": "2026-11-18T17:00:25.832Z",
     "version": "1.0.0"
+  },
+  {
+    "name": "screenshot",
+    "description": "截取屏幕（全屏/区域/指定窗口），可保存查看或直接发回给用户",
+    "enabled": true,
+    "access": "owner",
+    "createdAt": "2026-11-19T12:20:00.000Z",
+    "version": "1.0.0"
   }
 ]
