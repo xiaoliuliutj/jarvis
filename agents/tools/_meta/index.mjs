@@ -19,6 +19,7 @@ import {
   deleteUserTool,
   toggleUserTool,
   listAllTools,
+  canAccessTool,
 } from '../../../core/tools.mjs'
 
 const principalId = process.env.JARVIS_PRINCIPAL_ID
@@ -42,14 +43,16 @@ const server = new McpServer({ name: '_meta', version: '2.0.0' })
 
 server.tool(
   'list_tools',
-  '列出所有系统工具和用户工具。所有用户都可以使用这些工具；用户工具只有创建者能改。',
+  '列出当前用户可见的系统工具和用户工具。用户工具只有创建者能改；access=owner 的工具仅主人和主会话可见。',
   {},
   async () => {
-    const tools = listAllTools()
+    const principal = { id: principalId, role }
+    const tools = listAllTools().filter(t => canAccessTool(t, principal))
     if (!tools.length) return ok('当前没有工具。')
     const lines = tools.map(t => {
       const owner = t.scope === 'user' ? `，创建者 ${t.ownerId}` : ''
-      return `${t.enabled ? '✅' : '⏸'} **${t.name}** [${t.scope}${owner}] — ${t.description || ''}`
+      const locked = t.access === 'owner' ? '，仅主人可用' : ''
+      return `${t.enabled ? '✅' : '⏸'} **${t.name}** [${t.scope}${owner}${locked}] — ${t.description || ''}`
     })
     return ok(`共 ${tools.length} 个工具：\n\n${lines.join('\n')}`)
   }
@@ -59,18 +62,20 @@ server.tool(
 
 server.tool(
   'create_tool',
-  '创建一个用户工具。创建后所有用户都可以使用；只有创建者/main 可以修改或删除。' +
-  '代码必须是完整的 MCP server，并以 await server.connect(new StdioServerTransport()) 结尾。',
+  '创建一个用户工具。默认所有用户可以使用；access=owner 时仅主人和主会话可用。' +
+  '只有创建者/main 可以修改或删除。代码必须是完整的 MCP server，并以 await server.connect(new StdioServerTransport()) 结尾。',
   {
     name: z.string().regex(/^[a-z][a-z0-9_]*$/, '小写字母/数字/下划线，字母开头').describe('工具全局唯一名称'),
     description: z.string().min(1).describe('工具描述'),
     code: z.string().min(50).describe('完整 MCP server 实现代码'),
+    access: z.enum(['all', 'owner']).optional().describe('访问范围：all=所有用户（默认），owner=仅主人和主会话'),
   },
-  async ({ name, description, code }) => {
+  async ({ name, description, code, access }) => {
     try {
       requirePrincipal()
-      const tool = createUserTool({ principalId, name, description, code })
-      return ok(`✅ 工具 "${name}" 已创建，所有用户都可以使用。\n路径：${tool.dir}`)
+      const tool = createUserTool({ principalId, name, description, code, access })
+      const scopeText = tool.access === 'owner' ? '仅主人和主会话可用' : '所有用户都可以使用'
+      return ok(`✅ 工具 "${name}" 已创建（${scopeText}）。\n路径：${tool.dir}`)
     } catch (err) {
       return fail(err)
     }
@@ -86,12 +91,14 @@ server.tool(
     name: z.string().describe('工具名称'),
     code: z.string().min(50).describe('新的完整 MCP server 代码'),
     description: z.string().optional().describe('可选：新描述'),
+    access: z.enum(['all', 'owner']).optional().describe('可选：访问范围，all=所有用户，owner=仅主人和主会话'),
   },
-  async ({ name, code, description }) => {
+  async ({ name, code, description, access }) => {
     try {
       requirePrincipal()
-      const manifest = updateUserTool({ principalId, role, name, code, description })
-      return ok(`✅ 工具 "${name}" 已更新到 v${manifest.version}，所有会话会自动热加载。`)
+      const manifest = updateUserTool({ principalId, role, name, code, description, access })
+      const scopeText = manifest.access === 'owner' ? '，仅主人和主会话可用' : ''
+      return ok(`✅ 工具 "${name}" 已更新到 v${manifest.version}${scopeText}，所有会话会自动热加载。`)
     } catch (err) {
       return fail(err)
     }

@@ -53,6 +53,7 @@ export function listAllTools() {
     enabled: e.enabled !== false,
     scope: 'system',
     ownerId: null,
+    access: 'all',
   }))
   const user = listUserToolDirs().map(m => ({
     name: m.name,
@@ -61,8 +62,19 @@ export function listAllTools() {
     scope: 'user',
     ownerId: m.ownerId,
     createdAt: m.createdAt,
+    access: m.access === 'owner' ? 'owner' : 'all',
   }))
   return [...system, ...user]
+}
+
+/**
+ * 工具访问控制：
+ *   access === 'owner' 的用户工具仅对 owner / maintainer（主会话）可用。
+ *   系统工具和其它用户工具默认所有用户可用。
+ */
+export function canAccessTool(tool, principal) {
+  if (tool?.access !== 'owner') return true
+  return principal?.role === 'owner' || principal?.role === 'maintainer'
 }
 
 export function listSystemTools() {
@@ -94,7 +106,7 @@ export function signalReload() {
 
 // ── 用户工具 CRUD ─────────────────────────────────────────────────────────────
 
-export function createUserTool({ principalId, name, description, code }) {
+export function createUserTool({ principalId, name, description, code, access = 'all' }) {
   assertNameAvailable(name)
   const dir = path.join(USER_TOOLS_DIR, principalId, name)
   ensureDir(dir)
@@ -115,6 +127,7 @@ export function createUserTool({ principalId, name, description, code }) {
     createdAt: new Date().toISOString(),
     version: '1.0.0',
     enabled: true,
+    access: access === 'owner' ? 'owner' : 'all',
   }
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8')
   signalReload()
@@ -128,7 +141,7 @@ function assertCanManage(principalId, role, tool) {
   }
 }
 
-export function updateUserTool({ principalId, role, name, code, description }) {
+export function updateUserTool({ principalId, role, name, code, description, access }) {
   const tool = findUserTool(name)
   if (!tool) throw new Error(`用户工具 "${name}" 不存在；系统工具请直接修改项目文件`)
   assertCanManage(principalId, role, tool)
@@ -149,6 +162,7 @@ export function updateUserTool({ principalId, role, name, code, description }) {
   const manifestFile = path.join(tool.dir, 'manifest.json')
   const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf-8'))
   if (description) manifest.description = description
+  if (access === 'all' || access === 'owner') manifest.access = access
   manifest.version = bumpVersion(manifest.version)
   manifest.updatedAt = new Date().toISOString()
   fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2), 'utf-8')
@@ -217,6 +231,7 @@ export function buildMcpServers(principal) {
 
   for (const tool of listUserToolDirs()) {
     if (tool.enabled === false) continue
+    if (!canAccessTool(tool, principal)) continue
     if (servers[tool.name]) {
       throw new Error(`工具名冲突：${tool.name}（系统工具/其他用户工具已存在）`)
     }
