@@ -130,6 +130,7 @@ export default function ChatArea({
     if (!input.trim() || busy || current.kind !== 'main') return
 
     const text = input.trim()
+    const sentSessionId = current.sessionId || null
     setInput('')
     onBusyChange(true)
     setMessages(prev => [...prev, { type: 'user', text }])
@@ -141,36 +142,31 @@ export default function ChatArea({
     try {
       const result = await window.jarvis.sendMessage({
         prompt: text,
-        sessionId: current.sessionId || null,
+        sessionId: sentSessionId,
       })
 
-      const finalTurn = pendingRef.current || turn
       pendingRef.current = null
       setPending(null)
 
-      if (result?.isError) {
-        setMessages(prev => [
-          ...prev,
-          ...(finalTurn.tools || []),
-          { type: 'error', text: result.text || '未知错误' },
-        ])
-      } else {
-        const finalText = result?.text || finalTurn.text || ''
-        setMessages(prev => [
-          ...prev,
-          ...(finalTurn.tools || []),
-          ...(finalText ? [{ type: 'assistant', text: finalText }] : []),
-        ])
+      // 新会话拿到真实 sessionId：仅当还停留在发送时的会话才切换视图
+      if (result?.sessionId && result.sessionId !== sentSessionId) {
+        const cur = currentRef.current
+        const stillViewingSent = cur.kind === 'main' && (cur.sessionId || null) === sentSessionId
+        if (stillViewingSent) onSessionChange(result.sessionId)
       }
 
-      if (result?.sessionId && result.sessionId !== current.sessionId) {
-        onSessionChange(result.sessionId)
-      }
+      // 用户消息和工具记录在回合进行中已实时落盘；
+      // 结束后统一从磁盘重载历史（user/tool/assistant 全在），避免与实时事件重复。
+      if (currentRef.current.kind === 'main') setReloadKey(k => k + 1)
       onRefreshMain?.()
     } catch (err) {
       pendingRef.current = null
       setPending(null)
-      setMessages(prev => [...prev, { type: 'error', text: err.message }])
+      // IPC 层面的失败不会进历史，直接在界面上提示
+      if (currentRef.current.kind === 'main') {
+        setMessages(prev => [...prev, { type: 'error', text: err.message || '发送失败' }])
+      }
+      console.error('[ChatArea] 发送失败:', err)
     } finally {
       onBusyChange(false)
     }

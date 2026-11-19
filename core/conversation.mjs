@@ -75,11 +75,31 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
 
     // cron 的内部 prompt 不是用户发的消息，不写入聊天记录。
     const includeUser = source !== 'cron'
-    const turnRecords = includeUser
-      ? [{ type: 'user', text: prompt, timestamp: new Date().toISOString() }]
-      : []
+    // 首次会话的名称：主会话固定叫“主会话”；用户 chat 取第一条消息；cron 叫“定时任务”
+    const sessionName = principal.role === 'maintainer'
+      ? '主会话'
+      : (includeUser ? prompt.slice(0, 20) : '定时任务')
+    const isMain = principal.role === 'maintainer'
+
+    // ── 进行中即落盘 ─────────────────────────────────────────────────────────
+    // 用户消息和工具记录不等回合结束才写。否则回合进行中切换会话/刷新历史时，
+    // 已发出的消息和已执行的工具会“消失”，回合结束后才重新出现。
+    let persistSessionId = resumeId        // 当前可落盘的会话 ID（新会话等 init 事件带回）
+    let userPersisted = false
+    let toolsPersisted = 0
+
+    const userRecord = includeUser
+      ? { type: 'user', text: prompt, timestamp: new Date().toISOString() }
+      : null
+
+    if (includeUser && persistSessionId) {
+      store.ensureSession(principalId, persistSessionId, { name: sessionName, isMain })
+      store.appendMessage(principalId, persistSessionId, userRecord)
+      userPersisted = true
+    }
 
     let result = null
+    const toolRecords = []
     const { run } = await import('../agents/agent.mjs')
 
     for await (const event of run(prompt, {
@@ -96,18 +116,31 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
       reloadMcpServers: () => buildMcpServers(principal),
       memory: { append: (entry) => store.appendMemory(principalId, entry) },
     })) {
-      if (event.type === 'tool') {
-        turnRecords.push({
+      if (event.type === 'session' && event.sessionId) {
+        // 新会话首次运行：init 带回 sessionId，立刻补写用户消息
+        if (!persistSessionId) persistSessionId = event.sessionId
+        if (includeUser && !userPersisted) {
+          store.ensureSession(principalId, persistSessionId, { name: sessionName, isMain })
+          store.appendMessage(principalId, persistSessionId, userRecord)
+          userPersisted = true
+        }
+      } else if (event.type === 'tool') {
+        const rec = {
           type: 'tool',
           name: event.name,
           input: event.input,
           timestamp: new Date().toISOString(),
-        })
-        emit({ ...event, principalId, sessionId: resumeId })
+        }
+        toolRecords.push(rec)
+        if (persistSessionId) {
+          store.appendMessage(principalId, persistSessionId, rec)
+          toolsPersisted++
+        }
+        emit({ ...event, principalId, sessionId: persistSessionId })
       } else if (event.type === 'text') {
-        emit({ ...event, principalId, sessionId: resumeId })
+        emit({ ...event, principalId, sessionId: persistSessionId })
       } else if (event.type === 'memory') {
-        emit({ ...event, principalId, sessionId: resumeId })
+        emit({ ...event, principalId, sessionId: persistSessionId })
       } else if (event.type === 'result') {
         result = event
       }
@@ -115,25 +148,30 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
 
     if (!result) throw new Error('Agent 没有返回 result')
 
-    const finalSessionId = result.sessionId || resumeId
+    const finalSessionId = result.sessionId || persistSessionId
     if (!finalSessionId) throw new Error('Agent 没有返回 sessionId')
 
     const text = result.isError
       ? sanitizeForUser(principal, result.text)
       : result.text
 
-    // 首次会话的名称：主会话固定叫“主会话”；用户 chat 取第一条消息；cron 叫“定时任务”
-    const sessionName = principal.role === 'maintainer'
-      ? '主会话'
-      : (includeUser ? prompt.slice(0, 20) : '定时任务')
     store.ensureSession(principalId, finalSessionId, {
       name: sessionName,
-      isMain: principal.role === 'maintainer',
+      isMain,
     })
-    for (const rec of turnRecords) store.appendMessage(principalId, finalSessionId, rec)
+    // 补写还没落盘的记录（新会话 sessionId 来得太晚 / cron 等场景）
+    if (includeUser && !userPersisted) {
+      store.appendMessage(principalId, finalSessionId, userRecord)
+    }
+    if (toolsPersisted < toolRecords.length) {
+      for (const rec of toolRecords.slice(toolsPersisted)) {
+        store.appendMessage(principalId, finalSessionId, rec)
+      }
+    }
     store.appendMessage(principalId, finalSessionId, {
       type: 'assistant',
       text,
+      isError: !!result.isError,
       timestamp: new Date().toISOString(),
     })
     store.touchSession(principalId, finalSessionId)

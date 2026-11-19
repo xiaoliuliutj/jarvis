@@ -10,6 +10,7 @@
  * 插件接口：
  *   name / description / models / permissionModes
  *   run(prompt, options) -> async generator
+ *     yield { type: 'session', sessionId }   // init 阶段尽早返回会话 ID
  *     yield { type: 'tool',   name, input }
  *     yield { type: 'text',   text }
  *     yield { type: 'memory', action, entry }
@@ -164,6 +165,8 @@ export async function* run(prompt, options = {}) {
     for await (const msg of q) {
       if (msg.type === 'system' && msg.subtype === 'init' && msg.session_id) {
         activeSessionId = msg.session_id
+        // 把新建会话的 sessionId 尽早告知调用方，便于进行中就落盘用户消息
+        yield { type: 'session', sessionId: activeSessionId }
       }
 
       if (msg.type === 'assistant') {

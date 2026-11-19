@@ -21,6 +21,15 @@ function groupMessages(messages) {
       continue
     }
     if (msg.type === 'assistant') {
+      // 回合失败的 assistant 记录以错误气泡展示（刷新/重启后也能保留错误样式）
+      if (msg.isError) {
+        if (extras.length) {
+          groups.push({ kind: 'extras', extras })
+          extras = []
+        }
+        groups.push({ kind: 'error', text: msg.text || '' })
+        continue
+      }
       groups.push({ kind: 'assistant', text: msg.text || '', extras })
       extras = []
       continue
