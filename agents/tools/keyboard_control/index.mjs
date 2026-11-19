@@ -26,12 +26,14 @@ function buildOpt({ action, text, keys, repeat, intervalMs, window: winTitle }) 
     if (!t) throw new Error('type 操作需要提供 text')
     if (t.length > MAX_TYPE_LENGTH) throw new Error(`单次输入不能超过 ${MAX_TYPE_LENGTH} 字`)
     opt.text = t
+    opt.overlayText = 'Jarvis 正在输入文字…'
     return opt
   }
 
   if (action === 'press') {
     if (!keys) throw new Error('press 操作需要提供 keys，例如 ctrl+c 或 enter')
     opt.vks = parseCombo(keys)
+    opt.overlayText = 'Jarvis 正在按键…'
     if (repeat !== undefined) opt.repeat = Number(repeat)
     if (intervalMs !== undefined) opt.intervalMs = Number(intervalMs)
     return opt
@@ -61,7 +63,8 @@ const server = new McpServer({ name: 'keyboard_control', version: '1.0.0' })
 server.tool(
   'keyboard_control',
   '模拟键盘：type 输入文本（支持中文）；press 按组合键（如 ctrl+c、ctrl+shift+s、enter、f5、alt+tab），支持重复。' +
-  '可选先聚焦指定窗口，避免输入到错误位置。',
+  '可选先聚焦指定窗口，避免输入到错误位置。' +
+  '操作时屏幕右下角会显示提示浮标，用户可按 Esc 中止；如果检测到用户抢用鼠标会自动暂停。',
   {
     action: z.enum(['type', 'press']).describe('操作类型'),
     text: z.string().optional().describe('type：要输入的文本（最多 4000 字）'),

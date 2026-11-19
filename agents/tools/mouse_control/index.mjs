@@ -14,8 +14,16 @@ import { z } from 'zod'
 import path from 'path'
 import { runInput } from '../_shared/win32-input.mjs'
 
+const OVERLAY_TEXT = {
+  move: 'Jarvis 正在移动鼠标…',
+  click: 'Jarvis 正在操作鼠标（点击）…',
+  scroll: 'Jarvis 正在滚动页面…',
+  drag: 'Jarvis 正在拖拽…',
+}
+
 function buildOpt({ action, x, y, button, double, direction, amount, toX, toY, window: winTitle }) {
   const opt = { kind: 'mouse', action }
+  if (OVERLAY_TEXT[action]) opt.overlayText = OVERLAY_TEXT[action]
   if (winTitle) opt.window = String(winTitle)
   if (x !== undefined) opt.x = Number(x)
   if (y !== undefined) opt.y = Number(y)
@@ -56,7 +64,8 @@ const server = new McpServer({ name: 'mouse_control', version: '1.0.0' })
 server.tool(
   'mouse_control',
   '模拟鼠标操作：position 读取当前位置、move 移动、click 点击（可双击）、scroll 滚轮、drag 拖拽。' +
-  '坐标是物理屏幕像素（可为负，支持多显示器）。可选先聚焦指定窗口。',
+  '坐标是物理屏幕像素（可为负，支持多显示器）。可选先聚焦指定窗口。' +
+  '操作时屏幕右下角会显示提示浮标，用户可按 Esc 中止；如果检测到用户抢用鼠标会自动暂停。',
   {
     action: z.enum(['position', 'move', 'click', 'scroll', 'drag']).describe('操作类型'),
     x: z.number().optional().describe('move/click/drag：X 坐标'),
