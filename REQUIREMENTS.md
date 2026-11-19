@@ -265,7 +265,8 @@ E:\Jarvis\
 ### 5.13 多微信账号（家人接入）
 
 - iLink 不支持把机器人名片分享给其他微信账号，每个微信账号需要用自己的二维码绑定一个独立的 iLink bot。
-- 登录命令：`node bridge/adapters/weixin.mjs login <accountKey>`；不传 key 时用 `default`。
+- 邀请命令：`node bridge/adapters/weixin.mjs invite <accountKey>`；不传 key 时用 `default`，`login` 是别名。
+- 命令会生成二维码图片并自动打开，家人用自己的微信扫码确认。
 - login 成功后：
   - 凭证写入 `credentials.json` 的 `weixin.accounts.<accountKey>`
   - 账号自动加入 `bridge.json` 的 `adapters.weixin.accounts`

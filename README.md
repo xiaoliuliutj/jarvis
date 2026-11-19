@@ -75,14 +75,14 @@ userdata/               每用户数据 + 用户工具（gitignore）
 iLink 不支持分享机器人名片。每个家人的微信账号需要单独绑定一个机器人：
 
 ```powershell
-node bridge/adapters/weixin.mjs login family_xiaoming
+node bridge/adapters/weixin.mjs invite family_xiaoming
 ```
 
-命令会打印一个绑定链接：
+命令会生成二维码图片并自动打开：
 
-- 把这个链接发给对应的家人，让他用自己的微信打开/扫描并确认
-- 不要把链接公开发布
-- 登录成功后会自动写入 `credentials.json`、加入 `bridge.json` 的 `accounts`，并重启 Bridge
+- 把屏幕上的二维码拍/发给对应的家人，让他用自己的微信扫描并确认
+- 不要把二维码公开发布
+- 扫码确认后会自动写入 `credentials.json`、加入 `bridge.json` 的 `accounts`，并重启 Bridge
 - 家人会得到一个自己的机器人联系人
 
 每个家人使用不同的 `accountKey`（例如 `family_mom`、`family_dad`），消息最终都进入同一个 Jarvis。

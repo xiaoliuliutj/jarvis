@@ -8,8 +8,9 @@
  * 协议参考：https://github.com/epiral/weixin-bot/blob/main/PROTOCOL.md
  *
  * 使用：
- *   node bridge/adapters/weixin.mjs login [accountKey]
+ *   node bridge/adapters/weixin.mjs invite [accountKey]
  *   不传 accountKey 时使用 default；每个 accountKey 对应一个独立的 iLink bot 绑定。
+ *   命令会生成并打开二维码图片，家人扫码确认即可。
  *   login 会写入 credentials.json，并把账号加入 bridge.json 的 accounts。
  *   （Bridge Server 启动时按 accounts 列表逐个调 start()）
  */
@@ -17,9 +18,12 @@
 import https from 'https'
 import http from 'http'
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { spawn } from 'child_process'
 import { randomBytes } from 'crypto'
+import QRCode from 'qrcode'
 import { CREDENTIALS_FILE, BRIDGE_CONFIG_FILE } from '../../core/paths.mjs'
 
 export const id = 'weixin'
@@ -92,6 +96,33 @@ function restartBridgeIfRunning() {
 
 // ── QR 登录流程 ───────────────────────────────────────────────────────────────
 
+async function showQrCodeImage(url, accountKey) {
+  const safeKey = String(accountKey).replace(/[^a-zA-Z0-9_-]/g, '_')
+  const file = path.join(os.tmpdir(), `jarvis-weixin-${safeKey}.png`)
+
+  try {
+    await QRCode.toFile(file, url, {
+      width: 420,
+      margin: 2,
+      color: { dark: '#000000', light: '#ffffff' },
+    })
+    console.log(`[weixin] 二维码已生成：${file}`)
+
+    // Windows 默认图片查看器打开；其他平台只打印路径
+    if (process.platform === 'win32') {
+      spawn('cmd', ['/c', 'start', '', file], { detached: true, stdio: 'ignore' }).unref()
+    } else if (process.platform === 'darwin') {
+      spawn('open', [file], { detached: true, stdio: 'ignore' }).unref()
+    } else {
+      spawn('xdg-open', [file], { detached: true, stdio: 'ignore' }).unref()
+    }
+    return file
+  } catch (err) {
+    console.error('[weixin] 生成二维码图片失败:', err.message)
+    return null
+  }
+}
+
 /**
  * 完整的 QR 登录：获取二维码 → 等待扫码 → 写入 config/credentials.json。
  * accountKey 是本地账号名，例如 default / family_xiaoming。
@@ -106,9 +137,10 @@ export async function login(accountKey = 'default', { manageBridge = true } = {}
   // qrcode_img_content 是微信实际扫描/打开的链接；qrcode 只是轮询 token。
   const url = qrResp.qrcode_img_content
     || `https://liteapp.weixin.qq.com/q/7GiQu1?qrcode=${qrToken}&bot_type=3`
-  console.log('[weixin] 请让要接入的微信账号扫描或打开以下链接：')
-  console.log('[weixin] ' + url)
-  console.log('[weixin] 注意：这个链接只发给要绑定的人，不要公开发布。')
+  console.log('[weixin] 请用要接入的微信账号扫描二维码（图片会自动打开）：')
+  console.log('[weixin] 链接：' + url)
+  console.log('[weixin] 注意：二维码只展示给要绑定的人，不要公开发布。')
+  await showQrCodeImage(url, accountKey)
 
   // 轮询扫码状态
   let botToken = null, accountId = null, baseUrl = ILINK_BASE
@@ -332,7 +364,7 @@ const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPat
 if (isMain) {
   const cmd = process.argv[2]
   const accountKey = process.argv[3] || 'default'
-  if (cmd === 'login') {
+  if (cmd === 'login' || cmd === 'invite') {
     login(accountKey).then(() => {
       process.exit(0)
     }).catch(err => {
@@ -341,8 +373,9 @@ if (isMain) {
     })
   } else {
     console.log('用法:')
-    console.log('  node bridge/adapters/weixin.mjs login [accountKey]   扫码绑定一个微信账号')
-    console.log('  例: node bridge/adapters/weixin.mjs login family_xiaoming')
+    console.log('  node bridge/adapters/weixin.mjs invite [accountKey]   生成二维码并等待家人扫码')
+    console.log('  例: node bridge/adapters/weixin.mjs invite family_xiaoming')
+    console.log('  login 是 invite 的别名')
     process.exit(0)
   }
 }
