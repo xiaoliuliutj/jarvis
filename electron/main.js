@@ -21,6 +21,35 @@ let mainCron = null
 let mainSchedule = null
 let win = null
 
+// ── 单实例锁 ──────────────────────────────────────────────────────────────────
+// 两个 Electron 实例共用 %APPDATA%/jarvis 会争用 Cache/GPUCache 目录，
+// 表现为 "Unable to move the cache: 拒绝访问 (0x5)"。确保只有一个实例。
+//
+// 重启兜底路径（app.relaunch）下旧实例可能还在退出，此时短暂重试而不是直接退出。
+
+const RELAUNCH_RETRY_FLAG = '--jarvis-relaunch-retry'
+
+async function acquireSingleInstanceLock() {
+  if (app.requestSingleInstanceLock()) return true
+  if (!process.argv.includes(RELAUNCH_RETRY_FLAG)) return false
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 200))
+    if (app.requestSingleInstanceLock()) {
+      console.log('[main] 重启竞态解除，获得单实例锁')
+      return true
+    }
+  }
+  return false
+}
+
+app.on('second-instance', () => {
+  if (win) {
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  }
+})
+
 // ── 重启调度 ──────────────────────────────────────────────────────────────────
 // 重启请求会等到当前主会话回合结束、消息落盘后再执行，避免打断工具/命令。
 
@@ -56,7 +85,8 @@ async function performRelaunch() {
   const ok = await postSupervisor('/restart-electron')
   if (!ok) {
     // 打包模式或 supervisor 不在：回退到 Electron 自带的 relaunch
-    app.relaunch()
+    // 带上重试标记，让新实例在旧实例退出期间短暂等待单实例锁
+    app.relaunch({ args: process.argv.slice(1).concat([RELAUNCH_RETRY_FLAG]) })
     app.exit(0)
   }
 }
@@ -241,6 +271,13 @@ function startMainSchedule() {
 // ── 启动 ──────────────────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
+  // 先拿单实例锁，避免和残留实例争用缓存目录
+  if (!(await acquireSingleInstanceLock())) {
+    console.log('[main] 已有实例在运行，退出')
+    app.exit(0)
+    return
+  }
+
   await initCore()
   createWindow()
   startMainCron()

@@ -117,8 +117,10 @@ function spawnElectron() {
 
     if (restartingElectron) {
       restartingElectron = false
-      log('Electron 已退出，准备重启')
-      setTimeout(() => spawnElectron(), 200)
+      // 等旧实例的 GPU/网络子进程完全退出、释放 %APPDATA%/jarvis 缓存目录句柄。
+      // 太快重启会导致新实例报 "Unable to move the cache: 拒绝访问 (0x5)"。
+      log('Electron 已退出，1.5 秒后重启')
+      setTimeout(() => spawnElectron(), 1500)
       return
     }
 
