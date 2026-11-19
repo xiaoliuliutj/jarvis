@@ -15,6 +15,7 @@ import express from 'express'
 import { WebSocketServer } from 'ws'
 import { createServer, request as httpRequest } from 'http'
 import { spawn } from 'child_process'
+import fs from 'fs'
 import path from 'path'
 import { ROOT } from '../core/paths.mjs'
 import { loadBridgeConfig } from '../core/config.mjs'
@@ -311,12 +312,21 @@ app.post('/relaunch-electron', async (req, res) => {
 function restartBridgeProcess(delayMs = 500) {
   setTimeout(() => {
     console.log('[bridge] 收到重启指令，正在重启...')
+
+    // 自动重启也要继续写日志；stdio:'ignore' 会导致新进程完全失联。
+    const logFile = path.join(ROOT, 'bridge', 'bridge.log')
+    const errFile = path.join(ROOT, 'bridge', 'bridge.err.log')
+    const outFd = fs.openSync(logFile, 'a')
+    const errFd = fs.openSync(errFile, 'a')
+
     const child = spawn('node', [path.join(ROOT, 'bridge', 'server.mjs')], {
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', outFd, errFd],
       env: { ...process.env, CLAUDECODE: '' },
     })
     child.unref()
+    fs.closeSync(outFd)
+    fs.closeSync(errFd)
     process.exit(0)
   }, delayMs)
 }
