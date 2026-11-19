@@ -52,6 +52,7 @@ public class Win32 {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
   public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 }
 "@
@@ -98,7 +99,10 @@ if ($opt.mode -eq 'window') {
   }
 
   if ($opt.bringToFront -ne $false) {
-    [Win32]::ShowWindow($script:found, 9) | Out-Null
+    # 只有最小化时才还原；最大化窗口保持原状
+    if ([Win32]::IsIconic($script:found)) {
+      [Win32]::ShowWindow($script:found, 9) | Out-Null
+    }
     [Win32]::SetForegroundWindow($script:found) | Out-Null
     Start-Sleep -Milliseconds 400
   }

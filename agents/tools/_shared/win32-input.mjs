@@ -39,6 +39,7 @@ public class W32 {
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
@@ -184,7 +185,10 @@ function Invoke-Action($opt) {
     if ($script:found -eq [IntPtr]::Zero) {
       return '{"ok":false,"error":"window-not-found"}'
     }
-    [W32]::ShowWindow($script:found, 9) | Out-Null
+    # 只有最小化时才还原；最大化的窗口保持最大化（SW_RESTORE 会把最大化窗口缩回普通尺寸）
+    if ([W32]::IsIconic($script:found)) {
+      [W32]::ShowWindow($script:found, 9) | Out-Null
+    }
     [W32]::SetForegroundWindow($script:found) | Out-Null
     Start-Sleep -Milliseconds 350
   }
