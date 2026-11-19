@@ -106,5 +106,13 @@
     "access": "owner",
     "createdAt": "2026-11-19T12:45:00.000Z",
     "version": "1.0.0"
+  },
+  {
+    "name": "input_session",
+    "description": "键鼠控制会话：start/stop/status，进入后键鼠操作毫秒级，浮标常驻提示（仅主人和主会话可用）",
+    "enabled": true,
+    "access": "owner",
+    "createdAt": "2026-11-19T13:40:00.000Z",
+    "version": "1.0.0"
   }
 ]

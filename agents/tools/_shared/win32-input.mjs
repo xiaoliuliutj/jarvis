@@ -1,31 +1,30 @@
 /**
  * Windows 键鼠模拟共享模块。
  *
- * 供 mouse_control / keyboard_control 两个工具复用：
- *   - PS_SCRIPT：PowerShell + P/Invoke 实现（SendInput / mouse_event / SetCursorPos）
- *   - runInput(opt)：执行一次模拟操作，返回 JSON 结果
- *   - parseCombo(str)：把 "ctrl+shift+s" 解析成 VK 码数组
+ * 两种模式：
+ *   1. 一次性模式（默认）：每次操作起一个 PowerShell 进程，带提示浮标、防抢检测、Esc 中止。
+ *      开销约 1-2 秒（进程启动 + 编译 + 浮标停留）。
+ *   2. 控制会话模式（快速）：通过 input_session 工具启动常驻守护进程（本机 127.0.0.1:47460），
+ *      浮标常驻显示「Jarvis 正在控制键鼠（按 Esc 结束会话）」，之后每次操作只需 IPC 往返，
+ *      通常 <100ms。空闲 3 分钟或按 Esc 或显式 stop 时自动结束。
  *
- * 安全机制（1+3+4）：
- *   1. 操作期间屏幕右下角显示置顶提示浮标（不抢焦点、点击穿透），结束自动消失
- *   3. 防抢检测：鼠标操作时校验光标位置；如果被用户移动则立即中止
- *   4. 紧急中止：操作期间按住 Esc 立即停止
- *
- * 注意：坐标是物理像素（进程已做 DPI 感知），与 screenshot 工具一致。
+ * 会话模式下所有操作仍然做 Esc 中止检查；会话结束浮标自动消失。
  */
 
-import { execFileSync } from 'child_process'
+import { execFileSync, spawn } from 'child_process'
+import net from 'net'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
 
-// ── PowerShell 脚本 ─────────────────────────────────────────────────────────
+// ── 共享 PowerShell 片段 ──────────────────────────────────────────────────────
 
-const PS_SCRIPT = `$ErrorActionPreference = 'Stop'
+const PS_HEADER = `$ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$ArgsJson = __ARGS__
-$opt = $ArgsJson | ConvertFrom-Json
-
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+`
 
-Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing @"
+const PS_W32_CS = `Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing @"
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -54,7 +53,6 @@ public class W32 {
     GetLastInputInfo(ref l);
     return l.dwTime;
   }
-  public static uint NowTick() { return (uint)Environment.TickCount; }
   public static bool KeyDown(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
 
   [StructLayout(LayoutKind.Sequential)]
@@ -98,7 +96,10 @@ public class OverlayForm : Form {
 "@
 
 [W32]::SetProcessDPIAware() | Out-Null
+`
 
+// 浮标 + 动作执行函数（一次性模式和守护进程共用）
+const PS_ACTIONS = `
 $script:overlay = $null
 
 function Start-Overlay([string]$text) {
@@ -161,12 +162,11 @@ function Abort-Json([string]$reason) {
   return ('{"ok":false,"error":"aborted","reason":"' + $reason + '"}')
 }
 
-function Invoke-Main {
+function Invoke-Action($opt) {
   # 可选：先聚焦目标窗口
   if ($opt.window) {
     $needle = ([string]$opt.window).ToLower()
     $script:found = [IntPtr]::Zero
-    $script:foundTitle = ''
     $cb = [W32+EnumWindowsProc]{
       param($hWnd, $lParam)
       if ([W32]::IsWindowVisible($hWnd)) {
@@ -175,7 +175,6 @@ function Invoke-Main {
         $t = $sb.ToString()
         if ($t -and $t.ToLower().Contains($needle)) {
           $script:found = $hWnd
-          $script:foundTitle = $t
           return $false
         }
       }
@@ -306,8 +305,13 @@ function Invoke-Main {
 
   return '{"ok":false,"error":"unknown-kind"}'
 }
+`
 
-# 悬浮提示：位置读取等无副作用操作不显示
+// ── 一次性模式脚本 ───────────────────────────────────────────────────────────
+
+const ONE_SHOT_DRIVER = `
+$opt = __ARGS__ | ConvertFrom-Json
+
 $needOverlay = -not ($opt.kind -eq 'mouse' -and $opt.action -eq 'position')
 if ($needOverlay) {
   $label = 'Jarvis 正在操作键鼠…（按 Esc 中止）'
@@ -318,17 +322,80 @@ if ($needOverlay) {
 
 $resultJson = '{"ok":false,"error":"exception","detail":"unknown"}'
 try {
-  $resultJson = Invoke-Main
+  $resultJson = Invoke-Action $opt
 } catch {
   $msg = $_.Exception.Message -replace '"', "'"
   $resultJson = '{"ok":false,"error":"exception","detail":"' + $msg + '"}'
 }
 
-# 操作结束后保持提示一小段时间，让用户看到
 if ($needOverlay) { Pump 1000 }
 Stop-Overlay
 Write-Output $resultJson
 `
+
+const PS_SCRIPT = PS_HEADER + PS_W32_CS + PS_ACTIONS + ONE_SHOT_DRIVER
+
+// ── 控制会话守护进程脚本 ─────────────────────────────────────────────────────
+
+const DAEMON_PORT = 47460
+const DAEMON_IDLE_SECONDS = 180
+
+const DAEMON_DRIVER = `
+$port = ${DAEMON_PORT}
+$server = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $port)
+$server.Start()
+
+Start-Overlay 'Jarvis 正在控制键鼠…（按 Esc 结束会话）'
+
+$script:stopRequested = $false
+$lastActive = [DateTime]::Now
+
+while (-not $script:stopRequested) {
+  [System.Windows.Forms.Application]::DoEvents()
+  if ([W32]::KeyDown(27)) { break }
+  if (([DateTime]::Now - $lastActive).TotalSeconds -gt ${DAEMON_IDLE_SECONDS}) { break }
+
+  if ($server.Pending()) {
+    try {
+      $client = $server.AcceptTcpClient()
+      $client.ReceiveTimeout = 15000
+      $stream = $client.GetStream()
+      $reader = New-Object System.IO.StreamReader($stream)
+      $line = $reader.ReadLine()
+      $resp = '{"ok":false,"error":"bad-request"}'
+      if ($line) {
+        try {
+          $req = $line | ConvertFrom-Json
+          if ($req.kind -eq 'session' -and $req.action -eq 'stop') {
+            $script:stopRequested = $true
+            $resp = '{"ok":true,"stopped":true}'
+          } else {
+            $resp = Invoke-Action $req
+          }
+        } catch {
+          $msg = $_.Exception.Message -replace '"', "'"
+          $resp = '{"ok":false,"error":"exception","detail":"' + $msg + '"}'
+        }
+      }
+      $writer = New-Object System.IO.StreamWriter($stream)
+      $writer.AutoFlush = $true
+      $writer.WriteLine($resp)
+      $reader.Dispose()
+      $writer.Dispose()
+      $client.Close()
+    } catch {}
+    $lastActive = [DateTime]::Now
+  }
+  Start-Sleep -Milliseconds 25
+}
+
+$server.Stop()
+Stop-Overlay
+`
+
+const DAEMON_SCRIPT = PS_HEADER + PS_W32_CS + PS_ACTIONS + DAEMON_DRIVER
+
+// ── 一次性执行 ──────────────────────────────────────────────────────────────
 
 const ERROR_TEXT = {
   'window-not-found': '没有找到标题匹配的可见窗口',
@@ -336,13 +403,19 @@ const ERROR_TEXT = {
   'unknown-keyboard-action': '未知的键盘操作',
   'no-keys': '没有可用的按键（keys 为空或无法解析）',
   'unknown-kind': '内部错误：未知的操作类型',
+  'bad-request': '输入控制服务收到无效请求',
 }
 
-/**
- * 执行一次键鼠模拟。
- * @param {object} opt {kind:'mouse'|'keyboard', window?, overlayText?, ...操作参数}
- */
-export function runInput(opt) {
+function normalizeResult(res, source) {
+  if (!res.ok) {
+    if (res.error === 'aborted') throw new Error(`操作已中止：${res.reason}`)
+    if (res.error === 'exception') throw new Error(`脚本异常：${res.detail || ''}`)
+    throw new Error(ERROR_TEXT[res.error] || `操作失败：${res.error}`)
+  }
+  return source ? { ...res, mode: source } : res
+}
+
+function runOneShot(opt) {
   const json = JSON.stringify(opt)
   const script = PS_SCRIPT.replace('__ARGS__', `'${json.replace(/'/g, "''")}'`)
   const encoded = Buffer.from(script, 'utf16le').toString('base64')
@@ -357,12 +430,111 @@ export function runInput(opt) {
   } catch {
     throw new Error(`脚本返回异常：${line.slice(0, 200)}`)
   }
-  if (!res.ok) {
-    if (res.error === 'aborted') throw new Error(`操作已中止：${res.reason}`)
-    if (res.error === 'exception') throw new Error(`脚本异常：${res.detail || ''}`)
-    throw new Error(ERROR_TEXT[res.error] || `操作失败：${res.error}`)
-  }
   return res
+}
+
+// ── 控制会话（守护进程）────────────────────────────────────────────────────
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
+
+function isDaemonAlive() {
+  return new Promise(resolve => {
+    const sock = net.connect({ host: '127.0.0.1', port: DAEMON_PORT }, () => {
+      sock.destroy()
+      resolve(true)
+    })
+    sock.on('error', () => resolve(false))
+    sock.setTimeout(800, () => { sock.destroy(); resolve(false) })
+  })
+}
+
+/** 确保守护进程在运行；没跑就启动它。 */
+export async function ensureDaemon({ timeoutMs = 15000 } = {}) {
+  if (await isDaemonAlive()) return { started: false }
+  // 守护脚本较长，走临时文件而不是 EncodedCommand（避免 Windows 命令行长度限制）。
+  // 必须带 UTF-8 BOM：PowerShell 5.1 读取无 BOM 的 UTF-8 会按 GBK 解析，中文会破坏引号配对。
+  const scriptPath = path.join(os.tmpdir(), 'jarvis_input_daemon.ps1')
+  fs.writeFileSync(scriptPath, '﻿' + DAEMON_SCRIPT, 'utf-8')
+
+  // 用 wscript + VBS 启动完全隐藏的独立进程：
+  //   - node 的 detached 模式在 Windows 上会静默启动失败
+  //   - cmd /c start 会留下可见的控制台窗口
+  // VBS 的 Run(..., 0, False) 隐藏窗口且脱离父进程存活。
+  const vbsPath = path.join(os.tmpdir(), 'jarvis_input_daemon_launcher.vbs')
+  const vbs = [
+    'Set sh = CreateObject("WScript.Shell")',
+    `sh.Run """powershell"" -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File ""${scriptPath}""", 0, False`,
+    '',
+  ].join('\r\n')
+  fs.writeFileSync(vbsPath, vbs, 'utf-8')
+  const child = spawn('wscript', [vbsPath], { stdio: 'ignore', windowsHide: true })
+  child.unref()
+
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    await sleep(250)
+    if (await isDaemonAlive()) return { started: true }
+  }
+  throw new Error('输入控制服务启动超时')
+}
+
+/** 向守护进程发送一条操作请求。 */
+function daemonRequest(req, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const sock = net.connect({ host: '127.0.0.1', port: DAEMON_PORT }, () => {
+      sock.write(JSON.stringify(req) + '\n')
+    })
+    let buf = ''
+    sock.on('data', d => { buf += d.toString('utf8') })
+    sock.on('end', () => {
+      try { resolve(JSON.parse(buf.trim() || '{}')) } catch (e) { reject(new Error('daemon 响应解析失败')) }
+    })
+    sock.on('error', reject)
+    sock.setTimeout(timeoutMs, () => { sock.destroy(); reject(new Error('daemon 请求超时')) })
+  })
+}
+
+/** 结束控制会话。 */
+export async function stopDaemon() {
+  if (!(await isDaemonAlive())) return { stopped: false }
+  try {
+    const res = await daemonRequest({ kind: 'session', action: 'stop' }, 5000)
+    return { stopped: true, res }
+  } catch {
+    // 兜底：按命令行结束守护进程
+    try {
+      execFileSync('powershell', ['-NoProfile', '-Command',
+        "Get-CimInstance Win32_Process -Filter \"Name='powershell.exe'\" | Where-Object { $_.CommandLine -like '*jarvis_input_daemon.ps1*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
+      ], { timeout: 8000, stdio: 'pipe' })
+    } catch {}
+    await sleep(500)
+    return { stopped: !(await isDaemonAlive()) }
+  }
+}
+
+/** 查询控制会话状态。 */
+export async function daemonStatus() {
+  return { running: await isDaemonAlive(), port: DAEMON_PORT }
+}
+
+/**
+ * 执行一次键鼠模拟。
+ * - 会话模式（守护进程在跑）：走 IPC，快（毫秒级），浮标已在屏幕上
+ * - 否则：一次性模式，带浮标和安全机制（约 1-2 秒开销）
+ * @param {object} opt {kind:'mouse'|'keyboard', window?, overlayText?, ...操作参数}
+ */
+export async function runInput(opt) {
+  // 会话模式优先
+  if (await isDaemonAlive()) {
+    try {
+      const res = await daemonRequest(opt)
+      return normalizeResult(res, 'session')
+    } catch {
+      // 守护进程异常，回落一次性模式
+    }
+  }
+  const res = runOneShot(opt)
+  return normalizeResult(res, 'oneshot')
 }
 
 // ── 按键组合解析 ────────────────────────────────────────────────────────────

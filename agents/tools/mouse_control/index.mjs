@@ -48,7 +48,7 @@ const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve
 if (isMain && process.argv[2] === '--cli') {
   try {
     const opts = JSON.parse(process.argv[3] || '{"action":"position"}')
-    const res = runInput(buildOpt(opts))
+    const res = await runInput(buildOpt(opts))
     console.log(JSON.stringify(res, null, 2))
   } catch (err) {
     console.error('FAIL:', err.message)
@@ -65,7 +65,7 @@ server.tool(
   'mouse_control',
   '模拟鼠标操作：position 读取当前位置、move 移动、click 点击（可双击）、scroll 滚轮、drag 拖拽。' +
   '坐标是物理屏幕像素（可为负，支持多显示器）。可选先聚焦指定窗口。' +
-  '操作时屏幕右下角会显示提示浮标，用户可按 Esc 中止；如果检测到用户抢用鼠标会自动暂停。',
+  '一次性调用时屏幕右下角会显示提示浮标、按 Esc 中止；连续操作建议先用 input_session start 进入快速会话模式。',
   {
     action: z.enum(['position', 'move', 'click', 'scroll', 'drag']).describe('操作类型'),
     x: z.number().optional().describe('move/click/drag：X 坐标'),
@@ -80,7 +80,7 @@ server.tool(
   },
   async (args) => {
     try {
-      const res = runInput(buildOpt(args))
+      const res = await runInput(buildOpt(args))
       return { content: [{ type: 'text', text: JSON.stringify(res, null, 2) }] }
     } catch (err) {
       return { content: [{ type: 'text', text: `❌ ${err.message}` }] }

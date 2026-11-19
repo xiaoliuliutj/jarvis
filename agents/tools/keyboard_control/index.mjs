@@ -47,7 +47,7 @@ const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve
 if (isMain && process.argv[2] === '--cli') {
   try {
     const opts = JSON.parse(process.argv[3] || '{}')
-    const res = runInput(buildOpt(opts))
+    const res = await runInput(buildOpt(opts))
     console.log(JSON.stringify(res, null, 2))
   } catch (err) {
     console.error('FAIL:', err.message)
@@ -64,7 +64,7 @@ server.tool(
   'keyboard_control',
   '模拟键盘：type 输入文本（支持中文）；press 按组合键（如 ctrl+c、ctrl+shift+s、enter、f5、alt+tab），支持重复。' +
   '可选先聚焦指定窗口，避免输入到错误位置。' +
-  '操作时屏幕右下角会显示提示浮标，用户可按 Esc 中止；如果检测到用户抢用鼠标会自动暂停。',
+  '一次性调用时屏幕右下角会显示提示浮标、按 Esc 中止；连续操作建议先用 input_session start 进入快速会话模式。',
   {
     action: z.enum(['type', 'press']).describe('操作类型'),
     text: z.string().optional().describe('type：要输入的文本（最多 4000 字）'),
