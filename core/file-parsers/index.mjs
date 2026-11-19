@@ -16,8 +16,12 @@
 
 import path from 'path'
 import txtParser from './txt.mjs'
+import mdParser from './md.mjs'
+import docxParser from './docx.mjs'
+import xlsxParser from './xlsx.mjs'
+import pdfParser from './pdf.mjs'
 
-const BUILTIN_PARSERS = [txtParser]
+const BUILTIN_PARSERS = [txtParser, mdParser, docxParser, xlsxParser, pdfParser]
 
 const parsers = [...BUILTIN_PARSERS]
 

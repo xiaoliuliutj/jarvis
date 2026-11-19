@@ -114,5 +114,12 @@
     "access": "owner",
     "createdAt": "2026-11-19T13:40:00.000Z",
     "version": "1.0.0"
+  },
+  {
+    "name": "file_builder",
+    "description": "生成文件：txt / md / docx / xlsx / pdf，可结构化为标题/段落/列表/表格，或直接发回给用户",
+    "enabled": true,
+    "createdAt": "2026-11-19T15:30:00.000Z",
+    "version": "1.0.0"
   }
 ]
