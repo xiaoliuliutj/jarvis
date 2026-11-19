@@ -222,11 +222,11 @@ function Invoke-Main {
       'scroll' {
         $notches = [int]($opt.amount)
         if ($notches -le 0) { $notches = 3 }
-        $delta = 120
-        if ($opt.direction -eq 'down') { $delta = -120 }
+        $delta = [uint32]120
+        if ($opt.direction -eq 'down') { $delta = [uint32]([int64]4294967296 - 120) }
         for ($i = 0; $i -lt $notches; $i++) {
           if (Test-Abort) { return (Abort-Json '按下了 Esc') }
-          [W32]::mouse_event(0x0800, 0, 0, [uint32]$delta, [UIntPtr]::Zero)
+          [W32]::mouse_event(0x0800, 0, 0, $delta, [UIntPtr]::Zero)
           Start-Sleep -Milliseconds 25
         }
       }
