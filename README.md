@@ -11,6 +11,8 @@ npm install
 npm run dev
 ```
 
+开发模式请用 `npm run dev`。如果直接运行 `npm start` 或 `electron .`，Vite 没启动时 Electron 会回退加载 `dist/index.html`；`npm start` 会先构建 dist。
+
 `npm run dev` 由 [scripts/dev-supervisor.mjs](scripts/dev-supervisor.mjs) 托管 Vite + Electron：
 
 - Electron 自重启时 Vite 不会退出

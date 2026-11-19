@@ -10,6 +10,7 @@
 const { app, BrowserWindow, ipcMain } = require('electron')
 const path = require('path')
 const http = require('http')
+const fs = require('fs')
 const { pathToFileURL } = require('url')
 
 const APP_DIR = path.resolve(__dirname, '..')
@@ -149,14 +150,48 @@ function createWindow() {
     },
   })
 
-  const isDev = !app.isPackaged
-  if (isDev) {
+  loadRenderer()
+}
+
+function viteIsRunning() {
+  return new Promise(resolve => {
+    const req = http.get({ host: 'localhost', port: 5173, path: '/', timeout: 800 }, res => {
+      res.resume()
+      resolve(res.statusCode >= 200 && res.statusCode < 500)
+    })
+    req.on('timeout', () => { req.destroy(); resolve(false) })
+    req.on('error', () => resolve(false))
+  })
+}
+
+/**
+ * 开发模式优先连 Vite；如果直接 `npm start`/`electron .` 而 Vite 没开，
+ * 就回退到 dist/index.html，避免只看到一个白窗口。
+ */
+async function loadRenderer() {
+  if (!win) return
+
+  if (!app.isPackaged && await viteIsRunning()) {
     win.loadURL('http://localhost:5173')
-    // 默认不开 DevTools；需要时用 JARVIS_DEVTOOLS=1 启动，或按 Ctrl+Shift+I
     if (process.env.JARVIS_DEVTOOLS === '1') win.webContents.openDevTools()
-  } else {
-    win.loadFile(path.join(APP_DIR, 'dist', 'index.html'))
+    return
   }
+
+  const distFile = path.join(APP_DIR, 'dist', 'index.html')
+  if (fs.existsSync(distFile)) {
+    console.log('[main] Vite 未运行，加载 dist/index.html')
+    win.loadFile(distFile)
+    return
+  }
+
+  console.error('[main] Vite 未运行且 dist/index.html 不存在；请先 npm run dev 或 npm run build')
+  win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(
+    '<html><body style="font-family:Segoe UI,Microsoft YaHei;padding:40px;color:#1b2b22;background:#f7faf6">' +
+    '<h2>Jarvis 前端未启动</h2>' +
+    '<p>Vite 没有运行，dist/index.html 也不存在。</p>' +
+    '<p>开发模式请运行 <code>npm run dev</code>。</p>' +
+    '</body></html>'
+  ))
 }
 
 // ── main cron ────────────────────────────────────────────────────────────────
