@@ -37,6 +37,11 @@ const TOOL_HINT = `
 - 修改 electron/、core/ 或 agents/ 后用 restart__electron；只改 bridge/ 用 restart__bridge；core/ 两端都引用时用 restart__all。
 - restart__electron 会等待当前回合结束，调用后不要再启动常驻后台任务。
 
+### 键鼠模拟（高危）
+- mouse_control / keyboard_control 只在用户明确要求时使用。
+- 执行前先确认目标窗口；如果用户可能正在使用电脑（尤其游戏、全屏应用），先问一句再操作。
+- 输入和点击无法"撤销"，不确定时先用截图确认位置。
+
 ### 记忆
 - 当用户说“记住/记一下/别忘了”时，可以在回复中使用：
   [MEMORY:type:content]

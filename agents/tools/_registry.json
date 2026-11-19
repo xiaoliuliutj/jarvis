@@ -90,5 +90,21 @@
     "access": "owner",
     "createdAt": "2026-11-19T12:20:00.000Z",
     "version": "1.0.0"
+  },
+  {
+    "name": "mouse_control",
+    "description": "模拟鼠标：移动、点击、双击、滚轮、拖拽、读取位置（仅主人和主会话可用）",
+    "enabled": true,
+    "access": "owner",
+    "createdAt": "2026-11-19T12:45:00.000Z",
+    "version": "1.0.0"
+  },
+  {
+    "name": "keyboard_control",
+    "description": "模拟键盘：输入文本（支持中文）、按组合键（仅主人和主会话可用）",
+    "enabled": true,
+    "access": "owner",
+    "createdAt": "2026-11-19T12:45:00.000Z",
+    "version": "1.0.0"
   }
 ]
