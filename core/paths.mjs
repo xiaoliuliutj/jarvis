@@ -86,3 +86,7 @@ export function outboxDir(principalId) {
 export function sentDir(principalId) {
   return path.join(outboxDir(principalId), 'sent')
 }
+
+export function screenshotsDir(principalId) {
+  return path.join(filesDir(principalId), 'screenshots')
+}

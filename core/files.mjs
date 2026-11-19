@@ -15,13 +15,21 @@
 
 import fs from 'fs'
 import path from 'path'
-import { inboxDir, outboxDir, sentDir, ensureDir } from './paths.mjs'
+import { inboxDir, outboxDir, sentDir, screenshotsDir, ensureDir } from './paths.mjs'
 import { parseFilePreview } from './file-parsers/index.mjs'
 
 export const MAX_ATTACHMENT_SIZE = 20 * 1024 * 1024        // 单个附件上限 20MB
 export const MAX_ATTACHMENTS_PER_MESSAGE = 3              // 每条消息最多处理 3 个附件
-const INBOX_KEEP_DAYS = 7                                 // 收件箱保留天数
-const INBOX_KEEP_COUNT = 100                              // 收件箱最多保留文件数
+
+// 传输缓存保留策略：
+//   inbox / outbox/sent 保留 30 天；screenshots 保留 7 天。
+//   workspace 是正式存储区，永不自动清理；用户要求"保存"的文件应放 workspace。
+const INBOX_KEEP_DAYS = 30
+const INBOX_KEEP_COUNT = 500
+const SENT_KEEP_DAYS = 30
+const SENT_KEEP_COUNT = 500
+const SCREENSHOT_KEEP_DAYS = 7
+const SCREENSHOT_KEEP_COUNT = 300
 
 // ── 目录与命名 ───────────────────────────────────────────────────────────────
 
@@ -93,10 +101,13 @@ export function saveInboundFiles(principalId, attachments = []) {
   return saved
 }
 
-/** 收件箱清理：超过保留期或数量上限的旧文件自动删除 */
-function pruneInbox(principalId) {
+/**
+ * 通用目录清理：按「保留天数 + 数量上限」删除旧文件。
+ * @returns {number} 删除的文件数
+ */
+function pruneOldFiles(dir, { keepDays, keepCount }) {
   try {
-    const dir = inboxDir(principalId)
+    if (!fs.existsSync(dir)) return 0
     const files = fs.readdirSync(dir)
       .map(name => {
         const p = path.join(dir, name)
@@ -106,16 +117,34 @@ function pruneInbox(principalId) {
       .filter(Boolean)
       .sort((a, b) => a.mtimeMs - b.mtimeMs)
 
-    const cutoff = Date.now() - INBOX_KEEP_DAYS * 24 * 60 * 60 * 1000
-    const overflow = files.length - INBOX_KEEP_COUNT
+    const cutoff = Date.now() - keepDays * 24 * 60 * 60 * 1000
+    const overflow = files.length - keepCount
+    let removed = 0
     files.forEach((f, i) => {
       if (f.mtimeMs < cutoff || i < overflow) {
-        try { fs.unlinkSync(f.path) } catch {}
+        try { fs.unlinkSync(f.path); removed++ } catch {}
       }
     })
+    return removed
   } catch (err) {
-    console.warn('[files] 收件箱清理失败:', err.message)
+    console.warn(`[files] 清理 ${dir} 失败:`, err.message)
+    return 0
   }
+}
+
+/** 收件箱清理：30 天 / 最多 500 个 */
+function pruneInbox(principalId) {
+  return pruneOldFiles(inboxDir(principalId), { keepDays: INBOX_KEEP_DAYS, keepCount: INBOX_KEEP_COUNT })
+}
+
+/** 已发送归档清理：30 天 / 最多 500 个 */
+export function pruneSent(principalId) {
+  return pruneOldFiles(sentDir(principalId), { keepDays: SENT_KEEP_DAYS, keepCount: SENT_KEEP_COUNT })
+}
+
+/** 截图清理：7 天 / 最多 300 张 */
+export function pruneScreenshots(principalId) {
+  return pruneOldFiles(screenshotsDir(principalId), { keepDays: SCREENSHOT_KEEP_DAYS, keepCount: SCREENSHOT_KEEP_COUNT })
 }
 
 /**
@@ -166,7 +195,7 @@ export function listOutboxFiles(principalId) {
     .sort((a, b) => a.mtimeMs - b.mtimeMs)
 }
 
-/** 发送成功后归档到 outbox/sent/ */
+/** 发送成功后归档到 outbox/sent/（顺手清理过旧的归档） */
 export function markOutboxSent(principalId, filePath) {
   ensureDir(sentDir(principalId))
   const name = path.basename(filePath)
@@ -175,5 +204,6 @@ export function markOutboxSent(principalId, filePath) {
     target = path.join(sentDir(principalId), `${timestamp()}_${Math.random().toString(36).slice(2, 6)}_${name}`)
   }
   fs.renameSync(filePath, target)
+  pruneSent(principalId)
   return target
 }

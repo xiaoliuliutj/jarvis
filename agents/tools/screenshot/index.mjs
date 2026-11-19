@@ -19,6 +19,7 @@ import { execFileSync } from 'child_process'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import { pruneScreenshots } from '../../../core/files.mjs'
 
 const ROOT = path.resolve(import.meta.dirname, '../../..')
 const principalId = process.env.JARVIS_PRINCIPAL_ID || ''
@@ -212,6 +213,8 @@ export function capture(opts = {}) {
 
   const res = runCapture(psOpt)
   const sizeBytes = fs.statSync(out).size
+  // 截图目录按保留策略清理（7 天 / 最多 300 张），失败不影响截图本身
+  try { pruneScreenshots(pid) } catch {}
   return {
     path: out,
     width: res.width,
