@@ -212,18 +212,23 @@ for (const [adapterId, adapterConf] of Object.entries(config.adapters ?? {})) {
     console.warn(`[bridge] 未找到 adapter 模块：${adapterId}`)
     continue
   }
-  const accountId = adapterConf.account || 'default'
-  adapter.start((payload) => routeIncoming({
-    sourceType: adapterId,
-    accountId,
-    externalUserId: payload.from,
-    text: payload.text,
-    attachments: payload.attachments,
-    timestamp: payload.timestamp,
-  }), { accountId }).catch(err => {
-    console.error(`[bridge] adapter ${adapterId} 启动失败:`, err)
-  })
-  console.log(`[bridge] adapter started: ${adapterId} (account: ${accountId})`)
+  const accountKeys = Array.isArray(adapterConf.accounts) && adapterConf.accounts.length
+    ? [...new Set(adapterConf.accounts)]
+    : [adapterConf.account || 'default']
+
+  for (const accountId of accountKeys) {
+    adapter.start((payload) => routeIncoming({
+      sourceType: adapterId,
+      accountId,
+      externalUserId: payload.from,
+      text: payload.text,
+      attachments: payload.attachments,
+      timestamp: payload.timestamp,
+    }), { accountId }).catch(err => {
+      console.error(`[bridge] adapter ${adapterId} (${accountId}) 启动失败:`, err.message)
+    })
+    console.log(`[bridge] adapter started: ${adapterId} (account: ${accountId})`)
+  }
 }
 
 // ── HTTP ──────────────────────────────────────────────────────────────────────

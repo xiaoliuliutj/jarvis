@@ -72,6 +72,7 @@ E:\Jarvis\
 | A3 | 身份 | 家人用户 | 普通用户，全工具，无代码修改 |
 | A4 | 身份 | 模型不感知数据源 | prompt 只含 displayName；source/account 仅路由和 UI |
 | A5 | 身份 | 多数据源/多用户 | `principals.json` 映射 source+account+externalUserId |
+| A6 | 身份 | 多微信账号 | `bridge.json` 的 `accounts`；每个账号独立扫码绑定 |
 | B1 | 会话 | 每用户独立会话 | `userdata/<id>/sessions`；支持多会话，main 只有主会话 |
 | B2 | 工作区 | 每用户独立工作区 | `userdata/<id>/workspace` |
 | B3 | 记忆 | 每用户独立长期记忆 | `userdata/<id>/memory/long-term.jsonl` |
@@ -261,6 +262,18 @@ E:\Jarvis\
 - 已存在用户不会补发；引导状态只存在 `userdata/<principalId>/onboarding.json`。
 - 引导消息不写入会话历史；PC UI 只会看到用户入站消息。
 
+### 5.13 多微信账号（家人接入）
+
+- iLink 不支持把机器人名片分享给其他微信账号，每个微信账号需要用自己的二维码绑定一个独立的 iLink bot。
+- 登录命令：`node bridge/adapters/weixin.mjs login <accountKey>`；不传 key 时用 `default`。
+- login 成功后：
+  - 凭证写入 `credentials.json` 的 `weixin.accounts.<accountKey>`
+  - 账号自动加入 `bridge.json` 的 `adapters.weixin.accounts`
+  - 如果 Bridge 正在运行，自动请求重启
+- Bridge 按 `accounts` 列表启动多个长轮询实例；每个实例的回调固定自己的 `accountId`。
+- 每个 accountKey 决定 principal 的 `accountId`，回复和提醒只走对应账号。
+- 家人各自扫码后，会得到各自的机器人联系人，但底层共用同一个 Jarvis/Bridge/模型配置。
+
 ---
 
 ## 6. 迁移
@@ -321,6 +334,7 @@ E:\Jarvis\
 - agents 拍平：`agents/agent.mjs` + `agents/tools/`；旧全局记忆/会话移到 `agents/memory`、`agents/sessions`
 - 日程：每用户 `schedules.json` + schedule 工具 + Bridge/Electron 提醒器 + main PC 提醒卡片
 - 新用户引导：首条消息发风格菜单，预设/自定义写入自己的 persona
+- 多微信账号：`accounts` 列表 + 每账号独立扫码绑定，共用同一个 Bridge
 
 ### 验证
 
@@ -334,7 +348,7 @@ E:\Jarvis\
 ### 暂未实现 / 已知边界
 
 - 旧的全局 inactivity 主动消息已停用；后续需要按 principal 重做
-- 一个 adapter 当前一个账号；多 bot 账号需要账号实例层
+- 一个 adapter 支持多个微信账号（`bridge.json` 的 `accounts`），每个账号需要独立扫码绑定
 - 用户工具不做 OS 沙箱（按决定）
 - 凭证保护是 prompt + 文件工具路径级；Bash 仍可绕过（按决定）；`agent.json` 与 `credentials.json` 同等保护
 - `config/rules.md` 里仍有旧的“系统工具仅主维护会话修改”表述，需要人类手动同步为 maintainer/owner；Agent 不得修改 rules.md

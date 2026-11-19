@@ -70,6 +70,23 @@ userdata/               每用户数据 + 用户工具（gitignore）
 
 选择后会写入 `userdata/<principalId>/persona.md`，之后恢复正常聊天。已存在的用户不会补发。
 
+### 家人微信账号
+
+iLink 不支持分享机器人名片。每个家人的微信账号需要单独绑定一个机器人：
+
+```powershell
+node bridge/adapters/weixin.mjs login family_xiaoming
+```
+
+命令会打印一个绑定链接：
+
+- 把这个链接发给对应的家人，让他用自己的微信打开/扫描并确认
+- 不要把链接公开发布
+- 登录成功后会自动写入 `credentials.json`、加入 `bridge.json` 的 `accounts`，并重启 Bridge
+- 家人会得到一个自己的机器人联系人
+
+每个家人使用不同的 `accountKey`（例如 `family_mom`、`family_dad`），消息最终都进入同一个 Jarvis。
+
 ## 日程
 
 通过聊天里的 `schedule__add / list / update / delete` 管理自己的日程，`remindBeforeMinutes` 选择提前多久提醒。

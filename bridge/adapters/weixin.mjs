@@ -8,8 +8,10 @@
  * 协议参考：https://github.com/epiral/weixin-bot/blob/main/PROTOCOL.md
  *
  * 使用：
- *   node bridge/adapters/weixin.mjs login   ← 扫码登录，写入 config/bridge.json
- *   （Bridge Server 启动时自动调 start()）
+ *   node bridge/adapters/weixin.mjs login [accountKey]
+ *   不传 accountKey 时使用 default；每个 accountKey 对应一个独立的 iLink bot 绑定。
+ *   login 会写入 credentials.json，并把账号加入 bridge.json 的 accounts。
+ *   （Bridge Server 启动时按 accounts 列表逐个调 start()）
  */
 
 import https from 'https'
@@ -18,19 +20,17 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { randomBytes } from 'crypto'
-import { CREDENTIALS_FILE } from '../../core/paths.mjs'
+import { CREDENTIALS_FILE, BRIDGE_CONFIG_FILE } from '../../core/paths.mjs'
 
 export const id = 'weixin'
 
 const ILINK_BASE = 'https://ilinkai.weixin.qq.com'
 
-// 当前使用的账号 key（config/bridge.json 里的 adapters.weixin.account）
-let currentAccountId = 'default'
-
 // ── 配置读写 ──────────────────────────────────────────────────────────────────
 // 微信 token 放在 config/credentials.json，Agent 不可读写。
+// 每个 accountKey 对应一个独立的 iLink bot 绑定。
 
-function loadWeixinConfig(accountKey = currentAccountId) {
+function loadWeixinConfig(accountKey = 'default') {
   const creds = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'))
   const wx = creds.weixin?.accounts?.[accountKey] ?? {}
   const token = wx.token ?? ''
@@ -43,7 +43,7 @@ function loadWeixinConfig(accountKey = currentAccountId) {
   }
 }
 
-function saveWeixinCredentials({ accountKey = currentAccountId, accountId, bearerToken, baseUrl }) {
+function saveWeixinCredentials({ accountKey = 'default', accountId, bearerToken, baseUrl }) {
   const creds = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'))
   creds.weixin = creds.weixin || { accounts: {} }
   creds.weixin.accounts = creds.weixin.accounts || {}
@@ -56,21 +56,59 @@ function saveWeixinCredentials({ accountKey = currentAccountId, accountId, beare
   console.log(`[weixin] credentials saved to config/credentials.json (account: ${accountKey})`)
 }
 
+/** 把新账号写进 bridge.json 的 accounts 列表，重启 Bridge 后自动开始轮询。 */
+function ensureBridgeAccount(accountKey) {
+  const bridge = JSON.parse(fs.readFileSync(BRIDGE_CONFIG_FILE, 'utf8'))
+  bridge.adapters = bridge.adapters || {}
+  bridge.adapters.weixin = bridge.adapters.weixin || { enabled: true }
+  const conf = bridge.adapters.weixin
+  const accounts = Array.isArray(conf.accounts)
+    ? [...conf.accounts]
+    : [conf.account || 'default']
+  if (!accounts.includes(accountKey)) accounts.push(accountKey)
+  conf.accounts = accounts
+  conf.enabled = true
+  fs.writeFileSync(BRIDGE_CONFIG_FILE, JSON.stringify(bridge, null, 2), 'utf8')
+  console.log(`[weixin] bridge.json accounts: ${accounts.join(', ')}`)
+}
+
+function restartBridgeIfRunning() {
+  return new Promise(resolve => {
+    const req = http.request({
+      host: '127.0.0.1',
+      port: 7779,
+      path: '/restart-bridge',
+      method: 'POST',
+      timeout: 1000,
+    }, res => {
+      res.resume()
+      res.on('end', () => resolve(true))
+    })
+    req.on('timeout', () => { req.destroy(); resolve(false) })
+    req.on('error', () => resolve(false))
+    req.end()
+  })
+}
+
 // ── QR 登录流程 ───────────────────────────────────────────────────────────────
 
 /**
- * 完整的 QR 登录：获取二维码 → 等待扫码 → 写入 config/bridge.json
- * 扫码后立刻返回，调用方接着 start() 保持 session 活跃。
+ * 完整的 QR 登录：获取二维码 → 等待扫码 → 写入 config/credentials.json。
+ * accountKey 是本地账号名，例如 default / family_xiaoming。
+ * 扫码的微信账号会绑定一个独立的 iLink bot。
  */
-export async function login() {
-  console.log('[weixin] 获取二维码...')
+export async function login(accountKey = 'default', { manageBridge = true } = {}) {
+  console.log(`[weixin] 获取二维码 (account: ${accountKey})...`)
   const qrResp = await ilinkGet(ILINK_BASE, '/ilink/bot/get_bot_qrcode?bot_type=3')
   const qrToken = qrResp.qrcode
   if (!qrToken) throw new Error('获取二维码失败: ' + JSON.stringify(qrResp))
 
-  const url = `https://liteapp.weixin.qq.com/q/7GiQu1?qrcode=${qrToken}&bot_type=3`
-  console.log('[weixin] 请用微信扫描以下链接：')
+  // qrcode_img_content 是微信实际扫描/打开的链接；qrcode 只是轮询 token。
+  const url = qrResp.qrcode_img_content
+    || `https://liteapp.weixin.qq.com/q/7GiQu1?qrcode=${qrToken}&bot_type=3`
+  console.log('[weixin] 请让要接入的微信账号扫描或打开以下链接：')
   console.log('[weixin] ' + url)
+  console.log('[weixin] 注意：这个链接只发给要绑定的人，不要公开发布。')
 
   // 轮询扫码状态
   let botToken = null, accountId = null, baseUrl = ILINK_BASE
@@ -90,9 +128,18 @@ export async function login() {
   }
 
   if (!botToken) throw new Error('等待超时，未收到确认')
-  saveWeixinCredentials({ accountId, bearerToken: botToken, baseUrl })
-  console.log('[weixin] 登录成功！accountId:', accountId)
-  return { accountId, bearerToken: botToken, baseUrl }
+  saveWeixinCredentials({ accountKey, accountId, bearerToken: botToken, baseUrl })
+  console.log(`[weixin] 登录成功！account: ${accountKey}, iLink accountId: ${accountId}`)
+
+  if (manageBridge) {
+    ensureBridgeAccount(accountKey)
+    const restarted = await restartBridgeIfRunning()
+    console.log(restarted
+      ? '[weixin] Bridge 已收到重启指令，新账号会自动开始轮询。'
+      : '[weixin] Bridge 当前未运行；启动 Bridge 后新账号生效。')
+  }
+
+  return { accountId, bearerToken: botToken, baseUrl, accountKey }
 }
 
 // ── HTTP 工具 ─────────────────────────────────────────────────────────────────
@@ -122,7 +169,7 @@ function ilinkGet(baseUrl, path_, extraHeaders = {}, timeoutMs = 15000) {
   })
 }
 
-function ilinkPost(baseUrl, path_, body, timeoutMs = 40000, accountKey = currentAccountId) {
+function ilinkPost(baseUrl, path_, body, timeoutMs = 40000, accountKey = 'default') {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body)
     const url = new URL(path_, baseUrl)
@@ -173,31 +220,36 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
  */
 export async function start(onMessage, opts = {}) {
   running = true
-  currentAccountId = opts.accountId || 'default'
+  const accountKey = opts.accountId || 'default'
   let syncBuf = ''
 
-  console.log(`[weixin] adapter started (account: ${currentAccountId}), long-polling...`)
+  const initial = loadWeixinConfig(accountKey)
+  if (!initial.bearerToken) {
+    throw new Error(`account ${accountKey} 没有 token，先运行 login ${accountKey}`)
+  }
+
+  console.log(`[weixin] adapter started (account: ${accountKey}), long-polling...`)
 
   while (running) {
-    const { baseUrl } = loadWeixinConfig()
+    const { baseUrl } = loadWeixinConfig(accountKey)
 
     let resp
     try {
       resp = await ilinkPost(baseUrl, '/ilink/bot/getupdates',
-        { get_updates_buf: syncBuf, base_info: { channel_version: '1' } }, 40000, currentAccountId)
+        { get_updates_buf: syncBuf, base_info: { channel_version: '1' } }, 40000, accountKey)
     } catch (err) {
       if (!running) break
-      console.error('[weixin] poll error:', err.message)
+      console.error(`[weixin] poll error (${accountKey}):`, err.message)
       await sleep(5000)
       continue
     }
 
     if (resp.errcode === -14 || resp.ret === -14) {
-      console.log('[weixin] session expired，自动触发重新登录...')
+      console.log(`[weixin] session expired (${accountKey})，自动触发重新登录...`)
       try {
-        await login()
+        await login(accountKey, { manageBridge: false })
         syncBuf = ''
-        console.log('[weixin] 重新登录成功，继续轮询')
+        console.log(`[weixin] 重新登录成功 (${accountKey})，继续轮询`)
       } catch (err) {
         console.error('[weixin] 登录失败:', err.message)
         await sleep(10000)
@@ -216,7 +268,7 @@ export async function start(onMessage, opts = {}) {
 
     for (const msg of resp.msgs ?? []) {
       if (msg.message_type !== 1) continue
-      if (msg.context_token) contextTokenCache.set(`${currentAccountId}:${msg.from_user_id}`, msg.context_token)
+      if (msg.context_token) contextTokenCache.set(`${accountKey}:${msg.from_user_id}`, msg.context_token)
       const textItem = msg.item_list?.find(i => i.type === 1)
       const text = textItem?.text_item?.text ?? ''
       if (!text) continue
@@ -229,7 +281,7 @@ export async function start(onMessage, opts = {}) {
     }
   }
 
-  console.log('[weixin] adapter stopped')
+  console.log(`[weixin] adapter stopped (${accountKey})`)
 }
 
 /**
@@ -239,7 +291,7 @@ export async function start(onMessage, opts = {}) {
  * @param {{accountId?: string}} opts
  */
 export async function send(to, text, opts = {}) {
-  const accountKey = opts.accountId || currentAccountId
+  const accountKey = opts.accountId || 'default'
   const { baseUrl } = loadWeixinConfig(accountKey)
   const contextToken = contextTokenCache.get(`${accountKey}:${to}`) ?? ''
   const clientId = randomBytes(8).toString('hex')
@@ -279,9 +331,9 @@ export function stop() {
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 if (isMain) {
   const cmd = process.argv[2]
+  const accountKey = process.argv[3] || 'default'
   if (cmd === 'login') {
-    login().then(() => {
-      console.log('[weixin] 登录完成，请立即启动 Bridge Server: node bridge/server.mjs')
+    login(accountKey).then(() => {
       process.exit(0)
     }).catch(err => {
       console.error('[weixin] 登录失败:', err.message)
@@ -289,7 +341,8 @@ if (isMain) {
     })
   } else {
     console.log('用法:')
-    console.log('  node bridge/adapters/weixin.mjs login   扫码登录微信')
+    console.log('  node bridge/adapters/weixin.mjs login [accountKey]   扫码绑定一个微信账号')
+    console.log('  例: node bridge/adapters/weixin.mjs login family_xiaoming')
     process.exit(0)
   }
 }

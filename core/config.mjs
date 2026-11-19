@@ -126,7 +126,7 @@ export function getAnthropicCredentials() {
   return resolveAnthropicCredentials(loadAgentSettings(), loadCredentials())
 }
 
-/** 微信账号凭证；当前一个 adapter 一个默认账号，多账号时用 accountId 区分。 */
+/** 微信账号凭证；多账号时用 accountId（config/bridge.json 的 accounts 列表）区分。 */
 export function getWeixinAccount(accountId = 'default') {
   const creds = loadCredentials()
   return creds.weixin?.accounts?.[accountId] || null
