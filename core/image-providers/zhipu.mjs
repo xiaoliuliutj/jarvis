@@ -15,14 +15,18 @@ export default {
   supportsImageInput: false,   // 该模型只支持文生图
   supportedModels: SUPPORTED_MODELS,
 
-  async generate({ prompt, size }, config = {}) {
+  async generate({ prompt, size, model }, config = {}) {
     const apiKey = config.apiKey
     if (!apiKey) throw new Error('未配置智谱 API Key（config/credentials.json → imagegen.zhipu.apiKey）')
 
     const baseUrl = String(config.baseUrl || DEFAULT_BASE_URL).replace(/\/$/, '')
-    const model = config.model || 'glm-image'
+
+    const useModel = model || config.model || 'glm-image'
+    if (!SUPPORTED_MODELS.includes(useModel)) {
+      throw new Error(`不支持的模型：${useModel}（可选：${SUPPORTED_MODELS.join(', ')}）`)
+    }
     const body = {
-      model,
+      model: useModel,
       prompt: String(prompt || '').slice(0, 1000),
       size: size || '1280x1280',
     }
@@ -59,7 +63,7 @@ export default {
       mimeType: contentType.split(';')[0].trim(),
       meta: {
         provider: 'zhipu',
-        model,
+        model: useModel,
         size: body.size,
         sourceUrl: url,
         contentFilter: data.content_filter || null,

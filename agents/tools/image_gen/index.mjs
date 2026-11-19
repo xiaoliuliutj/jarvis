@@ -72,6 +72,7 @@ async function handleGenerate(args) {
   const result = await generateImage({
     prompt,
     size: args.size,
+    model: args.model,
     providerId,
     config: providerConf,
   })
@@ -121,8 +122,9 @@ server.tool(
   '提示词要具体：主体、动作、场景、风格、配色、构图；需要在图里写文字时，把文字内容放进提示词并说明排版。',
   {
     prompt: z.string().min(1).max(1000).describe('图片描述（越具体越好，可包含画面内的文字内容）'),
-    size: z.string().optional().describe('尺寸，如 1280x1280（默认）| 1568x1056 | 1056x1568 | 1472x1088 | 1728x960；自定义需 512-2048 且为 32 的倍数'),
-    provider: z.string().optional().describe('可选：provider id（默认按配置，一般为 zhipu）'),
+    size: z.string().optional().describe('尺寸，如 1280x1280 | 1024x1024 | 1568x1056 | 1056x1568 | 1728x960；自定义需 512-2048 且为 32 的倍数'),
+    provider: z.string().optional().describe('可选：provider id（默认按配置；zhipu=智谱 GLM-Image，necodex=NeCodeX 中转）'),
+    model: z.string().optional().describe('可选：模型名（zhipu 默认 glm-image；necodex 默认 gpt-image-2.5-flare，可选 gpt-image-2.5-sunburst）'),
     sendToUser: z.boolean().optional().describe('是否自动发回给用户（默认 true）'),
     fileName: z.string().optional().describe('可选：输出文件名'),
     outDir: z.string().optional().describe('可选：输出目录（默认发件箱或工作区）'),

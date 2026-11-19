@@ -15,8 +15,9 @@
  */
 
 import zhipu from './zhipu.mjs'
+import necodex from './necodex.mjs'
 
-const BUILTIN_PROVIDERS = [zhipu]
+const BUILTIN_PROVIDERS = [zhipu, necodex]
 
 const providers = [...BUILTIN_PROVIDERS]
 
@@ -42,12 +43,12 @@ export function listProviders() {
 
 /**
  * 生成一张图片。
- * @param {{prompt: string, size?: string, providerId: string, config: object}} opts
+ * @param {{prompt: string, size?: string, model?: string, providerId: string, config: object}} opts
  */
-export async function generateImage({ prompt, size, providerId, config = {} }) {
+export async function generateImage({ prompt, size, model, providerId, config = {} }) {
   const provider = getProvider(providerId)
   if (!provider) {
     throw new Error(`未知图像 provider：${providerId}（支持：${providers.map(p => p.id).join(', ')}）`)
   }
-  return await provider.generate({ prompt, size }, config)
+  return await provider.generate({ prompt, size, model }, config)
 }
