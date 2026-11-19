@@ -99,3 +99,12 @@ export function stickerDir(principalId) {
 export function stickerIndexFile(principalId) {
   return path.join(stickerDir(principalId), 'index.json')
 }
+
+/** 家庭共享表情库（所有用户可读；只有主人/主会话或被授权者能写入） */
+export function sharedStickerDir() {
+  return path.join(USERDATA_DIR, 'shared-stickers')
+}
+
+export function sharedStickerIndexFile() {
+  return path.join(sharedStickerDir(), 'index.json')
+}

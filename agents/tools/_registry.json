@@ -132,10 +132,9 @@
   },
   {
     "name": "abstract_image",
-    "description": "抽象沙雕表情图：按聊天语境生成并直接发送，自动存入表情库可复用（仅主人和主会话可用）",
+    "description": "抽象沙雕表情图：按语境生成并直接发送（生成仅限主人/主会话），个人表情库 + 家庭共享库（list/send/unshare 所有用户可用）",
     "enabled": true,
-    "access": "owner",
     "createdAt": "2026-11-19T16:40:00.000Z",
-    "version": "1.0.0"
+    "version": "1.1.0"
   }
 ]
