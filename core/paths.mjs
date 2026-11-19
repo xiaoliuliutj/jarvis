@@ -70,3 +70,19 @@ export function schedulesFile(principalId) {
 export function onboardingFile(principalId) {
   return path.join(principalDir(principalId), 'onboarding.json')
 }
+
+export function filesDir(principalId) {
+  return path.join(principalDir(principalId), 'files')
+}
+
+export function inboxDir(principalId) {
+  return path.join(filesDir(principalId), 'inbox')
+}
+
+export function outboxDir(principalId) {
+  return path.join(filesDir(principalId), 'outbox')
+}
+
+export function sentDir(principalId) {
+  return path.join(outboxDir(principalId), 'sent')
+}

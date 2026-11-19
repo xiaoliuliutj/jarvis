@@ -22,13 +22,178 @@ import os from 'os'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { spawn } from 'child_process'
-import { randomBytes } from 'crypto'
+import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'crypto'
 import QRCode from 'qrcode'
 import { CREDENTIALS_FILE, BRIDGE_CONFIG_FILE } from '../../core/paths.mjs'
 
 export const id = 'weixin'
 
 const ILINK_BASE = 'https://ilinkai.weixin.qq.com'
+const CDN_BASE = 'https://novac2c.cdn.weixin.qq.com/c2c'
+
+// 媒体类型（getuploadurl 的 media_type）
+const MEDIA_TYPE = Object.freeze({ IMG: 1, VID: 2, FILE: 3, VOICE: 4 })
+
+// 单个入站媒体上限（超过不下载）
+const MAX_INBOUND_MEDIA_SIZE = 20 * 1024 * 1024
+// 单个出站文件上限
+const MAX_OUTBOUND_FILE_SIZE = 20 * 1024 * 1024
+
+// ── 媒体加密（AES-128-ECB + PKCS7）────────────────────────────────────────────
+
+function aesEncrypt(key, data) {
+  const cipher = createCipheriv('aes-128-ecb', key, null)
+  return Buffer.concat([cipher.update(data), cipher.final()])
+}
+
+function aesDecrypt(key, data) {
+  const decipher = createDecipheriv('aes-128-ecb', key, null)
+  return Buffer.concat([decipher.update(data), decipher.final()])
+}
+
+/**
+ * 解析 aes_key 编码。
+ * 协议约定：图片 = base64(原始16字节)；文件/语音/视频 = base64(32位hex字符串)。
+ */
+function parseAesKey(aesKeyB64, mediaType) {
+  const raw = Buffer.from(aesKeyB64, 'base64')
+  if (mediaType === MEDIA_TYPE.IMG && raw.length === 16) return raw
+  const asHex = raw.toString('utf8')
+  if (/^[0-9a-fA-F]{32}$/.test(asHex)) return Buffer.from(asHex, 'hex')
+  if (raw.length === 16) return raw
+  throw new Error('无法识别的 aes_key 编码')
+}
+
+/** 按协议把 16 字节密钥编码成 aes_key 字段 */
+function encodeAesKey(key, mediaType) {
+  if (mediaType === MEDIA_TYPE.IMG) return key.toString('base64')
+  return Buffer.from(key.toString('hex'), 'utf8').toString('base64')
+}
+
+// ── 二进制 HTTP 请求（CDN 上传/下载用）────────────────────────────────────────
+
+function httpBinary(urlStr, { method = 'GET', body = null, headers = {}, timeoutMs = 30000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(urlStr)
+    const mod = url.protocol === 'https:' ? https : http
+    const req = mod.request({
+      hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname + url.search,
+      method,
+      headers: {
+        ...(body ? { 'Content-Length': Buffer.byteLength(body) } : {}),
+        ...headers,
+      },
+      timeout: timeoutMs,
+    }, (res) => {
+      const chunks = []
+      res.on('data', c => chunks.push(c))
+      res.on('end', () => resolve({
+        statusCode: res.statusCode,
+        headers: res.headers,
+        body: Buffer.concat(chunks),
+      }))
+    })
+    req.on('error', reject)
+    req.on('timeout', () => { req.destroy(); reject(new Error('binary request timeout')) })
+    if (body) req.write(body)
+    req.end()
+  })
+}
+
+// ── 媒体下载 / 上传（收发共用同一套 CDN 逻辑）──────────────────────────────────
+
+/** 从 CDN 下载并解密媒体 */
+async function downloadMedia(media, mediaType) {
+  if (!media?.encrypt_query_param) throw new Error('缺少 encrypt_query_param')
+  const url = `${CDN_BASE}/download?encrypted_query_param=${encodeURIComponent(media.encrypt_query_param)}`
+  const res = await httpBinary(url, { timeoutMs: 30000 })
+  if (res.statusCode !== 200) throw new Error(`CDN 下载失败 HTTP ${res.statusCode}`)
+  if (!media.aes_key) return res.body
+  try {
+    return aesDecrypt(parseAesKey(media.aes_key, mediaType), res.body)
+  } catch (err) {
+    console.warn('[weixin] 媒体解密失败，按明文处理:', err.message)
+    return res.body
+  }
+}
+
+/** 加密并上传媒体到 CDN，返回发送消息所需的参数 */
+async function uploadMedia(buffer, mediaType, toUserId, accountKey) {
+  const key = randomBytes(16)
+  const encrypted = aesEncrypt(key, buffer)
+  const filekey = randomBytes(16).toString('hex')
+  const md5 = createHash('md5').update(buffer).digest('hex')
+  const aesKeyEnc = encodeAesKey(key, mediaType)
+  const { baseUrl } = loadWeixinConfig(accountKey)
+
+  const resp = await ilinkPost(baseUrl, '/ilink/bot/getuploadurl', {
+    filekey,
+    media_type: mediaType,
+    to_user_id: toUserId,
+    rawsize: buffer.length,
+    rawfilemd5: md5,
+    filesize: encrypted.length,
+    // 注意：这里的 aeskey 必须是 32 位 hex 字符串（不是 base64）
+    aeskey: key.toString('hex'),
+    no_need_thumb: true,
+    base_info: { channel_version: '1.0.0' },
+  }, 20000, accountKey)
+
+  const uploadParam = resp.upload_param || resp.uploadParam
+  if (!uploadParam) throw new Error(`getuploadurl 失败: ${JSON.stringify(resp).slice(0, 200)}`)
+
+  const url = `${CDN_BASE}/upload?encrypted_query_param=${encodeURIComponent(uploadParam)}&filekey=${encodeURIComponent(filekey)}`
+  const up = await httpBinary(url, {
+    method: 'POST',
+    body: encrypted,
+    headers: { 'Content-Type': 'application/octet-stream' },
+    timeoutMs: 60000,
+  })
+  const downloadParam = up.headers['x-encrypted-param']
+  if (!downloadParam) throw new Error(`CDN 上传失败: 缺少 x-encrypted-param 响应头 (HTTP ${up.statusCode})`)
+
+  return { downloadParam, aesKey: aesKeyEnc, md5, rawSize: buffer.length }
+}
+
+// ── 入站 item 处理器（按 item.type 分发，扩展新类型在这里加）────────────────────
+
+const INBOUND_ITEM_HANDLERS = {
+  // type 4 = 文件
+  4: async (item) => {
+    const f = item.file_item
+    if (!f?.media) return null
+    const size = Number(f.len || 0)
+    if (size > MAX_INBOUND_MEDIA_SIZE) {
+      console.warn(`[weixin] 文件过大，跳过下载: ${f.file_name} (${size} bytes)`)
+      return null
+    }
+    const buffer = await downloadMedia(f.media, MEDIA_TYPE.FILE)
+    return {
+      kind: 'file',
+      fileName: f.file_name || 'unnamed_file',
+      mimeType: 'application/octet-stream',
+      buffer,
+    }
+  },
+  // type 2 = 图片、type 3 = 语音、type 5 = 视频：后续按同样方式扩展
+}
+
+async function collectInboundAttachments(items = []) {
+  const attachments = []
+  for (const item of items) {
+    const handler = INBOUND_ITEM_HANDLERS[item.type]
+    if (!handler) continue
+    try {
+      const att = await handler(item)
+      if (att) attachments.push(att)
+    } catch (err) {
+      console.error(`[weixin] 接收附件失败 (item.type=${item.type}):`, err.message)
+    }
+  }
+  return attachments
+}
 
 // ── 配置读写 ──────────────────────────────────────────────────────────────────
 // 微信 token 放在 config/credentials.json，Agent 不可读写。
@@ -301,13 +466,14 @@ export async function start(onMessage, opts = {}) {
     for (const msg of resp.msgs ?? []) {
       if (msg.message_type !== 1) continue
       if (msg.context_token) contextTokenCache.set(`${accountKey}:${msg.from_user_id}`, msg.context_token)
-      const textItem = msg.item_list?.find(i => i.type === 1)
-      const text = textItem?.text_item?.text ?? ''
-      if (!text) continue
+      const items = msg.item_list ?? []
+      const text = items.find(i => i.type === 1)?.text_item?.text ?? ''
+      const attachments = await collectInboundAttachments(items)
+      if (!text && attachments.length === 0) continue
       onMessage({
         from: msg.from_user_id,
         text,
-        attachments: [],
+        attachments,
         timestamp: new Date(msg.create_time_ms ?? Date.now()).toISOString(),
       })
     }
@@ -356,6 +522,57 @@ export async function send(to, text, opts = {}) {
 
 export function stop() {
   running = false
+}
+
+/**
+ * 把本地文件发给微信用户（走 CDN 加密上传 + file_item 消息）。
+ * @param {string} to   接收方 from_user_id
+ * @param {string} filePath 本地文件绝对路径
+ * @param {{accountId?: string, fileName?: string}} opts
+ */
+export async function sendFile(to, filePath, opts = {}) {
+  const accountKey = opts.accountId || 'default'
+  const { baseUrl } = loadWeixinConfig(accountKey)
+
+  const stat = fs.statSync(filePath)
+  if (!stat.isFile()) throw new Error('不是文件')
+  if (stat.size > MAX_OUTBOUND_FILE_SIZE) {
+    throw new Error(`文件超过 ${Math.round(MAX_OUTBOUND_FILE_SIZE / 1024 / 1024)}MB 上限`)
+  }
+
+  const buffer = fs.readFileSync(filePath)
+  const fileName = opts.fileName || path.basename(filePath)
+
+  const { downloadParam, aesKey, md5, rawSize } = await uploadMedia(buffer, MEDIA_TYPE.FILE, to, accountKey)
+  const contextToken = contextTokenCache.get(`${accountKey}:${to}`) ?? ''
+  const clientId = randomBytes(8).toString('hex')
+
+  const resp = await ilinkPost(baseUrl, '/ilink/bot/sendmessage', {
+    msg: {
+      from_user_id: '',
+      to_user_id: to,
+      client_id: clientId,
+      message_type: 2,       // BOT
+      message_state: 2,      // FINISH
+      context_token: contextToken,
+      item_list: [{
+        type: 4,             // FILE
+        file_item: {
+          media: { encrypt_query_param: downloadParam, aes_key: aesKey, encrypt_type: 1 },
+          file_name: fileName,
+          md5,
+          len: String(rawSize),
+        },
+      }],
+    },
+    base_info: { channel_version: '1' },
+  }, 30000, accountKey)
+
+  if (!resp.message_id) {
+    throw new Error(`文件发送失败: ${JSON.stringify(resp).slice(0, 200)}`)
+  }
+  console.log(`[weixin] 文件已发送: ${fileName} (message_id: ${resp.message_id})`)
+  return { messageId: resp.message_id }
 }
 
 // ── CLI 入口：node bridge/adapters/weixin.mjs login ────────────────────────────

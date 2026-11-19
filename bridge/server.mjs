@@ -28,6 +28,7 @@ import { startScheduleManager } from '../core/schedule.mjs'
 import { formatScheduleReminder } from '../core/schedule-store.mjs'
 import { handleIncomingOnboarding } from '../core/onboarding.mjs'
 import { loadAdapters } from '../core/adapters.mjs'
+import { ensureFileDirs, prepareInbound, listOutboxFiles, markOutboxSent } from '../core/files.mjs'
 
 const config = loadBridgeConfig()
 const HTTP_PORT = config.httpPort ?? 7779
@@ -72,11 +73,43 @@ async function sendText(principalId, sourceType, accountId, externalUserId, text
   await adapter.send(externalUserId, text, { accountId })
 }
 
-function sendReply(principalId, sourceType, accountId, externalUserId, result) {
+async function sendReply(principalId, sourceType, accountId, externalUserId, result) {
   if (!result.text) return
-  sendText(principalId, sourceType, accountId, externalUserId, result.text).catch(err => {
+  try {
+    await sendText(principalId, sourceType, accountId, externalUserId, result.text)
+  } catch (err) {
     console.error(`[bridge] 回复发送失败 (${principalId}):`, err.message)
-  })
+  }
+}
+
+/**
+ * 回合结束后投递发件箱：把 outbox 里的文件逐个发送，成功后归档到 sent/。
+ * adapter 未实现 sendFile 时静默跳过。
+ */
+async function deliverOutbox(principalId, sourceType, accountId, externalUserId) {
+  const adapter = adapters[sourceType]
+  if (!adapter?.sendFile) return
+
+  let files = []
+  try {
+    files = listOutboxFiles(principalId)
+  } catch (err) {
+    console.error(`[bridge] 读取发件箱失败 (${principalId}):`, err.message)
+    return
+  }
+  if (!files.length) return
+
+  for (const f of files) {
+    try {
+      await adapter.sendFile(externalUserId, f.path, { accountId, fileName: f.name })
+      markOutboxSent(principalId, f.path)
+      broadcast({ type: 'outbound_file', principalId, fileName: f.name, ok: true })
+      console.log(`[bridge] 文件已发送 (${principalId}): ${f.name}`)
+    } catch (err) {
+      console.error(`[bridge] 文件发送失败 (${principalId}/${f.name}):`, err.message)
+      broadcast({ type: 'outbound_file', principalId, fileName: f.name, ok: false, error: err.message })
+    }
+  }
 }
 
 export function routeIncoming({
@@ -99,7 +132,17 @@ export function routeIncoming({
     principalId: principal.id,
     displayName: principal.displayName,
     sessionId: current?.sessionId || null,
-    payload: { from: externalUserId, text, attachments, timestamp },
+    payload: {
+      from: externalUserId,
+      text,
+      // 只广播元信息，不把二进制内容发到 WS
+      attachments: (attachments || []).map(a => ({
+        kind: a.kind || 'file',
+        fileName: a.fileName || '',
+        size: Buffer.isBuffer(a.buffer) ? a.buffer.length : (a.size ?? 0),
+      })),
+      timestamp,
+    },
   })
 
   // 新用户先做风格引导，不进入模型
@@ -118,23 +161,34 @@ export function routeIncoming({
   scheduler.enqueue(principal.id, async () => {
     let result
     try {
-      result = await runTurn({
-        principalId: principal.id,
-        prompt: text,
-        emit: (event) => broadcast({
-          ...event,
-          sourceType,
-          accountId,
-          displayName: principal.displayName,
-        }),
-      })
+      ensureFileDirs(principal.id)
+      // 附件落盘 + 解析预览，拼进 prompt
+      const attachmentBlock = attachments?.length
+        ? await prepareInbound(principal.id, attachments)
+        : ''
+      const prompt = [text, attachmentBlock].filter(Boolean).join('\n\n')
+
+      if (!prompt) {
+        result = { text: '', cost: 0, turns: 0, isError: false, sessionId: current?.sessionId || null }
+      } else {
+        result = await runTurn({
+          principalId: principal.id,
+          prompt,
+          emit: (event) => broadcast({
+            ...event,
+            sourceType,
+            accountId,
+            displayName: principal.displayName,
+          }),
+        })
+      }
     } catch (err) {
       console.error(`[bridge] ${principal.id} 运行失败:`, err)
       result = { text: '服务暂时不可用，请稍后再试。', isError: true }
     }
 
     // 成功或失败都给用户一条回复；失败时的文案已在 conversation 里对普通用户脱敏
-    if (result.text) sendReply(principal.id, sourceType, accountId, externalUserId, result)
+    await sendReply(principal.id, sourceType, accountId, externalUserId, result)
     if (result.isError) {
       broadcast({
         type: 'error',
@@ -145,6 +199,9 @@ export function routeIncoming({
         text: result.text,
       })
     }
+
+    // 回合结束后投递发件箱
+    await deliverOutbox(principal.id, sourceType, accountId, externalUserId)
   })
 
   return { ok: true, principalId: principal.id }
@@ -177,6 +234,7 @@ const cron = startCronManager({
     const adapter = adapters[account.sourceType]
     if (!adapter) return
     await adapter.send(account.externalUserId, result.text, { accountId: account.accountId })
+    await deliverOutbox(principal.id, account.sourceType, account.accountId, account.externalUserId)
     broadcast({ type: 'cron_result', principalId: principal.id, taskId: task.id, text: result.text, sessionId: result.sessionId })
   },
 })

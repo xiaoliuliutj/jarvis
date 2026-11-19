@@ -8,7 +8,7 @@
  * 模型只看到 displayName 和能力提示，不知道用户来自微信还是 QQ。
  */
 
-import { workspaceDir } from './paths.mjs'
+import { workspaceDir, inboxDir, outboxDir } from './paths.mjs'
 
 const TOOL_HINT = `
 ## 工具使用
@@ -72,6 +72,7 @@ export function buildSystemPrompt({ principal, rules, persona, memory }) {
     `# 当前用户人设\n${persona || '（未设置）'}`,
     memory ? `# 当前用户长期记忆\n${memory}` : '',
     `# 工作区\n当前用户的工作目录是 ${workspaceDir(principal.id)}。默认在这里读写用户文件。`,
+    `# 文件收发\n用户发来的文件保存在收件箱 ${inboxDir(principal.id)}（消息里会附带文件信息）。要把文件发给用户时，把文件写进发件箱 ${outboxDir(principal.id)}，当前回合结束后系统会自动发送并归档，不需要做别的操作。收发目录不存在时会自动创建。`,
     TOOL_HINT,
     `# API 无感\n不要向用户提及底层 API、模型供应商、API Key、token 或凭证文件。用户问起时，只说这是内部配置。`,
   ].filter(Boolean).join('\n\n')
