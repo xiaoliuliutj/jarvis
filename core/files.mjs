@@ -52,6 +52,13 @@ export function formatSize(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
+// 可走图片消息通道的扩展名
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'])
+
+export function isImageFile(fileName) {
+  return IMAGE_EXTS.has(path.extname(String(fileName || '')).toLowerCase())
+}
+
 // ── 收件 ────────────────────────────────────────────────────────────────────
 
 /**
@@ -133,6 +140,8 @@ export async function prepareInbound(principalId, attachments = []) {
     if (preview.text) {
       lines.push(`   内容预览（前 3000 字${preview.meta?.truncated ? '，已截断' : ''}）：`)
       lines.push(preview.text)
+    } else if (f.kind === 'image') {
+      lines.push('   说明：这是一张图片，可直接用 Read 工具查看内容。')
     } else if (preview.meta?.note) {
       lines.push(`   说明：${preview.meta.note}`)
     }

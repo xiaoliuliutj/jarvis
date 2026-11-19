@@ -64,9 +64,9 @@ function parseAesKey(aesKeyB64, mediaType) {
   throw new Error('无法识别的 aes_key 编码')
 }
 
-/** 按协议把 16 字节密钥编码成 aes_key 字段 */
-function encodeAesKey(key, mediaType) {
-  if (mediaType === MEDIA_TYPE.IMG) return key.toString('base64')
+/** 按协议把 16 字节密钥编码成 aes_key 字段。
+ *  官方实现对出站媒体统一用 base64(hex string) 形式，接收方两种都兼容。 */
+function encodeAesKey(key) {
   return Buffer.from(key.toString('hex'), 'utf8').toString('base64')
 }
 
@@ -104,19 +104,38 @@ function httpBinary(urlStr, { method = 'GET', body = null, headers = {}, timeout
 
 // ── 媒体下载 / 上传（收发共用同一套 CDN 逻辑）──────────────────────────────────
 
-/** 从 CDN 下载并解密媒体 */
-async function downloadMedia(media, mediaType) {
+/** 从 CDN 下载并解密媒体。
+ *  directAesKeyHex：image_item.aeskey 这类 32 位 hex 字段，优先级高于 media.aes_key。 */
+async function downloadMedia(media, mediaType, directAesKeyHex = null) {
   if (!media?.encrypt_query_param) throw new Error('缺少 encrypt_query_param')
   const url = `${CDN_BASE}/download?encrypted_query_param=${encodeURIComponent(media.encrypt_query_param)}`
   const res = await httpBinary(url, { timeoutMs: 30000 })
   if (res.statusCode !== 200) throw new Error(`CDN 下载失败 HTTP ${res.statusCode}`)
-  if (!media.aes_key) return res.body
+
+  let key = null
+  if (directAesKeyHex && /^[0-9a-fA-F]{32}$/.test(directAesKeyHex)) {
+    key = Buffer.from(directAesKeyHex, 'hex')
+  } else if (media.aes_key) {
+    key = parseAesKey(media.aes_key, mediaType)
+  }
+  if (!key) return res.body
+
   try {
-    return aesDecrypt(parseAesKey(media.aes_key, mediaType), res.body)
+    return aesDecrypt(key, res.body)
   } catch (err) {
     console.warn('[weixin] 媒体解密失败，按明文处理:', err.message)
     return res.body
   }
+}
+
+/** 按文件头识别图片格式 */
+function sniffImageExt(buf) {
+  if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'png'
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg'
+  if (buf.length >= 6 && buf.slice(0, 3).toString('ascii') === 'GIF') return 'gif'
+  if (buf.length >= 12 && buf.slice(0, 4).toString('ascii') === 'RIFF' && buf.slice(8, 12).toString('ascii') === 'WEBP') return 'webp'
+  if (buf.length >= 2 && buf.slice(0, 2).toString('ascii') === 'BM') return 'bmp'
+  return 'bin'
 }
 
 /** 加密并上传媒体到 CDN，返回发送消息所需的参数 */
@@ -125,7 +144,7 @@ async function uploadMedia(buffer, mediaType, toUserId, accountKey) {
   const encrypted = aesEncrypt(key, buffer)
   const filekey = randomBytes(16).toString('hex')
   const md5 = createHash('md5').update(buffer).digest('hex')
-  const aesKeyEnc = encodeAesKey(key, mediaType)
+  const aesKeyEnc = encodeAesKey(key)
   const { baseUrl } = loadWeixinConfig(accountKey)
 
   const resp = await ilinkPost(baseUrl, '/ilink/bot/getuploadurl', {
@@ -160,6 +179,24 @@ async function uploadMedia(buffer, mediaType, toUserId, accountKey) {
 // ── 入站 item 处理器（按 item.type 分发，扩展新类型在这里加）────────────────────
 
 const INBOUND_ITEM_HANDLERS = {
+  // type 2 = 图片
+  2: async (item) => {
+    const img = item.image_item
+    if (!img?.media) return null
+    const size = Number(img.mid_size || 0)
+    if (size > MAX_INBOUND_MEDIA_SIZE) {
+      console.warn(`[weixin] 图片过大，跳过下载 (${size} bytes)`)
+      return null
+    }
+    const buffer = await downloadMedia(img.media, MEDIA_TYPE.IMG, img.aeskey || null)
+    const ext = sniffImageExt(buffer)
+    return {
+      kind: 'image',
+      fileName: `image_${Date.now()}.${ext}`,
+      mimeType: ext === 'jpg' ? 'image/jpeg' : `image/${ext}`,
+      buffer,
+    }
+  },
   // type 4 = 文件
   4: async (item) => {
     const f = item.file_item
@@ -572,6 +609,56 @@ export async function sendFile(to, filePath, opts = {}) {
     throw new Error(`文件发送失败: ${JSON.stringify(resp).slice(0, 200)}`)
   }
   console.log(`[weixin] 文件已发送: ${fileName} (message_id: ${resp.message_id})`)
+  return { messageId: resp.message_id }
+}
+
+/**
+ * 把本地图片发给微信用户（图片消息，item type 2）。
+ * @param {string} to   接收方 from_user_id
+ * @param {string} filePath 本地图片绝对路径
+ * @param {{accountId?: string, fileName?: string}} opts
+ */
+export async function sendImage(to, filePath, opts = {}) {
+  const accountKey = opts.accountId || 'default'
+  const { baseUrl } = loadWeixinConfig(accountKey)
+
+  const stat = fs.statSync(filePath)
+  if (!stat.isFile()) throw new Error('不是文件')
+  if (stat.size > MAX_OUTBOUND_FILE_SIZE) {
+    throw new Error(`图片超过 ${Math.round(MAX_OUTBOUND_FILE_SIZE / 1024 / 1024)}MB 上限`)
+  }
+
+  const buffer = fs.readFileSync(filePath)
+  const fileName = opts.fileName || path.basename(filePath)
+  const { downloadParam, aesKey, rawSize } = await uploadMedia(buffer, MEDIA_TYPE.IMG, to, accountKey)
+  // 图片消息的 mid_size 是密文大小：ceil((rawsize + 1) / 16) * 16
+  const midSize = Math.ceil((rawSize + 1) / 16) * 16
+  const contextToken = contextTokenCache.get(`${accountKey}:${to}`) ?? ''
+  const clientId = randomBytes(8).toString('hex')
+
+  const resp = await ilinkPost(baseUrl, '/ilink/bot/sendmessage', {
+    msg: {
+      from_user_id: '',
+      to_user_id: to,
+      client_id: clientId,
+      message_type: 2,       // BOT
+      message_state: 2,      // FINISH
+      context_token: contextToken,
+      item_list: [{
+        type: 2,             // IMAGE
+        image_item: {
+          media: { encrypt_query_param: downloadParam, aes_key: aesKey, encrypt_type: 1 },
+          mid_size: midSize,
+        },
+      }],
+    },
+    base_info: { channel_version: '1' },
+  }, 30000, accountKey)
+
+  if (!resp.message_id) {
+    throw new Error(`图片发送失败: ${JSON.stringify(resp).slice(0, 200)}`)
+  }
+  console.log(`[weixin] 图片已发送: ${fileName} (message_id: ${resp.message_id})`)
   return { messageId: resp.message_id }
 }
 

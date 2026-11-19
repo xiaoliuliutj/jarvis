@@ -29,7 +29,7 @@ import { startScheduleManager } from '../core/schedule.mjs'
 import { formatScheduleReminder } from '../core/schedule-store.mjs'
 import { handleIncomingOnboarding } from '../core/onboarding.mjs'
 import { loadAdapters } from '../core/adapters.mjs'
-import { ensureFileDirs, prepareInbound, listOutboxFiles, markOutboxSent } from '../core/files.mjs'
+import { ensureFileDirs, prepareInbound, listOutboxFiles, markOutboxSent, isImageFile } from '../core/files.mjs'
 
 const config = loadBridgeConfig()
 const HTTP_PORT = config.httpPort ?? 7779
@@ -105,10 +105,13 @@ async function deliverOutbox(principalId, sourceType, accountId, externalUserId)
 
   for (const f of files) {
     try {
-      await adapter.sendFile(externalUserId, f.path, { accountId, fileName: f.name })
+      // 图片走图片消息通道（微信里直接显示为图片），其余走文件通道
+      const useImage = isImageFile(f.name) && typeof adapter.sendImage === 'function'
+      const sendOne = useImage ? adapter.sendImage : adapter.sendFile
+      await sendOne.call(adapter, externalUserId, f.path, { accountId, fileName: f.name })
       markOutboxSent(principalId, f.path)
-      broadcast({ type: 'outbound_file', principalId, fileName: f.name, ok: true })
-      console.log(`[bridge] 文件已发送 (${principalId}): ${f.name}`)
+      broadcast({ type: 'outbound_file', principalId, fileName: f.name, ok: true, kind: useImage ? 'image' : 'file' })
+      console.log(`[bridge] ${useImage ? '图片' : '文件'}已发送 (${principalId}): ${f.name}`)
     } catch (err) {
       console.error(`[bridge] 文件发送失败 (${principalId}/${f.name}):`, err.message)
       broadcast({ type: 'outbound_file', principalId, fileName: f.name, ok: false, error: err.message })
