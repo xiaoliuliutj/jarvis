@@ -23,10 +23,12 @@ server.tool(
     hour: z.number().int().min(0).max(23).optional().describe('触发小时'),
     minute: z.number().int().min(0).max(59).optional().describe('触发分钟'),
     dayOfWeek: z.number().int().min(0).max(6).optional().describe('0=周日 … 6=周六'),
+    idleHours: z.number().min(0.5).optional().describe('空闲触发：用户多少小时没有互动后触发（与 hour/minute 互斥）'),
+    refireHours: z.number().min(1).optional().describe('空闲触发后，每隔多少小时允许再次触发（默认同 idleHours）'),
     prompt: z.string().describe('触发时执行的 prompt'),
     principalId: z.string().optional().describe('仅 main 可用：给指定用户创建'),
   },
-  async ({ id, enabled = true, hour, minute, dayOfWeek, prompt, principalId }) => {
+  async ({ id, enabled = true, hour, minute, dayOfWeek, idleHours, refireHours, prompt, principalId }) => {
     const target = principalId || callerId
     if (role !== 'maintainer' && target !== callerId) {
       return { content: [{ type: 'text', text: '❌ 只能给自己创建定时任务。' }] }
@@ -39,9 +41,14 @@ server.tool(
     }
 
     const schedule = {}
-    if (hour !== undefined) schedule.hour = hour
-    if (minute !== undefined) schedule.minute = minute
-    if (dayOfWeek !== undefined) schedule.dayOfWeek = dayOfWeek
+    if (idleHours !== undefined) {
+      schedule.idleHours = idleHours
+      if (refireHours !== undefined) schedule.refireHours = refireHours
+    } else {
+      if (hour !== undefined) schedule.hour = hour
+      if (minute !== undefined) schedule.minute = minute
+      if (dayOfWeek !== undefined) schedule.dayOfWeek = dayOfWeek
+    }
 
     crons.push({
       id,

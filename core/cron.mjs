@@ -12,6 +12,7 @@ import { readCrons } from './user-store.mjs'
 
 export function matchesNow(schedule, now = new Date()) {
   if (!schedule) return false
+  if (schedule.idleHours !== undefined) return false   // 空闲触发任务不走固定时间匹配
   if (schedule.hour !== undefined && schedule.hour !== now.getHours()) return false
   if (schedule.minute !== undefined && schedule.minute !== now.getMinutes()) return false
   if (schedule.dayOfWeek !== undefined) {
@@ -19,6 +20,25 @@ export function matchesNow(schedule, now = new Date()) {
     if (!days.includes(now.getDay())) return false
   }
   return true
+}
+
+/**
+ * 空闲触发判断：用户「空闲」超过 idleHours 后触发。
+ * 触发一次后，需再等 refireHours（默认等于 idleHours）才允许下次触发；
+ * 用户一有互动（lastActivity 更新），周期重新开始。
+ *
+ * @param {object} schedule { idleHours, refireHours? }
+ * @param {{now: number, lastActivity: number|null|undefined, lastFired: number|undefined}} ctx
+ */
+export function isIdleDue(schedule, { now, lastActivity, lastFired }) {
+  if (!schedule || !schedule.idleHours) return false
+  if (!lastActivity) return false
+  const idleMs = schedule.idleHours * 3600_000
+  if (now - lastActivity < idleMs) return false
+  if (!lastFired) return true   // 首次触发：够 idleHours 即可
+  const refireMs = (schedule.refireHours ?? schedule.idleHours) * 3600_000
+  const anchor = Math.max(lastActivity, lastFired)
+  return now - anchor >= refireMs
 }
 
 /**
@@ -36,8 +56,10 @@ export function startCronManager({
   deliver,
   enqueue = (_id, fn) => fn(),
   onEvent = () => {},
+  getLastActivity = () => null,
 }) {
   const fired = new Set()
+  const lastIdleFired = new Map()
   let lastMinuteKey = ''
 
   async function tick() {
@@ -54,10 +76,24 @@ export function startCronManager({
     for (const principal of principals) {
       for (const task of readCrons(principal.id)) {
         if (!task.enabled) continue
-        if (!matchesNow(task.schedule, now)) continue
         const key = `${principal.id}:${task.id}`
-        if (fired.has(key)) continue
-        fired.add(key)
+
+        let due = false
+        if (task.schedule?.idleHours) {
+          // 空闲触发：多久没见到主人（用户互动）才触发
+          due = isIdleDue(task.schedule, {
+            now: Date.now(),
+            lastActivity: getLastActivity(principal.id),
+            lastFired: lastIdleFired.get(key),
+          })
+          if (due) lastIdleFired.set(key, Date.now())
+        } else {
+          if (!matchesNow(task.schedule, now)) continue
+          if (fired.has(key)) continue
+          fired.add(key)
+          due = true
+        }
+        if (!due) continue
 
         onEvent({ type: 'cron_start', principalId: principal.id, taskId: task.id })
         enqueue(principal.id, async () => {

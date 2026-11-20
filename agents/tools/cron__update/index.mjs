@@ -22,9 +22,11 @@ server.tool(
     hour: z.number().int().min(0).max(23).optional(),
     minute: z.number().int().min(0).max(59).optional(),
     dayOfWeek: z.number().int().min(0).max(6).optional(),
+    idleHours: z.number().min(0.5).optional().describe('切换为空闲触发：用户多少小时无互动后触发'),
+    refireHours: z.number().min(1).optional().describe('空闲触发的再次触发间隔（小时）'),
     prompt: z.string().optional(),
   },
-  async ({ id, principalId, enabled, hour, minute, dayOfWeek, prompt }) => {
+  async ({ id, principalId, enabled, hour, minute, dayOfWeek, idleHours, refireHours, prompt }) => {
     const target = principalId || callerId
     if (role !== 'maintainer' && target !== callerId) {
       return { content: [{ type: 'text', text: '❌ 只能修改自己的定时任务。' }] }
@@ -36,8 +38,12 @@ server.tool(
 
     if (enabled !== undefined) cron.enabled = enabled
     if (prompt !== undefined) cron.prompt = prompt
-    if (hour !== undefined || minute !== undefined || dayOfWeek !== undefined) {
+    if (idleHours !== undefined) {
+      cron.schedule = { idleHours, ...(refireHours !== undefined ? { refireHours } : {}) }
+    } else if (hour !== undefined || minute !== undefined || dayOfWeek !== undefined) {
       cron.schedule = cron.schedule || {}
+      delete cron.schedule.idleHours
+      delete cron.schedule.refireHours
       if (hour !== undefined) cron.schedule.hour = hour
       if (minute !== undefined) cron.schedule.minute = minute
       if (dayOfWeek !== undefined) cron.schedule.dayOfWeek = dayOfWeek

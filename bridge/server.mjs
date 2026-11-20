@@ -40,6 +40,10 @@ const HOST = '127.0.0.1'
 // 非主会话：超过这个时间还没最终回复，先发一句「正在处理」提示
 const INTERIM_NOTICE_DELAY_MS = 10_000
 
+// 用户最后互动时间（用于空闲触发任务，例如「无聊刷B站」）；Bridge 启动时间作为初始基线
+const bridgeStartedAt = Date.now()
+const lastActivity = new Map()
+
 // ── WebSocket 广播 ────────────────────────────────────────────────────────────
 
 const wss = new WebSocketServer({ host: HOST, port: WS_PORT })
@@ -130,6 +134,7 @@ export function routeIncoming({
 }) {
   const principal = resolvePrincipal({ sourceType, accountId, externalUserId })
   ensureUser(principal.id)
+  lastActivity.set(principal.id, Date.now())
   const current = getCurrentSession(principal.id)
 
   logInfo('message.in', '', {
@@ -262,6 +267,7 @@ const cron = startCronManager({
   principalFilter: (p) => p.id !== 'pc-main',
   onEvent: (event) => broadcast(event),
   enqueue: (principalId, fn) => scheduler.enqueue(principalId, fn),
+  getLastActivity: (principalId) => lastActivity.get(principalId) ?? bridgeStartedAt,
   runTask: (principal, task) => runTurn({
     principalId: principal.id,
     prompt: task.prompt,
