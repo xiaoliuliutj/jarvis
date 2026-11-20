@@ -258,3 +258,27 @@ export function writeCrons(principalId, crons) {
   ensureUser(principalId)
   writeJson(cronsFile(principalId), crons)
 }
+
+/** 最近一条用户消息的时间戳（ms）；没有则返回 null。用于「长时间没见」检测，Bridge 重启后也能恢复判断。 */
+export function lastUserMessageAt(principalId) {
+  const dir = sessionsDir(principalId)
+  if (!fs.existsSync(dir)) return null
+  let latest = null
+  for (const name of fs.readdirSync(dir)) {
+    if (!name.endsWith('.messages.jsonl')) continue
+    try {
+      const lines = fs.readFileSync(path.join(dir, name), 'utf-8').trim().split('\n').filter(Boolean)
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const rec = JSON.parse(lines[i])
+          if (rec.type === 'user' && rec.timestamp) {
+            const t = Date.parse(rec.timestamp)
+            if (!Number.isNaN(t) && (!latest || t > latest)) latest = t
+            break
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+  return latest
+}

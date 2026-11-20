@@ -16,8 +16,11 @@ const server = new McpServer({ name: 'cron__list', version: '2.0.0' })
 
 function scheduleText(s = {}) {
   if (s.idleHours !== undefined) {
-    const refire = s.refireHours === undefined ? '' : `，之后每隔${s.refireHours}小时`
-    return `空闲${s.idleHours}小时触发${refire}`
+    let refire = ''
+    if (s.refireHoursMin !== undefined) refire = `，之后每${s.refireHoursMin}-${s.refireHoursMax ?? s.refireHoursMin}小时`
+    else if (s.refireHours !== undefined) refire = `，之后每${s.refireHours}小时`
+    const quiet = s.quietHours ? `，${s.quietHours.start}:00-${s.quietHours.end}:00 安静` : ''
+    return `空闲${s.idleHours}小时触发${refire}${quiet}`
   }
   const h = s.hour === undefined ? '*' : String(s.hour).padStart(2, '0')
   const m = s.minute === undefined ? '*' : String(s.minute).padStart(2, '0')

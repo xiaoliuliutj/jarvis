@@ -20,7 +20,7 @@ import path from 'path'
 import { ROOT, PC_MAIN_ID } from '../core/paths.mjs'
 import { loadBridgeConfig } from '../core/config.mjs'
 import { resolvePrincipal, listPrincipals, getPrimaryAccount } from '../core/principals.mjs'
-import { ensureUser, getCurrentSession, readPersona } from '../core/user-store.mjs'
+import { ensureUser, getCurrentSession, readPersona, lastUserMessageAt } from '../core/user-store.mjs'
 import { generateInterimNotice } from '../core/interim-notice.mjs'
 import { runTurn } from '../core/conversation.mjs'
 import { Scheduler } from '../core/scheduler.mjs'
@@ -40,9 +40,20 @@ const HOST = '127.0.0.1'
 // 非主会话：超过这个时间还没最终回复，先发一句「正在处理」提示
 const INTERIM_NOTICE_DELAY_MS = 10_000
 
-// 用户最后互动时间（用于空闲触发任务，例如「无聊刷B站」）；Bridge 启动时间作为初始基线
+// 用户最后互动时间（用于空闲触发任务，例如「长时间没见就无聊」）；Bridge 启动时间作为初始基线
 const bridgeStartedAt = Date.now()
 const lastActivity = new Map()
+
+function getLastActivityFor(principalId) {
+  if (lastActivity.has(principalId)) return lastActivity.get(principalId)
+  // Bridge 刚重启、内存里没有：从会话记录里恢复最后一条用户消息时间
+  const fromSessions = lastUserMessageAt(principalId)
+  if (fromSessions) {
+    lastActivity.set(principalId, fromSessions)
+    return fromSessions
+  }
+  return bridgeStartedAt
+}
 
 // ── WebSocket 广播 ────────────────────────────────────────────────────────────
 
@@ -267,7 +278,7 @@ const cron = startCronManager({
   principalFilter: (p) => p.id !== 'pc-main',
   onEvent: (event) => broadcast(event),
   enqueue: (principalId, fn) => scheduler.enqueue(principalId, fn),
-  getLastActivity: (principalId) => lastActivity.get(principalId) ?? bridgeStartedAt,
+  getLastActivity: getLastActivityFor,
   runTask: (principal, task) => runTurn({
     principalId: principal.id,
     prompt: task.prompt,

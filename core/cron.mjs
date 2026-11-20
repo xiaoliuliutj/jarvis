@@ -23,22 +23,44 @@ export function matchesNow(schedule, now = new Date()) {
 }
 
 /**
- * 空闲触发判断：用户「空闲」超过 idleHours 后触发。
- * 触发一次后，需再等 refireHours（默认等于 idleHours）才允许下次触发；
- * 用户一有互动（lastActivity 更新），周期重新开始。
- *
- * @param {object} schedule { idleHours, refireHours? }
- * @param {{now: number, lastActivity: number|null|undefined, lastFired: number|undefined}} ctx
+ * 是否处于安静时段（不打扰）。支持跨午夜，如 { start: 22, end: 8 }。
  */
-export function isIdleDue(schedule, { now, lastActivity, lastFired }) {
+export function inQuietHours(quiet, date = new Date()) {
+  if (!quiet || quiet.start === undefined || quiet.end === undefined) return false
+  const h = date.getHours()
+  if (quiet.start === quiet.end) return false
+  if (quiet.start < quiet.end) return h >= quiet.start && h < quiet.end
+  return h >= quiet.start || h < quiet.end
+}
+
+/**
+ * 空闲触发判断：用户「空闲」超过 idleHours 后触发。
+ * - quietHours 安静时段内一律不触发
+ * - 触发后需等到 nextFireAt（随机间隔，见 nextIdleFireAt）才允许再次触发
+ * - 用户一有互动（lastActivity 更新），判定的空闲时长自动归零
+ *
+ * @param {object} schedule { idleHours, quietHours? }
+ * @param {{now: number, lastActivity: number|null|undefined, nextFireAt?: number}} ctx
+ */
+export function isIdleDue(schedule, { now, lastActivity, nextFireAt }) {
   if (!schedule || !schedule.idleHours) return false
   if (!lastActivity) return false
   const idleMs = schedule.idleHours * 3600_000
   if (now - lastActivity < idleMs) return false
-  if (!lastFired) return true   // 首次触发：够 idleHours 即可
-  const refireMs = (schedule.refireHours ?? schedule.idleHours) * 3600_000
-  const anchor = Math.max(lastActivity, lastFired)
-  return now - anchor >= refireMs
+  if (schedule.quietHours && inQuietHours(schedule.quietHours, new Date(now))) return false
+  if (nextFireAt && now < nextFireAt) return false
+  return true
+}
+
+/**
+ * 计算下一次允许触发的时间：在 refireHoursMin ~ refireHoursMax 之间随机。
+ * 未配置随机区间时回退 refireHours / idleHours（固定间隔）。
+ */
+export function nextIdleFireAt(schedule, now = Date.now()) {
+  const min = schedule.refireHoursMin ?? schedule.refireHours ?? schedule.idleHours
+  const max = schedule.refireHoursMax ?? min
+  const hours = min + Math.random() * Math.max(0, max - min)
+  return now + hours * 3600_000
 }
 
 /**
@@ -59,7 +81,7 @@ export function startCronManager({
   getLastActivity = () => null,
 }) {
   const fired = new Set()
-  const lastIdleFired = new Map()
+  const idleNextFire = new Map()
   let lastMinuteKey = ''
 
   async function tick() {
@@ -84,9 +106,9 @@ export function startCronManager({
           due = isIdleDue(task.schedule, {
             now: Date.now(),
             lastActivity: getLastActivity(principal.id),
-            lastFired: lastIdleFired.get(key),
+            nextFireAt: idleNextFire.get(key),
           })
-          if (due) lastIdleFired.set(key, Date.now())
+          if (due) idleNextFire.set(key, nextIdleFireAt(task.schedule, Date.now()))
         } else {
           if (!matchesNow(task.schedule, now)) continue
           if (fired.has(key)) continue
