@@ -301,12 +301,32 @@ const schedule = startScheduleManager({
   deliver: async (principal, item) => {
     const account = getPrimaryAccount(principal)
     if (!account) throw new Error('没有可发送的账号')
+
+    // 用当前用户的人设生成提醒文案；模型不可用时退回模板
+    let text = formatScheduleReminder(item)
+    try {
+      const result = await runTurn({
+        principalId: principal.id,
+        prompt: `【日程提醒】现在是用户设置的日程提醒时间，请用符合你人设的语气给用户发一条简短的提醒。\n日程：${item.title}\n${item.notes ? `备注：${item.notes}\n` : ''}要求：口语化、简短（1-3 句）、保持你的人设，不用 Markdown。`,
+        source: 'cron',
+        emit: (event) => broadcast({
+          ...event,
+          principalId: principal.id,
+          sourceType: account.sourceType,
+          displayName: principal.displayName,
+        }),
+      })
+      if (result?.text && !result.isError) text = result.text
+    } catch (err) {
+      logWarn('schedule.persona.fail', err.message, { principalId: principal.id })
+    }
+
     await sendText(
       principal.id,
       account.sourceType,
       account.accountId,
       account.externalUserId,
-      formatScheduleReminder(item)
+      text
     )
     logInfo('schedule.remind', item.title || '', { principalId: principal.id })
   },
