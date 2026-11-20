@@ -136,5 +136,19 @@
     "enabled": true,
     "createdAt": "2026-11-19T16:40:00.000Z",
     "version": "1.1.0"
+  },
+  {
+    "name": "festival_query",
+    "description": "查询某一天世界各地的节日和纪念日（中国及 20 个主要国家的公共假日 + 常见国际节日/纪念日）",
+    "enabled": true,
+    "createdAt": "2026-11-20T11:54:06.404Z",
+    "version": "1.0.0"
+  },
+  {
+    "name": "my_location",
+    "description": "自动检测用户当前位置：优先 Windows 系统精确定位，不可用时退回 IP 归属地（城市级），结果缓存 10 分钟",
+    "enabled": true,
+    "createdAt": "2026-11-20T11:54:06.404Z",
+    "version": "1.0.0"
   }
 ]
