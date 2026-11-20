@@ -25,6 +25,7 @@ import { spawn } from 'child_process'
 import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'crypto'
 import QRCode from 'qrcode'
 import { CREDENTIALS_FILE, BRIDGE_CONFIG_FILE } from '../../core/paths.mjs'
+import { logWarn, logError } from '../../core/logger.mjs'
 
 export const id = 'weixin'
 
@@ -531,8 +532,9 @@ export async function send(to, text, opts = {}) {
   const contextToken = contextTokenCache.get(`${accountKey}:${to}`) ?? ''
   const clientId = randomBytes(8).toString('hex')
 
+  let resp
   try {
-    const resp = await ilinkPost(baseUrl, '/ilink/bot/sendmessage', {
+    resp = await ilinkPost(baseUrl, '/ilink/bot/sendmessage', {
       msg: {
         from_user_id: '',
         to_user_id: to,
@@ -544,17 +546,26 @@ export async function send(to, text, opts = {}) {
       },
       base_info: { channel_version: '1' },
     }, 15000, accountKey)
-
-    if (resp.message_id) {
-      console.log('[weixin] sendmessage ok, message_id:', resp.message_id)
-    } else if (resp.errcode && resp.errcode !== 0) {
-      console.error('[weixin] sendmessage failed:', resp.errcode, resp.errmsg)
-    } else {
-      console.warn('[weixin] sendmessage unexpected response:', JSON.stringify(resp).slice(0, 200))
-    }
   } catch (err) {
-    console.error('[weixin] send error:', err.message)
+    // 网络/HTTP 失败：必须抛错，否则 Bridge 会把「没发出去」当成已发送
+    logError('weixin.send.fail', err.message, { accountKey })
+    throw new Error(`sendmessage 网络失败: ${err.message}`)
   }
+
+  if (resp.message_id) {
+    console.log('[weixin] sendmessage ok, message_id:', resp.message_id)
+    return resp
+  }
+
+  if (resp.errcode && resp.errcode !== 0) {
+    const detail = `errcode=${resp.errcode}${resp.errmsg ? ` ${resp.errmsg}` : ''}`
+    logError('weixin.send.fail', detail, { accountKey, errcode: resp.errcode })
+    throw new Error(`sendmessage 失败: ${detail}`)
+  }
+
+  // 没有 message_id 也没有明确错误码：无法确认是否送达，只告警不抛错，避免重复发送
+  logWarn('weixin.send.unexpected', JSON.stringify(resp).slice(0, 300), { accountKey })
+  console.warn('[weixin] sendmessage unexpected response:', JSON.stringify(resp).slice(0, 200))
 }
 
 export function stop() {
