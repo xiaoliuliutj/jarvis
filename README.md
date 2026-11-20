@@ -39,13 +39,12 @@ config/                 实际配置（gitignore，只保留 *.example.* 模板�
 
 core/                   通用后端：paths / config / principals / user-store /
                         prompt / permissions / tools / conversation / scheduler / cron / adapters
-agents/                 Claude Agent SDK 适配层（agent.mjs）、系统工具 tools/、
-                        历史全局 memory/ 和 sessions/（停用，gitignore）
+agents/                 Claude Agent SDK 适配层（agent.mjs）、系统工具 tools/
 bridge/                 Bridge Server、adapter、启动脚本
 electron/               Electron 主进程 / preload
 src/                    React 前端
-scripts/                dev supervisor、重启前检查、迁移、图标生成
-docs/                   当前扩展计划；archive/ 是历史设计
+scripts/                dev supervisor、重启前检查、图标生成
+docs/legacy/            历史设计文档与过时的扩展计划（仅追溯用）
 userdata/               每用户数据 + 用户工具（gitignore）
   pc-main/              persona、sessions、workspace、memory、crons、schedules
   <principalId>/        外部用户，结构相同

@@ -22,7 +22,6 @@ userdata/
 bridge/config.json
 agents/config.json
 agents/memory/
-agents/sessions/
 agents/tools/_reload.signal
 **/*.jsonl
 
@@ -30,13 +29,12 @@ agents/tools/_reload.signal
 .env
 .env.*
 
-# ── 参考资料（第三方书籍） ────────────────────────────
-deep-dive-claude-code-main/
-taste-skill-main/
-
 # ── 系统 / 编辑器 ─────────────────────────────────────
 .DS_Store
 Thumbs.db
 desktop.ini
 .idea/
 *.swp
+
+# 引用的外部参考书（42MB，不入库）
+docs/legacy/deep-dive-claude-code/
