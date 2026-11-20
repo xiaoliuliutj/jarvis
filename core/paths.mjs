@@ -6,7 +6,7 @@
  *   userdata/         每个 principal 的会话/记忆/工作区/人设/cron，不入库
  *   userdata/tools/   用户创建的工具，所有用户共享加载
  *   agents/tools/     系统工具，所有用户可用，只有 maintainer/owner 可改
- *   agents/memory|sessions/  历史遗留的全局记忆/会话，已停用但保留
+ *   agents/memory/    历史遗留的全局记忆，已停用但保留（不入库）
  */
 
 import path from 'path'
