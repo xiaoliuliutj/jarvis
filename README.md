@@ -44,6 +44,7 @@ bridge/                 Bridge Server、adapter、启动脚本
 electron/               Electron 主进程 / preload
 src/                    React 前端
 scripts/                dev supervisor、重启前检查、图标生成
+app/                    安卓 App Demo：移动端页面（web/）+ WebView 壳（android/）
 docs/legacy/            历史设计文档与过时的扩展计划（仅追溯用）
 userdata/               每用户数据 + 用户工具（gitignore）
   pc-main/              persona、sessions、workspace、memory、crons、schedules
