@@ -29,7 +29,7 @@ import { startScheduleManager } from '../core/schedule.mjs'
 import { formatScheduleReminder } from '../core/schedule-store.mjs'
 import { handleIncomingOnboarding } from '../core/onboarding.mjs'
 import { loadAdapters } from '../core/adapters.mjs'
-import { ensureFileDirs, prepareInbound, listOutboxFiles, markOutboxSent, isImageFile } from '../core/files.mjs'
+import { ensureFileDirs, prepareInbound, listOutboxFiles, takeOutboxBatch, markOutboxSent, isImageFile } from '../core/files.mjs'
 import { logInfo, logWarn, logError } from '../core/logger.mjs'
 
 const config = loadBridgeConfig()
@@ -39,6 +39,10 @@ const HOST = '127.0.0.1'
 
 // 非主会话：超过这个时间还没最终回复，先发一句「正在处理」提示
 const INTERIM_NOTICE_DELAY_MS = 10_000
+
+// 单回合最多发送的文件数：微信 iLink 对单次入站消息的回复数量有限制，
+// 一次发太多会触发 ret:-2 prepare failed，多出的文件留到下一回合。
+const MAX_OUTBOX_FILES_PER_TURN = 6
 
 // 用户最后互动时间（用于空闲触发任务，例如「长时间没见就无聊」）；Bridge 启动时间作为初始基线
 const bridgeStartedAt = Date.now()
@@ -119,7 +123,17 @@ async function deliverOutbox(principalId, sourceType, accountId, externalUserId)
   }
   if (!files.length) return
 
-  for (const f of files) {
+  // 限制单回合发送数量，避免触发微信回复条数限制（ret:-2 prepare failed）
+  const { batch, remaining } = takeOutboxBatch(files, MAX_OUTBOX_FILES_PER_TURN)
+  if (remaining > 0) {
+    logWarn('outbox.defer', `本轮发送 ${batch.length} 个，剩余 ${remaining} 个留待下一回合`, {
+      principalId,
+      total: files.length,
+    })
+    broadcast({ type: 'outbox_defer', principalId, sent: batch.length, remaining })
+  }
+
+  for (const f of batch) {
     try {
       // 图片走图片消息通道（微信里直接显示为图片），其余走文件通道
       const useImage = isImageFile(f.name) && typeof adapter.sendImage === 'function'
