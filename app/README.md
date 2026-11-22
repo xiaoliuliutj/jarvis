@@ -54,9 +54,12 @@ ConversationService / 工具链 / 记忆 / 工作区
 |---|---|---|
 | GET | `/` | 移动端聊天页 |
 | GET | `/health` | 健康检查（免鉴权） |
+| GET | `/api/history` | 读取当前会话最近 80 条文本消息（与微信共用会话） |
 | POST | `/api/message` | `{ text, attachments?: [{ fileName, kind, dataBase64 }] }` |
 | GET | `/api/file/:id` | 下载 Jarvis 发来的文件（暂存 7 天 / 最多 100 个） |
 | WS | `/ws?token=&device=` | 接收 `assistant` / `file` / `hello` 事件 |
+
+提醒投递：cron / 日程提醒会优先投递到「在线」的 App 设备；App 没有连接时自动回退到微信。
 
 限制：单条消息 20000 字；单附件 8MB、最多 3 个；每设备 30 条/分钟；WS 离线时内存队列保留最近 50 条。
 
@@ -79,7 +82,10 @@ ConversationService / 工具链 / 记忆 / 工作区
 ## 已知限制 / 下一步
 
 - 无系统级推送：切到后台后收不到通知（需要 APNs/厂商推送或长连接保活）。
-- 会话历史只存在手机本地（localStorage）；跨设备/与微信不同步。
-- 只映射了 owner；多用户（家人）需要增加 principal 和登录体系。
+- 历史消息会从服务端读取最近 80 条（与微信同一会话），但文件/图片气泡不回放。
+- 只映射了 owner；多用户（家人）需要增加 principal 和按设备的独立 token。
 - 暂不支持语音/视频消息（可复用现有文件通道逐步加）。
 - 建议路线：PWA 验证 → 原生 UI（可选）→ 推送 → 隧道与 HTTPS → 多用户。
+
+> 多用户方案：给每个设备生成独立 token（存 `userdata/app-adapter/`），token → deviceId → principal；
+> 避免共用 token 时有人冒充 owner。当前 Demo 仍是单 token，只适合本人使用。

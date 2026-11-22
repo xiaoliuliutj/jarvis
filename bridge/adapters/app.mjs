@@ -29,6 +29,8 @@ import express from 'express'
 import { WebSocketServer } from 'ws'
 import { ROOT } from '../../core/paths.mjs'
 import { logInfo, logWarn, logError } from '../../core/logger.mjs'
+import { resolvePrincipal } from '../../core/principals.mjs'
+import { getCurrentSession, readMessages } from '../../core/user-store.mjs'
 
 export const id = 'app'
 
@@ -180,6 +182,32 @@ function buildServer() {
 
   app.get('/health', (_req, res) => res.json({ ok: true, adapter: 'app' }))
 
+  // 历史消息：与微信共用同一个 principal / 当前会话
+  app.get('/api/history', auth, (req, res) => {
+    const deviceId = getDevice(req)
+    try {
+      const principal = resolvePrincipal({
+        sourceType: 'app',
+        accountId: 'default',
+        externalUserId: deviceId,
+      })
+      const session = getCurrentSession(principal.id)
+      if (!session) return res.json({ ok: true, messages: [] })
+      const messages = readMessages(principal.id, session.sessionId)
+        .filter(r => (r.type === 'user' || r.type === 'assistant') && typeof r.text === 'string' && r.text.trim())
+        .slice(-80)
+        .map(r => ({
+          role: r.type === 'user' ? 'user' : 'bot',
+          text: r.text,
+          ts: r.timestamp || '',
+        }))
+      res.json({ ok: true, messages })
+    } catch (err) {
+      logError('app.history.fail', err.message, { deviceId })
+      res.status(500).json({ ok: false, error: '读取历史消息失败' })
+    }
+  })
+
   app.post('/api/message', auth, (req, res) => {
     const deviceId = getDevice(req)
     if (!checkRate(deviceId)) {
@@ -315,6 +343,12 @@ export async function start(onMessage) {
   console.log(`[app] adapter listening on ${host}:${port}`)
   console.log(`[app] 访问令牌文件: ${TOKEN_FILE}`)
   logInfo('app.adapter.start', '', { host, port })
+}
+
+/** 该设备是否有活跃的 WebSocket（用于提醒优先投递到 App） */
+export function isOnline(externalUserId) {
+  const set = clients.get(sanitizeDevice(externalUserId))
+  return !!set && [...set].some(ws => ws.readyState === 1)
 }
 
 export async function send(externalUserId, text, opts = {}) {

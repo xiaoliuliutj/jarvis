@@ -388,6 +388,21 @@
   }
 
   // ── 启动 ────────────────────────────────────────────────────────────────
+  async function loadServerHistory() {
+    if (!state.token) return
+    try {
+      const res = await fetch(`${state.url}/api/history?device=${encodeURIComponent(state.device)}`, {
+        headers: { 'Authorization': `Bearer ${state.token}` },
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      if (Array.isArray(data.messages) && data.messages.length) {
+        saveHistory(data.messages.slice(-MAX_HISTORY))
+        renderAll()
+      }
+    } catch {}
+  }
+
   initConfig()
   renderAll()
   if (!state.token) {
@@ -395,5 +410,6 @@
     openSetup('')
   } else {
     connect()
+    loadServerHistory()
   }
 })()
