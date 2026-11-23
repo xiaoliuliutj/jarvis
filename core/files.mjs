@@ -195,6 +195,19 @@ export function listOutboxFiles(principalId) {
     .sort((a, b) => a.mtimeMs - b.mtimeMs)
 }
 
+/**
+ * 单回合文件发送批次限制。
+ *
+ * 微信 iLink 对单次入站消息的回复数量有限制（约 10 条），
+ * 一次发送太多文件会触发 ret:-2 prepare failed。
+ * 多出的文件留在 outbox，下一回合继续发送。
+ */
+export function takeOutboxBatch(files = [], limit = 6) {
+  const max = Math.max(0, Number(limit) || 0)
+  const batch = files.slice(0, max)
+  return { batch, remaining: files.length - batch.length }
+}
+
 /** 发送成功后归档到 outbox/sent/（顺手清理过旧的归档） */
 export function markOutboxSent(principalId, filePath) {
   ensureDir(sentDir(principalId))
