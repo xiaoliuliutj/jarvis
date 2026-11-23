@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#123b2f" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" href="/icon.png" />
+  <link rel="stylesheet" href="/style.css" />
+  <title>Jarvis</title>
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <div class="brand">
+        <span class="dot" id="statusDot"></span>
+        <span class="title">Jarvis</span>
+        <span class="status-text" id="statusText">连接中…</span>
+      </div>
+      <button id="settingsBtn" class="icon-btn" aria-label="设置">⚙</button>
+    </header>
+
+    <main id="messages" aria-live="polite"></main>
+
+    <footer id="composer">
+      <button id="attachBtn" class="icon-btn" aria-label="附件">📎</button>
+      <input type="file" id="fileInput" multiple hidden />
+      <div id="attachPreview" class="attach-preview"></div>
+      <textarea id="input" rows="1" placeholder="和 Jarvis 说点什么喵～"></textarea>
+      <button id="sendBtn" class="send-btn" aria-label="发送">发送</button>
+    </footer>
+  </div>
+
+  <div id="setup" class="setup hidden">
+    <div class="setup-card">
+      <h1>连接 Jarvis</h1>
+      <p class="hint">在电脑上启动 Bridge（App adapter）后，填入访问地址和令牌。</p>
+      <label>服务器地址
+        <input id="setupUrl" type="url" placeholder="http://192.168.x.x:17779" />
+      </label>
+      <label>访问令牌
+        <input id="setupToken" type="password" placeholder="userdata/app-adapter/token.txt" />
+      </label>
+      <label>设备标识
+        <input id="setupDevice" type="text" placeholder="owner" />
+      </label>
+      <button id="setupSave" class="primary-btn">保存并连接</button>
+      <p class="hint" id="setupError"></p>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

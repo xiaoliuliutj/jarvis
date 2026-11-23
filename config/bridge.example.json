@@ -10,6 +10,15 @@
       "accounts": [
         "default"
       ]
+    },
+    "app": {
+      "enabled": false,
+      "accounts": [
+        "default"
+      ],
+      "port": 17779,
+      "host": "0.0.0.0",
+      "maxBodyMb": 40
     }
   }
 }

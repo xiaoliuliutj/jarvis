@@ -62,10 +62,16 @@ function makePrincipalId(sourceType, externalUserId) {
  */
 export function resolvePrincipal({ sourceType, accountId = 'default', externalUserId }) {
   const registry = readRegistry()
+  const matchesAccount = (account) => account
+    && account.sourceType === sourceType
+    && (account.accountId || 'default') === accountId
+    && account.externalUserId === externalUserId
+
+  // 1) 优先匹配 principal 的顶层字段（历史配置）
+  // 2) 再匹配 accounts 数组（同一用户多渠道：微信 / App / 未来其他端）
   const existing = Object.values(registry).find(
-    p => p.sourceType === sourceType
-      && (p.accountId || 'default') === accountId
-      && p.externalUserId === externalUserId
+    p => matchesAccount({ sourceType: p.sourceType, accountId: p.accountId, externalUserId: p.externalUserId })
+      || (Array.isArray(p.accounts) && p.accounts.some(matchesAccount))
   )
   if (existing) return { ...normalize(existing), isNew: false }
 

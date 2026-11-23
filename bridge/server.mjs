@@ -27,6 +27,7 @@ import { Scheduler } from '../core/scheduler.mjs'
 import { startCronManager } from '../core/cron.mjs'
 import { startScheduleManager } from '../core/schedule.mjs'
 import { formatScheduleReminder } from '../core/schedule-store.mjs'
+import { orderDeliveryAccounts } from '../core/delivery.mjs'
 import { handleIncomingOnboarding } from '../core/onboarding.mjs'
 import { loadAdapters } from '../core/adapters.mjs'
 import { ensureFileDirs, prepareInbound, listOutboxFiles, markOutboxSent, isImageFile } from '../core/files.mjs'
@@ -133,6 +134,42 @@ async function deliverOutbox(principalId, sourceType, accountId, externalUserId)
       broadcast({ type: 'outbound_file', principalId, fileName: f.name, ok: false, error: err.message })
     }
   }
+}
+
+/**
+ * 选择一个可用的投递账号：App 在线时优先 App，否则回退到其他渠道（微信）。
+ */
+function pickDeliveryAccount(principal) {
+  for (const account of orderDeliveryAccounts(principal)) {
+    const adapter = adapters[account.sourceType]
+    if (!adapter?.send) continue
+    if (account.sourceType === 'app' && typeof adapter.isOnline === 'function' && !adapter.isOnline(account.externalUserId)) {
+      continue
+    }
+    return account
+  }
+  return null
+}
+
+/**
+ * 按「App 优先、其他渠道兜底」发送文本，返回实际使用的账号。
+ * 某个渠道发送失败会自动尝试下一个渠道。
+ */
+async function sendToPrincipal(principal, text) {
+  for (const account of orderDeliveryAccounts(principal)) {
+    const adapter = adapters[account.sourceType]
+    if (!adapter?.send) continue
+    if (account.sourceType === 'app' && typeof adapter.isOnline === 'function' && !adapter.isOnline(account.externalUserId)) {
+      continue
+    }
+    try {
+      await adapter.send(account.externalUserId, text, { accountId: account.accountId })
+      return account
+    } catch (err) {
+      logWarn('deliver.fail', err.message, { principalId: principal.id, sourceType: account.sourceType })
+    }
+  }
+  return null
 }
 
 export function routeIncoming({
@@ -291,20 +328,18 @@ const cron = startCronManager({
   }),
   deliver: async (principal, task, result) => {
     if (result.isError) return
-    const account = getPrimaryAccount(principal)
-    if (!account) {
-      logWarn('cron.no-account', '', { principalId: principal.id, taskId: task.id })
-      return
-    }
     // [SILENT]：夜间等场景下不打扰用户（结果一般已写入报告文件）
     if (!result.text || result.text.includes('[SILENT]')) {
       logInfo('cron.silent', '', { principalId: principal.id, taskId: task.id })
       return
     }
-    const adapter = adapters[account.sourceType]
-    if (!adapter) return
-    await adapter.send(account.externalUserId, result.text, { accountId: account.accountId })
-    logInfo('cron.deliver', '', { principalId: principal.id, taskId: task.id })
+    // App 在线时优先发到 App，否则回退到微信等主账号
+    const account = await sendToPrincipal(principal, result.text)
+    if (!account) {
+      logWarn('cron.no-account', '', { principalId: principal.id, taskId: task.id })
+      return
+    }
+    logInfo('cron.deliver', '', { principalId: principal.id, taskId: task.id, sourceType: account.sourceType })
     await deliverOutbox(principal.id, account.sourceType, account.accountId, account.externalUserId)
     broadcast({ type: 'cron_result', principalId: principal.id, taskId: task.id, text: result.text, sessionId: result.sessionId })
   },
@@ -316,8 +351,8 @@ const schedule = startScheduleManager({
   principalFilter: (p) => p.id !== 'pc-main',
   enqueue: (principalId, fn) => scheduler.enqueue(principalId, fn),
   deliver: async (principal, item) => {
-    const account = getPrimaryAccount(principal)
-    if (!account) throw new Error('没有可发送的账号')
+    const target = pickDeliveryAccount(principal) || getPrimaryAccount(principal)
+    if (!target) throw new Error('没有可发送的账号')
 
     // 用当前用户的人设生成提醒文案；模型不可用时退回模板
     let text = formatScheduleReminder(item)
@@ -329,7 +364,7 @@ const schedule = startScheduleManager({
         emit: (event) => broadcast({
           ...event,
           principalId: principal.id,
-          sourceType: account.sourceType,
+          sourceType: target.sourceType,
           displayName: principal.displayName,
         }),
       })
@@ -338,14 +373,10 @@ const schedule = startScheduleManager({
       logWarn('schedule.persona.fail', err.message, { principalId: principal.id })
     }
 
-    await sendText(
-      principal.id,
-      account.sourceType,
-      account.accountId,
-      account.externalUserId,
-      text
-    )
-    logInfo('schedule.remind', item.title || '', { principalId: principal.id })
+    // App 在线时优先发到 App，否则回退到微信等主账号
+    const sent = await sendToPrincipal(principal, text)
+    if (!sent) throw new Error('提醒发送失败：没有可用渠道')
+    logInfo('schedule.remind', item.title || '', { principalId: principal.id, sourceType: sent.sourceType })
   },
   onEvent: (event) => {
     if (event.type === 'schedule_reminder') {

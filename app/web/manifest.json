@@ -1,0 +1,19 @@
+{
+  "name": "Jarvis",
+  "short_name": "Jarvis",
+  "description": "Jarvis 手机端（安卓 Demo）",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f5ef",
+  "theme_color": "#123b2f",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
