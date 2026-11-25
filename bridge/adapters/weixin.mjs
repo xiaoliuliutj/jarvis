@@ -557,9 +557,11 @@ export async function send(to, text, opts = {}) {
     return resp
   }
 
-  if (resp.errcode && resp.errcode !== 0) {
-    const detail = `errcode=${resp.errcode}${resp.errmsg ? ` ${resp.errmsg}` : ''}`
-    logError('weixin.send.fail', detail, { accountKey, errcode: resp.errcode })
+  // iLink 的回复错误码字段是 ret（不是 errcode），两种都兼容
+  const failureCode = resp.errcode ?? resp.ret
+  if (failureCode && failureCode !== 0) {
+    const detail = `code=${failureCode}${resp.errmsg ? ` ${resp.errmsg}` : ''}`
+    logError('weixin.send.fail', detail, { accountKey, code: failureCode })
     throw new Error(`sendmessage 失败: ${detail}`)
   }
 
