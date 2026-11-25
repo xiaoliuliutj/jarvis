@@ -103,7 +103,7 @@
   function openSetup(error) {
     el.setupUrl.value = state.url || location.origin
     el.setupToken.value = state.token || ''
-    el.setupOwnerToken.value = state.ownerToken || ''
+    if (el.setupOwnerToken) el.setupOwnerToken.value = state.ownerToken || ''
     el.setupDevice.value = state.device || 'owner'
     el.setupError.textContent = error || ''
     el.setup.classList.remove('hidden')
@@ -117,7 +117,7 @@
   el.setupSave.addEventListener('click', () => {
     const url = (el.setupUrl.value || '').trim().replace(/\/+$/, '')
     const token = (el.setupToken.value || '').trim()
-    const ownerToken = (el.setupOwnerToken.value || '').trim()
+    const ownerToken = el.setupOwnerToken ? (el.setupOwnerToken.value || '').trim() : ''
     const device = (el.setupDevice.value || 'owner').trim()
     if (!/^https?:\/\//i.test(url)) { el.setupError.textContent = '地址要以 http:// 或 https:// 开头'; return }
     if (!token) { el.setupError.textContent = '请填写访问令牌'; return }
@@ -533,18 +533,56 @@
     } else {
       el.settingsToken.textContent = `${state.token.slice(0, 4)}****${state.token.slice(-4)}`
     }
-    if (!state.ownerToken) {
-      el.settingsOwnerToken.textContent = '未配置'
-    } else if (state.ownerToken.length <= 8) {
-      el.settingsOwnerToken.textContent = '已配置'
-    } else {
-      el.settingsOwnerToken.textContent = `${state.ownerToken.slice(0, 4)}****${state.ownerToken.slice(-4)}`
+    if (el.settingsOwnerToken) {
+      if (!state.ownerToken) {
+        el.settingsOwnerToken.textContent = '未配置'
+      } else if (state.ownerToken.length <= 8) {
+        el.settingsOwnerToken.textContent = '已配置'
+      } else {
+        el.settingsOwnerToken.textContent = `${state.ownerToken.slice(0, 4)}****${state.ownerToken.slice(-4)}`
+      }
     }
     el.settingsStatus.textContent = el.status.textContent || '—'
   }
 
+  // ── 兼容旧页面缓存：缺 owner 字段时动态补上 ─────────────────────────────
+  function ensureOwnerFields() {
+    if (!el.setupOwnerToken) {
+      const card = el.setup?.querySelector('.setup-card')
+      const save = el.setupSave
+      if (card && save) {
+        const label = document.createElement('label')
+        label.textContent = 'Owner 令牌（可选）'
+        const input = document.createElement('input')
+        input.id = 'setupOwnerToken'
+        input.type = 'password'
+        input.placeholder = '填写后获得 owner 权限'
+        label.appendChild(input)
+        card.insertBefore(label, save)
+        el.setupOwnerToken = input
+      }
+    }
+    if (!el.settingsOwnerToken) {
+      const card = document.querySelector('#view-settings .settings-card')
+      if (card) {
+        const row = document.createElement('div')
+        row.className = 'settings-row'
+        const label = document.createElement('span')
+        label.textContent = 'Owner 令牌'
+        const value = document.createElement('span')
+        value.id = 'settingsOwnerToken'
+        value.textContent = '—'
+        row.appendChild(label)
+        row.appendChild(value)
+        card.appendChild(row)
+        el.settingsOwnerToken = value
+      }
+    }
+  }
+
   // ── 启动 ────────────────────────────────────────────────────────────────
   initConfig()
+  ensureOwnerFields()
   renderAll()
   renderSettings()
   showTab('chat')
