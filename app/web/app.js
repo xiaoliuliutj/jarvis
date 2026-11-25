@@ -31,6 +31,7 @@
     toolQuery: '',
     toolScope: 'all',
     toolDetail: null,
+    expandedToolId: null,
     models: [],
     settings: null,
     me: null,
@@ -678,6 +679,10 @@
       if (state.toolScope === 'my') return tool.source === 'user' || tool.enabled
       return true
     })
+    if (state.expandedToolId && !tools.some(tool => tool.id === state.expandedToolId)) {
+      state.expandedToolId = null
+      state.toolDetail = null
+    }
     el.toolCount.textContent = `${tools.length} 个`
     el.toolList.textContent = ''
     if (!tools.length) {
@@ -687,18 +692,23 @@
       el.toolList.appendChild(empty)
       return
     }
-    for (const tool of tools) el.toolList.appendChild(buildToolCard(tool))
+    for (const tool of tools) el.toolList.appendChild(buildToolItem(tool))
   }
 
-  function buildToolCard(tool) {
-    const card = document.createElement('div')
-    card.className = 'tool-card' + (tool.enabled ? '' : ' disabled')
-    card.addEventListener('click', () => openTool(tool.id))
+  function buildToolItem(tool) {
+    const item = document.createElement('div')
+    item.className = 'tool-item'
+      + (state.expandedToolId === tool.id ? ' expanded' : '')
+      + (tool.enabled ? '' : ' disabled')
+
+    const row = document.createElement('div')
+    row.className = 'tool-row'
+    row.addEventListener('click', () => toggleToolExpand(tool.id))
 
     const icon = document.createElement('div')
     icon.className = 'tool-icon'
     icon.textContent = tool.icon || '🧰'
-    card.appendChild(icon)
+    row.appendChild(icon)
 
     const info = document.createElement('div')
     info.className = 'tool-info'
@@ -711,7 +721,7 @@
     info.appendChild(nameLine)
 
     const desc = document.createElement('div')
-    desc.className = 'tool-desc'
+    desc.className = 'tool-desc tool-desc-collapsed'
     desc.textContent = tool.description || '无描述'
     info.appendChild(desc)
 
@@ -722,7 +732,7 @@
     if (!tool.available) meta.appendChild(badge('待接入', 'off'))
     if (!tool.enabled) meta.appendChild(badge('已停用', 'off'))
     info.appendChild(meta)
-    card.appendChild(info)
+    row.appendChild(info)
 
     const toggle = document.createElement('button')
     toggle.className = 'tool-toggle' + (tool.enabled ? ' on' : '')
@@ -735,14 +745,141 @@
           body: { enabled: !tool.enabled },
         })
         tool.enabled = !tool.enabled
+        if (state.toolDetail?.id === tool.id) state.toolDetail.enabled = tool.enabled
         renderTools()
       } catch (err) {
         toast(`操作失败：${err.message}`)
       }
     })
-    card.appendChild(toggle)
+    row.appendChild(toggle)
 
-    return card
+    const chevron = document.createElement('span')
+    chevron.className = 'tool-chevron'
+    chevron.textContent = '⌄'
+    row.appendChild(chevron)
+    item.appendChild(row)
+
+    if (state.expandedToolId === tool.id) {
+      const panel = document.createElement('div')
+      panel.className = 'tool-expanded'
+      panel.addEventListener('click', event => event.stopPropagation())
+      if (!state.toolDetail || state.toolDetail.id !== tool.id) {
+        panel.textContent = '加载配置…'
+      } else {
+        renderToolExpanded(panel, state.toolDetail)
+      }
+      item.appendChild(panel)
+    }
+    return item
+  }
+
+  async function toggleToolExpand(id) {
+    if (state.expandedToolId === id) {
+      state.expandedToolId = null
+      state.toolDetail = null
+      renderTools()
+      return
+    }
+    state.expandedToolId = id
+    state.toolDetail = null
+    renderTools()
+    try {
+      const data = await api(`/api/v1/tools/${encodeURIComponent(id)}`)
+      if (state.expandedToolId !== id) return
+      state.toolDetail = data.tool
+      renderTools()
+    } catch (err) {
+      toast(`工具详情加载失败：${err.message}`)
+      state.expandedToolId = null
+      state.toolDetail = null
+      renderTools()
+    }
+  }
+
+  function renderToolExpanded(panel, tool) {
+    const desc = document.createElement('p')
+    desc.className = 'tool-detail-desc'
+    desc.textContent = tool.description || '无描述'
+    panel.appendChild(desc)
+
+    if (!tool.available) {
+      const note = document.createElement('div')
+      note.className = 'tool-unavailable'
+      note.textContent = '这个工具还处于待接入阶段；可以先保存配置，等原生/外部 SDK 接入后使用。'
+      panel.appendChild(note)
+    }
+
+    const enabledLabel = document.createElement('label')
+    enabledLabel.className = 'check-row'
+    const enabled = document.createElement('input')
+    enabled.type = 'checkbox'
+    enabled.id = `toolEnabled_${tool.id}`
+    enabled.checked = !!tool.enabled
+    enabledLabel.appendChild(enabled)
+    const enabledText = document.createElement('span')
+    enabledText.textContent = '启用此工具'
+    enabledLabel.appendChild(enabledText)
+    panel.appendChild(enabledLabel)
+
+    const fields = Array.isArray(tool.configFields) ? tool.configFields : []
+    if (fields.length) {
+      for (const field of fields) {
+        const wrap = document.createElement('div')
+        wrap.className = 'tool-config-field'
+        const label = document.createElement('label')
+        label.textContent = field.label || field.key
+        const input = document.createElement('input')
+        input.id = `toolCfg_${tool.id}_${field.key}`
+        input.type = field.secret ? 'password' : 'text'
+        input.value = field.secret ? '' : (tool.config?.[field.key] || '')
+        input.placeholder = field.secret
+          ? (tool.hasSecrets?.[field.key] ? '已配置，留空保持不变' : (field.placeholder || '填写密钥'))
+          : (field.placeholder || '')
+        label.appendChild(input)
+        wrap.appendChild(label)
+        panel.appendChild(wrap)
+      }
+    } else {
+      const hint = document.createElement('p')
+      hint.className = 'hint'
+      hint.textContent = '这个工具没有需要配置的字段。'
+      panel.appendChild(hint)
+    }
+
+    const actions = document.createElement('div')
+    actions.className = 'tool-expanded-actions'
+    const save = document.createElement('button')
+    save.className = 'primary-btn'
+    save.textContent = '保存配置'
+    save.addEventListener('click', async event => {
+      event.stopPropagation()
+      const config = {}
+      const secrets = {}
+      for (const field of (tool.configFields || [])) {
+        const input = $(`toolCfg_${tool.id}_${field.key}`)
+        if (!input) continue
+        if (field.secret) {
+          if (input.value) secrets[field.key] = input.value
+        } else {
+          config[field.key] = input.value
+        }
+      }
+      const enabledEl = $(`toolEnabled_${tool.id}`)
+      try {
+        await api(`/api/v1/tools/${encodeURIComponent(tool.id)}`, {
+          method: 'PUT',
+          body: { enabled: !!enabledEl?.checked, config, secrets },
+        })
+        toast(`「${tool.name || tool.id}」配置已保存`)
+        state.expandedToolId = null
+        state.toolDetail = null
+        await loadTools()
+      } catch (err) {
+        toast(`保存失败：${err.message}`)
+      }
+    })
+    actions.appendChild(save)
+    panel.appendChild(actions)
   }
 
   function sourceLabel(source) {

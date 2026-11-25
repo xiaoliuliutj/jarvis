@@ -143,6 +143,9 @@ function matches(tool, query) {
     tool.name,
     tool.description,
     tool.category,
+    tool.source,
+    tool.risk,
+    tool.ownerId || '',
     ...(tool.tags || []),
   ].join(' ').toLowerCase()
   return haystack.includes(q)
