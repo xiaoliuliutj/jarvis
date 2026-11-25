@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=4" />
+  <link rel="stylesheet" href="/style.css?v=5" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -17,92 +17,195 @@
         <span class="title">Jarvis</span>
         <span class="status-text" id="statusText">连接中…</span>
       </div>
-      <span class="header-tag">管理台</span>
+      <div class="top-right">
+        <span id="testChip" class="chip">测试</span>
+        <span id="ownerChip" class="chip owner hidden">Owner</span>
+      </div>
     </header>
 
     <main id="main">
-      <section id="view-chat" class="view">
-        <div id="messages" aria-live="polite"></div>
+      <section id="view-chat" class="view view-chat">
+        <div id="messages" aria-live="polite">
+          <div class="empty-state" id="chatEmpty">和 Jarvis 说点什么喵～</div>
+        </div>
         <footer id="composer">
-          <button id="attachBtn" class="icon-btn" aria-label="附件">📎</button>
-          <input type="file" id="fileInput" multiple hidden />
+          <button id="attachBtn" class="icon-btn" aria-label="附件">＋</button>
+          <input type="file" id="fileInput" multiple accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.zip,.rar,.7z" hidden />
           <div id="attachPreview" class="attach-preview"></div>
           <textarea id="input" rows="1" placeholder="和 Jarvis 说点什么喵～"></textarea>
           <button id="sendBtn" class="send-btn" aria-label="发送">发送</button>
         </footer>
       </section>
 
-      <section id="view-history" class="view hidden">
+      <section id="view-tools" class="view hidden">
         <div class="page-head">
-          <h2>历史消息</h2>
-          <button id="historyRefresh" class="ghost-btn">刷新</button>
+          <h2>工具</h2>
+          <span class="muted" id="toolCount">—</span>
         </div>
-        <div id="historyList" class="history-list"></div>
+        <div class="toolbar">
+          <input id="toolSearch" class="search-input" type="search" placeholder="搜索工具、能力、标签…" />
+          <div class="segmented" id="toolScope">
+            <button data-scope="my">我的</button>
+            <button data-scope="all" class="active">全部</button>
+          </div>
+        </div>
+        <div id="toolList" class="tool-list"></div>
+      </section>
+
+      <section id="view-usage" class="view hidden">
+        <div class="page-head">
+          <h2>用量</h2>
+          <input id="usageMonth" class="month-input" type="month" />
+        </div>
+        <div id="usageCards" class="stat-grid"></div>
+        <div class="section-title">按模型</div>
+        <div id="usageChart" class="usage-chart"></div>
+        <div class="section-title">调用记录</div>
+        <div id="usageRecords" class="record-list"></div>
       </section>
 
       <section id="view-settings" class="view hidden">
         <div class="page-head">
           <h2>设置</h2>
         </div>
-        <div class="settings-card">
-          <div class="settings-row">
-            <span>连接状态</span>
-            <span id="settingsStatus">—</span>
+
+        <div class="settings-section">
+          <div class="section-head">
+            <h3>连接</h3>
+            <button id="editConnection" class="ghost-btn">修改</button>
           </div>
-          <div class="settings-row">
-            <span>服务器</span>
-            <span id="settingsUrl">—</span>
+          <div class="settings-card">
+            <div class="settings-row"><span>状态</span><span id="settingsStatus">—</span></div>
+            <div class="settings-row"><span>服务器</span><span id="settingsUrl">—</span></div>
+            <div class="settings-row"><span>设备</span><span id="settingsDevice">—</span></div>
+            <div class="settings-row"><span>访问令牌</span><span id="settingsToken">—</span></div>
+            <div class="settings-row"><span>Owner 令牌</span><span id="settingsOwnerToken">—</span></div>
           </div>
-          <div class="settings-row">
-            <span>设备标识</span>
-            <span id="settingsDevice">—</span>
-          </div>
-          <div class="settings-row">
-            <span>访问令牌</span>
-            <span id="settingsToken">—</span>
-          </div>
-          <div class="settings-row">
-            <span>Owner 令牌</span>
-            <span id="settingsOwnerToken">—</span>
-          </div>
-        </div>
-        <div class="settings-actions">
-          <button id="editConnection" class="primary-btn">修改连接</button>
           <button id="reconnectBtn" class="ghost-btn wide">重新连接</button>
-          <button id="clearLocalBtn" class="danger-btn">清空本地聊天记录</button>
         </div>
-        <p class="settings-hint">用量统计、配置管理、任务卡和审批会在后续版本接入。</p>
+
+        <div class="settings-section">
+          <div class="section-head">
+            <h3>模型与能力</h3>
+            <button id="addModel" class="ghost-btn">添加模型</button>
+          </div>
+          <p class="hint">每个用户可以配置自己的模型 API；Key 只显示掩码。</p>
+          <div id="modelList" class="model-list"></div>
+        </div>
+
+        <div class="settings-section">
+          <div class="section-head">
+            <h3>设备</h3>
+          </div>
+          <div id="deviceList" class="device-list"></div>
+        </div>
+
+        <div class="settings-section">
+          <div class="section-head">
+            <h3>测试模式</h3>
+          </div>
+          <label class="check-row">
+            <input id="testModeToggle" type="checkbox" />
+            <span>当前 App 仅作测试/备用；正式使用请用微信</span>
+          </label>
+        </div>
+
+        <div class="settings-section">
+          <div class="section-head"><h3>关于</h3></div>
+          <p class="hint">Jarvis App 测试版 · 微信是正常使用主渠道。<br />会话/工具/用量数据按用户隔离。</p>
+        </div>
       </section>
     </main>
 
     <nav id="bottomNav">
-      <button class="nav-btn active" data-tab="chat">聊天</button>
-      <button class="nav-btn" data-tab="history">历史</button>
-      <button class="nav-btn" data-tab="settings">设置</button>
+      <button class="nav-btn active" data-tab="chat"><span>会话</span></button>
+      <button class="nav-btn" data-tab="tools"><span>工具</span></button>
+      <button class="nav-btn" data-tab="usage"><span>用量</span></button>
+      <button class="nav-btn" data-tab="settings"><span>设置</span></button>
     </nav>
   </div>
 
   <div id="setup" class="setup hidden">
     <div class="setup-card">
       <h1>连接 Jarvis</h1>
-      <p class="hint">在电脑上启动 Bridge（App adapter）后，填入访问地址和令牌。</p>
+      <p class="hint">手机先连上 Tailscale，再填入电脑端 Bridge 的 App 地址和访问令牌。Owner 令牌仅测试用。</p>
       <label>服务器地址
-        <input id="setupUrl" type="url" placeholder="http://192.168.x.x:17779" />
+        <input id="setupUrl" type="url" placeholder="http://100.100.142.113:17779" />
       </label>
       <label>访问令牌
         <input id="setupToken" type="password" placeholder="userdata/app-adapter/token.txt" />
       </label>
       <label>Owner 令牌（可选）
-        <input id="setupOwnerToken" type="password" placeholder="填写后获得 owner 权限" />
+        <input id="setupOwnerToken" type="password" placeholder="测试用，填 owner-token.txt" />
       </label>
       <label>设备标识
-        <input id="setupDevice" type="text" placeholder="owner" />
+        <input id="setupDevice" type="text" placeholder="app-test" />
       </label>
       <button id="setupSave" class="primary-btn">保存并连接</button>
-      <p class="hint" id="setupError"></p>
+      <p class="hint error-text" id="setupError"></p>
     </div>
   </div>
 
-  <script src="/app.js?v=4"></script>
+  <div id="modelModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2 id="modelModalTitle">添加模型</h2>
+        <button id="modelCancel" class="icon-close" aria-label="关闭">×</button>
+      </div>
+      <label>能力
+        <select id="modelCapability">
+          <option value="chat">对话 LLM</option>
+          <option value="image">图片生成</option>
+          <option value="video">视频生成</option>
+          <option value="voice">语音</option>
+          <option value="embedding">Embedding</option>
+        </select>
+      </label>
+      <label>名称
+        <input id="modelName" type="text" placeholder="例如 Claude / GPT-4o" />
+      </label>
+      <label>Provider
+        <select id="modelProvider">
+          <option value="anthropic">Anthropic 兼容</option>
+          <option value="openai">OpenAI 兼容</option>
+          <option value="custom">自定义</option>
+        </select>
+      </label>
+      <label>Base URL
+        <input id="modelBaseUrl" type="url" placeholder="https://api.anthropic.com" />
+      </label>
+      <label>模型名
+        <input id="modelId" type="text" placeholder="claude-sonnet-4-5" />
+      </label>
+      <label>API Key
+        <input id="modelApiKey" type="password" placeholder="留空表示不修改" />
+      </label>
+      <label class="check-row">
+        <input id="modelEnabled" type="checkbox" checked />
+        <span>启用</span>
+      </label>
+      <p class="hint" id="modelHint">对话模型需兼容 Anthropic / Claude Agent SDK；图片/视频模型先保存配置，执行适配在下一阶段。</p>
+      <p class="hint" id="modelTestResult"></p>
+      <div class="modal-actions">
+        <button id="modelTest" class="ghost-btn">测试连接</button>
+        <button id="modelSave" class="primary-btn">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toolModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2 id="toolModalTitle">工具</h2>
+        <button id="toolCancel" class="icon-close" aria-label="关闭">×</button>
+      </div>
+      <div id="toolModalBody"></div>
+      <div class="modal-actions">
+        <button id="toolSave" class="primary-btn">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=5"></script>
 </body>
 </html>

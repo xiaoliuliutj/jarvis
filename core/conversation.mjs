@@ -19,6 +19,7 @@ import { buildCanUseTool } from './permissions.mjs'
 import { buildMcpServers } from './tools.mjs'
 import { getAgentEnv, getAnthropicCredentials, getModel } from './config.mjs'
 import { logInfo, logWarn, logError } from './logger.mjs'
+import { getChatRuntime, appendUsage } from './app-store.mjs'
 
 const locks = new Map()
 
@@ -60,6 +61,7 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
     : basePrincipal
 
   return withPrincipalLock(principalId, async () => {
+    const turnStartedAt = Date.now()
     store.ensureUser(principalId)
 
     const workspace = store.workspaceDir(principalId)
@@ -73,7 +75,12 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
     const mcpServers = buildMcpServers(principal)
     const canUseTool = buildCanUseTool({ principal, workspace })
 
-    const { apiKey, baseUrl, authMode } = getAnthropicCredentials()
+    const globalCreds = getAnthropicCredentials()
+    const userModel = getChatRuntime(principalId)
+    const apiKey = userModel?.apiKey || globalCreds.apiKey
+    const baseUrl = userModel?.baseUrl || globalCreds.baseUrl
+    const authMode = userModel?.authMode || globalCreds.authMode
+    const activeModel = userModel?.model || getModel()
     if (!apiKey) {
       return {
         text: sanitizeForUser(principal, '未配置 API Key（config/agent.json 或 config/credentials.json）'),
@@ -116,7 +123,7 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
     const runOnce = async () => {
       result = null
       for await (const event of run(prompt, {
-        model: getModel(),
+        model: activeModel,
         apiKey,
         baseUrl,
         authMode,
@@ -212,6 +219,25 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
       timestamp: new Date().toISOString(),
     })
     store.touchSession(principalId, finalSessionId)
+
+    try {
+      appendUsage(principalId, {
+        sessionId: finalSessionId,
+        source,
+        capability: 'chat',
+        model: userModel?.model || activeModel,
+        provider: userModel?.provider || '',
+        inputTokens: result.usage?.input_tokens ?? result.usage?.prompt_tokens ?? 0,
+        outputTokens: result.usage?.output_tokens ?? result.usage?.completion_tokens ?? 0,
+        cost: result.cost ?? 0,
+        turns: result.turns ?? 0,
+        latencyMs: Date.now() - turnStartedAt,
+        status: result.isError ? 'error' : 'ok',
+        tools: toolRecords.map(r => r.name),
+      })
+    } catch (err) {
+      logWarn('usage.append.fail', err.message, { principalId })
+    }
 
     const finalResult = {
       text,

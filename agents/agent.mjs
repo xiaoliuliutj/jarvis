@@ -223,6 +223,7 @@ export async function* run(prompt, options = {}) {
           turns: msg.num_turns ?? 0,
           isError: msg.is_error ?? (msg.subtype !== 'success'),
           sessionId: msg.session_id ?? activeSessionId,
+          usage: msg.usage ?? null,
         }
         return
       }

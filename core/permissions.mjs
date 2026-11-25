@@ -26,6 +26,8 @@ import {
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'LS'])
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
+const APP_SECRETS_KEY_FILE = path.join(CONFIG_DIR, 'app-secrets.key')
+const APP_SECRETS_DIR = path.join(USERDATA_DIR, '_secrets')
 
 // 迁移前遗留的全局会话/记忆目录：不再使用，但含个人数据，禁止文件工具访问
 const LEGACY_DATA_DIRS = [
@@ -69,6 +71,11 @@ export function buildCanUseTool({ principal, workspace }) {
     // 凭证：不可读、不可写。agent.json 里现在也可能放 ANTHROPIC_AUTH_TOKEN
     if (abs === path.resolve(CREDENTIALS_FILE) || abs === path.resolve(AGENT_CONFIG_FILE)) {
       return deny('该配置包含模型凭证，不能读取或修改。')
+    }
+
+    // App 每用户 API Key 的主密钥与密文库：Agent 文件工具不可读
+    if (abs === path.resolve(APP_SECRETS_KEY_FILE) || isInside(APP_SECRETS_DIR, abs)) {
+      return deny('该文件包含用户 API 凭证，不能读取或修改。')
     }
 
     // 迁移前的历史会话/记忆：保留在磁盘，但不允许 Agent 访问

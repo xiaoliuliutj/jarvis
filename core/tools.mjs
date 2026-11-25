@@ -16,6 +16,7 @@ import {
   RELOAD_SIGNAL_FILE,
   ensureDir,
 } from './paths.mjs'
+import { isToolEnabled } from './app-store.mjs'
 
 const SYSTEM_REGISTRY = path.join(SYSTEM_TOOLS_DIR, '_registry.json')
 const NAME_RE = /^[a-z][a-z0-9_]*$/
@@ -224,6 +225,7 @@ export function buildMcpServers(principal) {
 
   for (const entry of readSystemRegistry()) {
     if (entry.enabled === false) continue
+    if (!isToolEnabled(principal.id, entry.name, true)) continue
     if (!canAccessTool(entry, principal)) continue
     const indexFile = path.join(SYSTEM_TOOLS_DIR, entry.name, 'index.mjs')
     if (!fs.existsSync(indexFile)) continue
@@ -232,6 +234,7 @@ export function buildMcpServers(principal) {
 
   for (const tool of listUserToolDirs()) {
     if (tool.enabled === false) continue
+    if (!isToolEnabled(principal.id, tool.name, true)) continue
     if (!canAccessTool(tool, principal)) continue
     if (servers[tool.name]) {
       throw new Error(`工具名冲突：${tool.name}（系统工具/其他用户工具已存在）`)

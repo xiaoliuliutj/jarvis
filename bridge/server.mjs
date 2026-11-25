@@ -92,16 +92,16 @@ const scheduler = new Scheduler({
 
 // ── 入站消息 ──────────────────────────────────────────────────────────────────
 
-async function sendText(principalId, sourceType, accountId, externalUserId, text) {
+async function sendText(principalId, sourceType, accountId, externalUserId, text, replyTo = null) {
   const adapter = adapters[sourceType]
   if (!adapter) throw new Error(`未知 adapter: ${sourceType}`)
-  await adapter.send(externalUserId, text, { accountId })
+  await adapter.send(replyTo || externalUserId, text, { accountId })
 }
 
-async function sendReply(principalId, sourceType, accountId, externalUserId, result) {
+async function sendReply(principalId, sourceType, accountId, externalUserId, result, replyTo = null) {
   if (!result.text) return
   try {
-    await sendText(principalId, sourceType, accountId, externalUserId, result.text)
+    await sendText(principalId, sourceType, accountId, externalUserId, result.text, replyTo)
   } catch (err) {
     logError('reply.fail', err.message, { principalId, sourceType })
   }
@@ -111,9 +111,10 @@ async function sendReply(principalId, sourceType, accountId, externalUserId, res
  * 回合结束后投递发件箱：把 outbox 里的文件逐个发送，成功后归档到 sent/。
  * adapter 未实现 sendFile 时静默跳过。
  */
-async function deliverOutbox(principalId, sourceType, accountId, externalUserId) {
+async function deliverOutbox(principalId, sourceType, accountId, externalUserId, replyTo = null) {
   const adapter = adapters[sourceType]
   if (!adapter?.sendFile) return
+  const target = replyTo || externalUserId
 
   let files = []
   try {
@@ -139,7 +140,7 @@ async function deliverOutbox(principalId, sourceType, accountId, externalUserId)
       // 图片走图片消息通道（微信里直接显示为图片），其余走文件通道
       const useImage = isImageFile(f.name) && typeof adapter.sendImage === 'function'
       const sendOne = useImage ? adapter.sendImage : adapter.sendFile
-      await sendOne.call(adapter, externalUserId, f.path, { accountId, fileName: f.name })
+      await sendOne.call(adapter, target, f.path, { accountId, fileName: f.name })
       markOutboxSent(principalId, f.path)
       broadcast({ type: 'outbound_file', principalId, fileName: f.name, ok: true, kind: useImage ? 'image' : 'file' })
       logInfo('file.sent', f.name, { principalId, kind: useImage ? 'image' : 'file' })
@@ -190,6 +191,7 @@ export function routeIncoming({
   sourceType,
   accountId = 'default',
   externalUserId,
+  replyTo = null,
   text,
   attachments = [],
   timestamp = new Date().toISOString(),
@@ -236,7 +238,7 @@ export function routeIncoming({
     text,
   })
   if (onboarding.handled) {
-    sendText(principal.id, sourceType, accountId, externalUserId, onboarding.reply).catch(err => {
+    sendText(principal.id, sourceType, accountId, externalUserId, onboarding.reply, replyTo).catch(err => {
       console.error(`[onboarding] ${principal.id} 发送引导失败:`, err.message)
     })
     return { ok: true, principalId: principal.id, onboarding: true }
@@ -255,7 +257,7 @@ export function routeIncoming({
           const persona = readPersona(principal.id)
           const notice = await generateInterimNotice({ persona, displayName: principal.displayName })
           if (replyDone) return
-          await sendText(principal.id, sourceType, accountId, externalUserId, notice)
+          await sendText(principal.id, sourceType, accountId, externalUserId, notice, replyTo)
           console.log(`[bridge] 已发送「正在处理」提示 (${principal.id}): ${notice}`)
         } catch (err) {
           console.warn(`[bridge] 「正在处理」提示发送失败 (${principal.id}):`, err.message)
@@ -306,7 +308,7 @@ export function routeIncoming({
     if (interimTimer) clearTimeout(interimTimer)
 
     // 成功或失败都给用户一条回复；失败时的文案已在 conversation 里对普通用户脱敏
-    await sendReply(principal.id, sourceType, accountId, externalUserId, result)
+    await sendReply(principal.id, sourceType, accountId, externalUserId, result, replyTo)
     if (result.isError) {
       broadcast({
         type: 'error',
@@ -319,7 +321,7 @@ export function routeIncoming({
     }
 
     // 回合结束后投递发件箱
-    await deliverOutbox(principal.id, sourceType, accountId, externalUserId)
+    await deliverOutbox(principal.id, sourceType, accountId, externalUserId, replyTo)
   })
 
   return { ok: true, principalId: principal.id }
@@ -420,6 +422,7 @@ for (const [adapterId, adapterConf] of Object.entries(config.adapters ?? {})) {
       sourceType: adapterId,
       accountId,
       externalUserId: payload.from,
+      replyTo: payload.replyTo || null,
       text: payload.text,
       attachments: payload.attachments,
       timestamp: payload.timestamp,
