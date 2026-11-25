@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=13" />
+  <link rel="stylesheet" href="/style.css?v=14" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -75,6 +75,7 @@
             <button id="editConnection" class="ghost-btn">修改</button>
           </div>
           <div class="settings-card">
+            <div class="settings-row"><span>账号</span><span id="settingsUsername">—</span></div>
             <div class="settings-row"><span>状态</span><span id="settingsStatus">—</span></div>
             <div class="settings-row"><span>服务器</span><span id="settingsUrl">—</span></div>
             <div class="settings-row"><span>设备</span><span id="settingsDevice">—</span></div>
@@ -82,6 +83,7 @@
             <div class="settings-row"><span>Owner 令牌</span><span id="settingsOwnerToken">—</span></div>
           </div>
           <button id="reconnectBtn" class="ghost-btn wide">重新连接</button>
+          <button id="logoutBtn" class="danger-btn" style="margin-top:8px;">退出登录</button>
         </div>
 
         <div class="settings-section">
@@ -139,6 +141,23 @@
     </div>
   </div>
 
+  <div id="login" class="setup hidden">
+    <div class="setup-card">
+      <h1>登录 Jarvis</h1>
+      <p class="hint">用户名 + 密码；用户名唯一，新用户注册后会自动分配访问令牌。</p>
+      <label>用户名
+        <input id="loginUsername" type="text" autocomplete="username" placeholder="给你的账号起个名字" />
+      </label>
+      <label>密码
+        <input id="loginPassword" type="password" autocomplete="current-password" placeholder="至少 6 位" />
+      </label>
+      <p class="hint error-text" id="loginError"></p>
+      <button id="loginBtn" class="primary-btn">登录</button>
+      <button id="registerBtn" class="ghost-btn wide">注册新账号</button>
+      <button id="advancedSetup" class="link-btn">高级：使用访问令牌连接</button>
+    </div>
+  </div>
+
   <div id="setup" class="setup hidden">
     <div class="setup-card">
       <h1>连接 Jarvis</h1>
@@ -147,7 +166,7 @@
         <input id="setupUrl" type="url" placeholder="http://100.100.142.113:17779" />
       </label>
       <label>访问令牌
-        <input id="setupToken" type="password" placeholder="userdata/app-adapter/token.txt" />
+        <input id="setupToken" type="password" placeholder="登录后自动填入；也可用旧访问令牌" />
       </label>
       <label>Owner 令牌（可选）
         <input id="setupOwnerToken" type="password" placeholder="测试用，填 owner-token.txt" />
@@ -156,6 +175,7 @@
         <input id="setupDevice" type="text" placeholder="app-test" />
       </label>
       <button id="setupSave" class="primary-btn">保存并连接</button>
+      <button id="setupBack" class="link-btn">返回登录</button>
       <p class="hint error-text" id="setupError"></p>
     </div>
   </div>
@@ -237,6 +257,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=13"></script>
+  <script src="/app.js?v=14"></script>
 </body>
 </html>

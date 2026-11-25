@@ -88,7 +88,17 @@
     setupOwnerToken: $('setupOwnerToken'),
     setupDevice: $('setupDevice'),
     setupSave: $('setupSave'),
+    setupBack: $('setupBack'),
     setupError: $('setupError'),
+    login: $('login'),
+    loginUsername: $('loginUsername'),
+    loginPassword: $('loginPassword'),
+    loginError: $('loginError'),
+    loginBtn: $('loginBtn'),
+    registerBtn: $('registerBtn'),
+    advancedSetup: $('advancedSetup'),
+    settingsUsername: $('settingsUsername'),
+    logoutBtn: $('logoutBtn'),
     modelModal: $('modelModal'),
     modelModalTitle: $('modelModalTitle'),
     modelCancel: $('modelCancel'),
@@ -186,10 +196,91 @@
     el.setupOwnerToken.value = state.ownerToken || ''
     el.setupDevice.value = state.device || 'app-test'
     el.setupError.textContent = error || ''
+    el.setupBack.classList.toggle('hidden', !!state.token)
     el.setup.classList.remove('hidden')
     setTimeout(() => el.setupToken.focus(), 50)
   }
   function closeSetup() { el.setup.classList.add('hidden') }
+
+  function showLogin(error) {
+    el.setup.classList.add('hidden')
+    el.loginError.textContent = error || ''
+    el.login.classList.remove('hidden')
+  }
+  function hideLogin() { el.login.classList.add('hidden') }
+
+  async function doAuth(mode) {
+    const username = (el.loginUsername.value || '').trim()
+    const password = el.loginPassword.value || ''
+    if (!username) { el.loginError.textContent = '请填写用户名'; return }
+    if (!password) { el.loginError.textContent = '请填写密码'; return }
+    el.loginError.textContent = ''
+    el.loginBtn.disabled = true
+    el.registerBtn.disabled = true
+    try {
+      const res = await fetch(`${state.url}/api/v1/auth/${mode}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+      state.token = data.tokenId
+      state.authFailed = false
+      state.clientId = ''
+      write(KEYS.token, state.token)
+      hideLogin()
+      closeSetup()
+      setStatus('连接中…', '')
+      connect()
+      loadMe()
+      loadSession()
+      showTab('chat')
+      appendMessage({
+        role: 'system',
+        text: mode === 'register' ? '注册成功，已自动分配访问令牌' : '登录成功',
+        ts: new Date().toISOString(),
+      })
+    } catch (err) {
+      el.loginError.textContent = err.message
+    } finally {
+      el.loginBtn.disabled = false
+      el.registerBtn.disabled = false
+    }
+  }
+
+  function logout() {
+    state.token = ''
+    state.ownerToken = ''
+    state.clientId = ''
+    state.me = null
+    state.authFailed = false
+    state.messages = []
+    remove(KEYS.token)
+    remove(KEYS.ownerToken)
+    if (state.ws) { try { state.ws.close() } catch {} state.ws = null }
+    renderMessages([])
+    renderConnection()
+    setStatus('未登录', 'offline')
+    showLogin('')
+    showTab('chat')
+  }
+
+  el.loginBtn.addEventListener('click', () => doAuth('login'))
+  el.registerBtn.addEventListener('click', () => doAuth('register'))
+  el.loginPassword.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); doAuth('login') }
+  })
+  el.advancedSetup.addEventListener('click', () => {
+    hideLogin()
+    openSetup('')
+  })
+  el.setupBack.addEventListener('click', () => {
+    if (state.token) return
+    el.setup.classList.add('hidden')
+    showLogin('')
+  })
+  el.logoutBtn.addEventListener('click', logout)
 
   el.setupSave.addEventListener('click', () => {
     const url = (el.setupUrl.value || '').trim().replace(/\/+$/, '')
@@ -209,6 +300,7 @@
     write(KEYS.ownerToken, state.ownerToken)
     write(KEYS.device, state.device)
     closeSetup()
+    hideLogin()
     renderConnection()
     connect()
     loadMe()
@@ -238,8 +330,8 @@
     const res = await fetch(state.url + path, { method: opts.method || 'GET', headers, body })
     if (res.status === 401) {
       state.authFailed = true
-      setStatus('令牌无效', 'offline')
-      openSetup('访问令牌不正确，请重新填写')
+      setStatus('登录失效', 'offline')
+      showLogin('登录已失效，请重新登录')
       throw new Error('unauthorized')
     }
     const text = await res.text()
@@ -259,7 +351,7 @@
   }
 
   function connect() {
-    if (!state.token) { setStatus('未配置', 'offline'); openSetup(''); return }
+    if (!state.token) { setStatus('未登录', 'offline'); showLogin(''); return }
     if (state.authFailed) { setStatus('令牌无效', 'offline'); return }
     if (state.ws && (state.ws.readyState === 0 || state.ws.readyState === 1)) return
     setStatus('连接中…', '')
@@ -280,8 +372,8 @@
       state.clientId = ''
       if (event && event.code === 4401) {
         state.authFailed = true
-        setStatus('令牌无效', 'offline')
-        openSetup('访问令牌不正确，请重新填写')
+        setStatus('登录失效', 'offline')
+        showLogin('登录已失效，请重新登录')
         return
       }
       setStatus('已断开', 'offline')
@@ -534,6 +626,10 @@
       const data = await api('/api/v1/me')
       state.me = data
       setOwnerChip(!!data.owner)
+      if (el.settingsUsername) {
+        el.settingsUsername.textContent = data.username || data.displayName || '—'
+      }
+      renderConnection()
       el.testChip.textContent = data.testMode ? '测试' : 'App'
     } catch {}
   }
@@ -1188,6 +1284,7 @@
 
   function renderConnection() {
     if (!el.settingsStatus) return
+    el.settingsUsername.textContent = state.me?.username || state.me?.displayName || '—'
     el.settingsStatus.textContent = el.status.textContent || '—'
     el.settingsUrl.textContent = state.url || '—'
     el.settingsDevice.textContent = state.device || '—'
@@ -1498,8 +1595,8 @@
   renderConnection()
   showTab('chat')
   if (!state.token) {
-    setStatus('未配置', 'offline')
-    openSetup('')
+    setStatus('未登录', 'offline')
+    showLogin('')
   } else {
     connect()
     loadMe()

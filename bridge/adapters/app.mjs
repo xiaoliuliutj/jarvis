@@ -29,9 +29,10 @@ import express from 'express'
 import { WebSocketServer } from 'ws'
 import { ROOT } from '../../core/paths.mjs'
 import { logInfo, logWarn, logError } from '../../core/logger.mjs'
-import { resolvePrincipal } from '../../core/principals.mjs'
+import { resolvePrincipal, getPrincipal } from '../../core/principals.mjs'
 import { getCurrentSession, readMessages } from '../../core/user-store.mjs'
 import * as appStore from '../../core/app-store.mjs'
+import * as authStore from '../../core/auth-store.mjs'
 import { listCatalog, getTool as getCatalogTool } from '../../core/tool-catalog.mjs'
 import { resolveAnthropicCredentials } from '../../core/config.mjs'
 
@@ -134,13 +135,21 @@ function getDevice(req) {
   return sanitizeDevice(req.get('X-Device-Id') || req.query.device || 'owner')
 }
 
-function auth(req, res, next) {
+function authenticate(req) {
   const header = req.get('Authorization') || ''
   const bearer = header.startsWith('Bearer ') ? header.slice(7) : ''
   const provided = bearer || req.query.token || ''
-  if (!tokenOk(provided)) {
+  if (tokenOk(provided)) return { legacy: true }
+  const user = authStore.findByToken(provided)
+  return user ? { user } : null
+}
+
+function auth(req, res, next) {
+  const result = authenticate(req)
+  if (!result) {
     return res.status(401).json({ ok: false, error: 'unauthorized' })
   }
+  req.auth = result
   next()
 }
 
@@ -225,12 +234,15 @@ function pruneStagedFiles() {
 
 function appPrincipalFor(req) {
   const deviceId = getDevice(req)
-  const principal = resolvePrincipal({
-    sourceType: 'app',
-    accountId: 'default',
-    externalUserId: deviceId,
-  })
-  return { deviceId, principal }
+  const user = req.auth?.user || null
+  const principal = user
+    ? getPrincipal(user.principalId)
+    : resolvePrincipal({
+        sourceType: 'app',
+        accountId: 'default',
+        externalUserId: deviceId,
+      })
+  return { deviceId, principal, user }
 }
 
 function effectiveAppPrincipal(principal, owner) {
@@ -288,6 +300,7 @@ async function handleIncomingMessage(req, res) {
     const replyTo = req.get('X-Client-Id') || null
     onMessageCb?.({
       from: deviceId,
+      principalId: principal.id,
       text,
       attachments,
       replyTo,
@@ -361,16 +374,44 @@ function buildServer() {
 
   app.get('/health', (_req, res) => res.json({ ok: true, adapter: 'app' }))
 
+  // ── 简单账号：用户名 + 密码，新用户自动分配 tokenId ─────────────────────
+  app.post('/api/v1/auth/register', (req, res) => {
+    if (!checkRate(`auth:${req.ip || 'local'}`)) {
+      return res.status(429).json({ ok: false, error: '操作太频繁，稍后再试' })
+    }
+    try {
+      const user = authStore.register(req.body?.username, req.body?.password)
+      res.json({
+        ok: true,
+        tokenId: user.tokenId,
+        user: { username: user.username, principalId: user.principalId, role: user.role },
+      })
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message })
+    }
+  })
+
+  app.post('/api/v1/auth/login', (req, res) => {
+    if (!checkRate(`auth:${req.ip || 'local'}`)) {
+      return res.status(429).json({ ok: false, error: '操作太频繁，稍后再试' })
+    }
+    try {
+      const user = authStore.login(req.body?.username, req.body?.password)
+      res.json({
+        ok: true,
+        tokenId: user.tokenId,
+        user: { username: user.username, principalId: user.principalId, role: user.role },
+      })
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message })
+    }
+  })
+
   // 历史消息：与微信共用同一个 principal / 当前会话
   app.get('/api/history', auth, (req, res) => {
-    const deviceId = getDevice(req)
+    const { deviceId, principal } = appPrincipalFor(req)
     const owner = ownerTokenOk(req)
     try {
-      const principal = resolvePrincipal({
-        sourceType: 'app',
-        accountId: 'default',
-        externalUserId: deviceId,
-      })
       const session = getCurrentSession(principal.id)
       if (!session) return res.json({ ok: true, messages: [], owner })
       const messages = readMessages(principal.id, session.sessionId)
@@ -406,12 +447,13 @@ function buildServer() {
   // ── v1：App 管理台 ────────────────────────────────────────────────────────
 
   app.get('/api/v1/me', auth, (req, res) => {
-    const { deviceId, principal } = appPrincipalFor(req)
+    const { deviceId, principal, user } = appPrincipalFor(req)
     const owner = ownerTokenOk(req)
     const settings = appStore.readSettings(principal.id)
     res.json({
       ok: true,
       principalId: principal.id,
+      username: user?.username || null,
       displayName: principal.displayName,
       role: owner ? 'owner' : principal.role,
       owner,
@@ -608,7 +650,10 @@ function setupWs(httpServer) {
   wss.on('connection', (ws, req) => {
     let url
     try { url = new URL(req.url, 'http://localhost') } catch { ws.close(4400, 'bad request'); return }
-    if (!tokenOk(url.searchParams.get('token'))) {
+    const provided = url.searchParams.get('token') || ''
+    const legacy = tokenOk(provided)
+    const user = legacy ? null : authStore.findByToken(provided)
+    if (!legacy && !user) {
       ws.close(4401, 'unauthorized')
       return
     }
@@ -623,12 +668,15 @@ function setupWs(httpServer) {
     deviceClients.set(deviceId, clientId)
     clientDevices.set(clientId, deviceId)
 
+    let principal = null
     try {
-      const principal = resolvePrincipal({ sourceType: 'app', accountId: 'default', externalUserId: deviceId })
+      principal = user
+        ? getPrincipal(user.principalId)
+        : resolvePrincipal({ sourceType: 'app', accountId: 'default', externalUserId: deviceId })
       appStore.recordDevice(principal.id, { clientId, deviceId })
     } catch {}
 
-    ws.send(JSON.stringify({ type: 'hello', clientId, deviceId, owner }))
+    ws.send(JSON.stringify({ type: 'hello', clientId, deviceId, owner, username: user?.username || null }))
     for (const key of [clientId, deviceId]) {
       const queue = pending.get(key)
       if (!queue?.length) continue
@@ -655,7 +703,7 @@ function setupWs(httpServer) {
       clientDevices.delete(clientId)
     })
 
-    logInfo('app.ws.connect', '', { deviceId, clientId, owner })
+    logInfo('app.ws.connect', '', { deviceId, clientId, owner, username: user?.username || null })
   })
 
   keepAliveTimer = setInterval(() => {
