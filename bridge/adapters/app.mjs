@@ -29,7 +29,7 @@ import express from 'express'
 import { WebSocketServer } from 'ws'
 import { ROOT } from '../../core/paths.mjs'
 import { logInfo, logWarn, logError } from '../../core/logger.mjs'
-import { resolvePrincipal, listPrincipals } from '../../core/principals.mjs'
+import { resolvePrincipal } from '../../core/principals.mjs'
 import { getCurrentSession, readMessages } from '../../core/user-store.mjs'
 
 export const id = 'app'
@@ -114,14 +114,6 @@ function ownerTokenOk(req, url = null) {
   return crypto.timingSafeEqual(a, b)
 }
 
-/** owner 令牌只认角色，不认 device；device 仅作为 App 客户端/投递标识。 */
-function findOwnerPrincipalId() {
-  try {
-    return listPrincipals().find(p => p.role === 'owner')?.id || null
-  } catch {
-    return null
-  }
-}
 
 function sanitizeDevice(value) {
   const cleaned = String(value || '').replace(/[^\w.-]/g, '').slice(0, 64)
@@ -225,16 +217,13 @@ function buildServer() {
   // 历史消息：与微信共用同一个 principal / 当前会话
   app.get('/api/history', auth, (req, res) => {
     const deviceId = getDevice(req)
-    const ownerPrincipalId = ownerTokenOk(req) ? findOwnerPrincipalId() : null
-    const owner = !!ownerPrincipalId
+    const owner = ownerTokenOk(req)
     try {
-      const principal = ownerPrincipalId
-        ? { id: ownerPrincipalId }
-        : resolvePrincipal({
-            sourceType: 'app',
-            accountId: 'default',
-            externalUserId: deviceId,
-          })
+      const principal = resolvePrincipal({
+        sourceType: 'app',
+        accountId: 'default',
+        externalUserId: deviceId,
+      })
       const session = getCurrentSession(principal.id)
       if (!session) return res.json({ ok: true, messages: [], owner })
       const messages = readMessages(principal.id, session.sessionId)
@@ -254,8 +243,7 @@ function buildServer() {
 
   app.post('/api/message', auth, (req, res) => {
     const deviceId = getDevice(req)
-    const ownerPrincipalId = ownerTokenOk(req) ? findOwnerPrincipalId() : null
-    const owner = !!ownerPrincipalId
+    const owner = ownerTokenOk(req)
     if (!checkRate(deviceId)) {
       return res.status(429).json({ ok: false, error: '消息太频繁，稍等一下喵' })
     }
@@ -283,7 +271,6 @@ function buildServer() {
     try {
       onMessageCb?.({
         from: deviceId,
-        principalId: ownerPrincipalId || undefined,
         text,
         attachments,
         timestamp: new Date().toISOString(),
@@ -327,7 +314,7 @@ function setupWs(httpServer) {
       return
     }
     const deviceId = sanitizeDevice(url.searchParams.get('device') || 'owner')
-    const owner = ownerTokenOk(req, url) && !!findOwnerPrincipalId()
+    const owner = ownerTokenOk(req, url)
     let set = clients.get(deviceId)
     if (!set) { set = new Set(); clients.set(deviceId, set) }
     set.add(ws)

@@ -18,7 +18,7 @@ import { buildSystemPrompt } from './prompt.mjs'
 import { buildCanUseTool } from './permissions.mjs'
 import { buildMcpServers } from './tools.mjs'
 import { getAgentEnv, getAnthropicCredentials, getModel } from './config.mjs'
-import { logInfo, logError } from './logger.mjs'
+import { logInfo, logWarn, logError } from './logger.mjs'
 
 const locks = new Map()
 
@@ -113,52 +113,65 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
     const toolRecords = []
     const { run } = await import('../agents/agent.mjs')
 
-    for await (const event of run(prompt, {
-      model: getModel(),
-      apiKey,
-      baseUrl,
-      authMode,
-      agentEnv: getAgentEnv(),
-      cwd: workspace,
-      resumeSessionId: resumeId,
-      systemPrompt,
-      mcpServers,
-      canUseTool,
-      reloadMcpServers: () => buildMcpServers(principal),
-      memory: { append: (entry) => store.appendMemory(principalId, entry) },
-    })) {
-      if (event.type === 'session' && event.sessionId) {
-        // 新会话首次运行：init 带回 sessionId，立刻补写用户消息
-        if (!persistSessionId) persistSessionId = event.sessionId
-        if (includeUser && !userPersisted) {
-          store.ensureSession(principalId, persistSessionId, { name: sessionName, isMain })
-          store.appendMessage(principalId, persistSessionId, userRecord)
-          userPersisted = true
+    const runOnce = async () => {
+      result = null
+      for await (const event of run(prompt, {
+        model: getModel(),
+        apiKey,
+        baseUrl,
+        authMode,
+        agentEnv: getAgentEnv(),
+        cwd: workspace,
+        resumeSessionId: persistSessionId || resumeId,
+        systemPrompt,
+        mcpServers,
+        canUseTool,
+        reloadMcpServers: () => buildMcpServers(principal),
+        memory: { append: (entry) => store.appendMemory(principalId, entry) },
+      })) {
+        if (event.type === 'session' && event.sessionId) {
+          // 新会话首次运行：init 带回 sessionId，立刻补写用户消息
+          if (!persistSessionId) persistSessionId = event.sessionId
+          if (includeUser && !userPersisted) {
+            store.ensureSession(principalId, persistSessionId, { name: sessionName, isMain })
+            store.appendMessage(principalId, persistSessionId, userRecord)
+            userPersisted = true
+          }
+        } else if (event.type === 'tool') {
+          const rec = {
+            type: 'tool',
+            name: event.name,
+            input: event.input,
+            timestamp: new Date().toISOString(),
+          }
+          toolRecords.push(rec)
+          logInfo('tool.call', event.name, { principalId })
+          if (persistSessionId) {
+            store.appendMessage(principalId, persistSessionId, rec)
+            toolsPersisted++
+          }
+          emit({ ...event, principalId, sessionId: persistSessionId })
+        } else if (event.type === 'text') {
+          emit({ ...event, principalId, sessionId: persistSessionId })
+        } else if (event.type === 'memory') {
+          emit({ ...event, principalId, sessionId: persistSessionId })
+        } else if (event.type === 'result') {
+          result = event
         }
-      } else if (event.type === 'tool') {
-        const rec = {
-          type: 'tool',
-          name: event.name,
-          input: event.input,
-          timestamp: new Date().toISOString(),
-        }
-        toolRecords.push(rec)
-        logInfo('tool.call', event.name, { principalId })
-        if (persistSessionId) {
-          store.appendMessage(principalId, persistSessionId, rec)
-          toolsPersisted++
-        }
-        emit({ ...event, principalId, sessionId: persistSessionId })
-      } else if (event.type === 'text') {
-        emit({ ...event, principalId, sessionId: persistSessionId })
-      } else if (event.type === 'memory') {
-        emit({ ...event, principalId, sessionId: persistSessionId })
-      } else if (event.type === 'result') {
-        result = event
       }
     }
 
+    await runOnce()
+
     if (!result) throw new Error('Agent 没有返回 result')
+
+    // Bridge 重启后的首条消息：SDK 的 resume 有时会先返回一个空的 0 回合 result。
+    // 这里重试一次；仍为空则给用户一句兜底，避免静默丢消息。
+    if (!result.text && !result.isError && (result.turns ?? 0) === 0 && toolRecords.length === 0) {
+      logWarn('turn.empty.retry', '', { principalId, source })
+      await runOnce()
+      if (!result) throw new Error('Agent 没有返回 result')
+    }
 
     logInfo('turn.result', '', {
       principalId,
@@ -171,9 +184,13 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
     const finalSessionId = result.sessionId || persistSessionId
     if (!finalSessionId) throw new Error('Agent 没有返回 sessionId')
 
-    const text = result.isError
+    let text = result.isError
       ? sanitizeForUser(principal, result.text)
       : result.text
+    if (!text && !result.isError) {
+      logWarn('turn.empty', '', { principalId, source, turns: result.turns ?? 0 })
+      text = '刚才那条没处理成功，再说一遍喵～'
+    }
 
     store.ensureSession(principalId, finalSessionId, {
       name: sessionName,

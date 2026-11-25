@@ -19,7 +19,7 @@ import fs from 'fs'
 import path from 'path'
 import { ROOT, PC_MAIN_ID } from '../core/paths.mjs'
 import { loadBridgeConfig } from '../core/config.mjs'
-import { resolvePrincipal, getPrincipal, listPrincipals, getPrimaryAccount } from '../core/principals.mjs'
+import { resolvePrincipal, listPrincipals, getPrimaryAccount } from '../core/principals.mjs'
 import { ensureUser, getCurrentSession, readPersona, lastUserMessageAt } from '../core/user-store.mjs'
 import { generateInterimNotice } from '../core/interim-notice.mjs'
 import { runTurn } from '../core/conversation.mjs'
@@ -190,15 +190,12 @@ export function routeIncoming({
   sourceType,
   accountId = 'default',
   externalUserId,
-  principalId = null,
   text,
   attachments = [],
   timestamp = new Date().toISOString(),
   owner = false,
 }) {
-  const principal = principalId
-    ? getPrincipal(principalId)
-    : resolvePrincipal({ sourceType, accountId, externalUserId })
+  const principal = resolvePrincipal({ sourceType, accountId, externalUserId })
   ensureUser(principal.id)
   lastActivity.set(principal.id, Date.now())
   const current = getCurrentSession(principal.id)
@@ -423,7 +420,6 @@ for (const [adapterId, adapterConf] of Object.entries(config.adapters ?? {})) {
       sourceType: adapterId,
       accountId,
       externalUserId: payload.from,
-      principalId: payload.principalId || null,
       text: payload.text,
       attachments: payload.attachments,
       timestamp: payload.timestamp,
