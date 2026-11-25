@@ -104,12 +104,12 @@ public class MainActivity extends Activity {
         panel.setPadding(dp(18), dp(14), dp(18), dp(16));
 
         TextView hint = new TextView(this);
-        hint.setText("填入电脑端 Bridge 的 App 地址和访问令牌（token.txt）");
+        hint.setText("手机先连上 Tailscale，再填入电脑端 Bridge 的 App 地址和访问令牌（token.txt）");
         hint.setTextSize(13);
         hint.setTextColor(Color.parseColor("#6f7a73"));
         panel.addView(hint);
 
-        urlInput = addInput(panel, "服务器地址", "http://192.168.1.10:17779", InputType.TYPE_TEXT_VARIATION_URI);
+        urlInput = addInput(panel, "服务器地址", "http://100.100.142.113:17779", InputType.TYPE_TEXT_VARIATION_URI);
         tokenInput = addInput(panel, "访问令牌", "userdata/app-adapter/token.txt", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         deviceInput = addInput(panel, "设备标识", "owner", InputType.TYPE_CLASS_TEXT);
 
@@ -204,7 +204,7 @@ public class MainActivity extends Activity {
     }
 
     private void showSetup(String error) {
-        urlInput.setText(prefs.getString("url", "http://"));
+        urlInput.setText(prefs.getString("url", "http://100.100.142.113:17779"));
         tokenInput.setText(prefs.getString("token", ""));
         deviceInput.setText(prefs.getString("device", "owner"));
         setupPanel.setVisibility(View.VISIBLE);
