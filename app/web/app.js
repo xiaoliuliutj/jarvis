@@ -88,6 +88,9 @@
     modelModalTitle: $('modelModalTitle'),
     modelCancel: $('modelCancel'),
     modelCapability: $('modelCapability'),
+    modelChatBox: $('modelChatBox'),
+    modelConfigText: $('modelConfigText'),
+    modelFields: $('modelFields'),
     modelName: $('modelName'),
     modelProvider: $('modelProvider'),
     modelBaseUrl: $('modelBaseUrl'),
@@ -1021,7 +1024,7 @@
     if (!state.models.length) {
       const empty = document.createElement('div')
       empty.className = 'empty-state'
-      empty.textContent = '还没有模型配置，点右上角添加'
+      empty.textContent = '还没有用户模型配置；聊天会自动使用全局模型。点右上角添加可覆盖全局配置。'
       el.modelList.appendChild(empty)
       return
     }
@@ -1065,6 +1068,15 @@
     return ({ chat: '对话', image: '图片', video: '视频', voice: '语音', embedding: 'Embedding' })[capability] || capability
   }
 
+  function syncModelFields() {
+    const chat = el.modelCapability.value === 'chat'
+    el.modelChatBox.classList.toggle('hidden', !chat)
+    el.modelFields.classList.toggle('hidden', chat)
+    el.modelHint.textContent = chat
+      ? '直接粘贴一个 JSON 对象；apiKey 留空表示保持原值。'
+      : '图片/视频/语音模型先保存配置，实际 provider 适配在下一阶段。'
+  }
+
   function openModelModal(model) {
     state.editingModelId = model?.id || null
     el.modelModalTitle.textContent = model ? '编辑模型' : '添加模型'
@@ -1076,9 +1088,30 @@
     el.modelApiKey.value = ''
     el.modelEnabled.checked = model ? model.enabled !== false : true
     el.modelTestResult.textContent = ''
-    el.modelHint.textContent = model?.capability === 'chat' || !model
-      ? '对话模型需兼容 Anthropic / Claude Agent SDK；图片/视频模型先保存配置，执行适配在下一阶段。'
-      : '图片/视频/语音模型先保存配置，实际 provider 适配在下一阶段。'
+    if (!model || model.capability === 'chat') {
+      const config = model
+        ? {
+            name: model.name || '',
+            provider: model.provider || 'anthropic',
+            baseUrl: model.baseUrl || '',
+            model: model.model || '',
+            apiKey: '',
+            enabled: model.enabled !== false,
+            authMode: model.authMode || 'both',
+            priority: model.priority || 0,
+            params: model.params || {},
+          }
+        : {
+            name: '',
+            provider: 'anthropic',
+            baseUrl: '',
+            model: '',
+            apiKey: '',
+            enabled: true,
+          }
+      el.modelConfigText.value = JSON.stringify(config, null, 2)
+    }
+    syncModelFields()
     el.modelModal.classList.remove('hidden')
   }
 
@@ -1086,17 +1119,51 @@
 
   el.addModel.addEventListener('click', () => openModelModal(null))
   el.modelCancel.addEventListener('click', closeModelModal)
+  el.modelCapability.addEventListener('change', syncModelFields)
 
   el.modelSave.addEventListener('click', async () => {
-    const body = {
-      capability: el.modelCapability.value,
-      name: el.modelName.value.trim(),
-      provider: el.modelProvider.value,
-      baseUrl: el.modelBaseUrl.value.trim(),
-      model: el.modelId.value.trim(),
-      enabled: el.modelEnabled.checked,
+    const capability = el.modelCapability.value
+    let body
+    if (capability === 'chat') {
+      let parsed
+      try {
+        parsed = JSON.parse(el.modelConfigText.value || '{}')
+      } catch {
+        el.modelTestResult.textContent = 'JSON 格式错误，请检查逗号和引号'
+        return
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        el.modelTestResult.textContent = '请粘贴一个 JSON 对象'
+        return
+      }
+      const apiKey = parsed.apiKey || parsed.api_key || parsed.key || ''
+      body = {
+        capability: 'chat',
+        name: String(parsed.name || parsed.title || '').trim(),
+        provider: parsed.provider || 'anthropic',
+        baseUrl: String(parsed.baseUrl || parsed.base_url || '').trim(),
+        model: String(parsed.model || parsed.model_name || '').trim(),
+        authMode: parsed.authMode || parsed.auth_mode || 'both',
+        params: (parsed.params && typeof parsed.params === 'object') ? parsed.params : {},
+        enabled: parsed.enabled !== false,
+        priority: Number(parsed.priority) || 0,
+      }
+      if (apiKey) body.apiKey = String(apiKey)
+      if (!body.model) {
+        el.modelTestResult.textContent = '配置里缺少 model 字段'
+        return
+      }
+    } else {
+      body = {
+        capability,
+        name: el.modelName.value.trim(),
+        provider: el.modelProvider.value,
+        baseUrl: el.modelBaseUrl.value.trim(),
+        model: el.modelId.value.trim(),
+        enabled: el.modelEnabled.checked,
+      }
+      if (el.modelApiKey.value) body.apiKey = el.modelApiKey.value
     }
-    if (el.modelApiKey.value) body.apiKey = el.modelApiKey.value
     try {
       if (state.editingModelId) {
         await api(`/api/v1/settings/models/${encodeURIComponent(state.editingModelId)}`, { method: 'PUT', body })

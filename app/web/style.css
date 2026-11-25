@@ -478,7 +478,7 @@ body { overflow: hidden; }
   color: var(--muted);
   margin-bottom: 11px;
 }
-.setup-card input, .modal-card input, .modal-card select {
+.setup-card input, .modal-card input, .modal-card select, .modal-card textarea {
   display: block;
   width: 100%;
   margin-top: 5px;
@@ -489,6 +489,14 @@ body { overflow: hidden; }
   font-family: inherit;
   background: var(--canvas);
   color: var(--text);
+}
+.modal-card textarea {
+  min-height: 180px;
+  resize: vertical;
+  font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre;
 }
 .setup-card .primary-btn { width: 100%; margin-top: 4px; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }

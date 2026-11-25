@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=5" />
+  <link rel="stylesheet" href="/style.css?v=6" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -89,7 +89,7 @@
             <h3>模型与能力</h3>
             <button id="addModel" class="ghost-btn">添加模型</button>
           </div>
-          <p class="hint">每个用户可以配置自己的模型 API；Key 只显示掩码。</p>
+          <p class="hint">每个用户可以配置自己的模型 API；未配置时聊天会自动使用全局模型；Key 只显示掩码。</p>
           <div id="modelList" class="model-list"></div>
         </div>
 
@@ -161,30 +161,48 @@
           <option value="embedding">Embedding</option>
         </select>
       </label>
-      <label>名称
-        <input id="modelName" type="text" placeholder="例如 Claude / GPT-4o" />
-      </label>
-      <label>Provider
-        <select id="modelProvider">
-          <option value="anthropic">Anthropic 兼容</option>
-          <option value="openai">OpenAI 兼容</option>
-          <option value="custom">自定义</option>
-        </select>
-      </label>
-      <label>Base URL
-        <input id="modelBaseUrl" type="url" placeholder="https://api.anthropic.com" />
-      </label>
-      <label>模型名
-        <input id="modelId" type="text" placeholder="claude-sonnet-4-5" />
-      </label>
-      <label>API Key
-        <input id="modelApiKey" type="password" placeholder="留空表示不修改" />
-      </label>
-      <label class="check-row">
-        <input id="modelEnabled" type="checkbox" checked />
-        <span>启用</span>
-      </label>
-      <p class="hint" id="modelHint">对话模型需兼容 Anthropic / Claude Agent SDK；图片/视频模型先保存配置，执行适配在下一阶段。</p>
+
+      <div id="modelChatBox">
+        <label>LLM 配置（JSON）
+          <textarea id="modelConfigText" rows="9" spellcheck="false" placeholder='{
+  "name": "我的模型",
+  "provider": "anthropic",
+  "baseUrl": "https://...",
+  "model": "...",
+  "apiKey": "",
+  "enabled": true
+}'></textarea>
+        </label>
+        <p class="hint">直接粘贴一个 JSON 对象即可。字段：name / provider / baseUrl / model / apiKey / enabled / authMode / priority / params。apiKey 留空表示保持原值。</p>
+      </div>
+
+      <div id="modelFields" class="hidden">
+        <label>名称
+          <input id="modelName" type="text" placeholder="例如 Claude / GPT-4o" />
+        </label>
+        <label>Provider
+          <select id="modelProvider">
+            <option value="anthropic">Anthropic 兼容</option>
+            <option value="openai">OpenAI 兼容</option>
+            <option value="custom">自定义</option>
+          </select>
+        </label>
+        <label>Base URL
+          <input id="modelBaseUrl" type="url" placeholder="https://api.anthropic.com" />
+        </label>
+        <label>模型名
+          <input id="modelId" type="text" placeholder="claude-sonnet-4-5" />
+        </label>
+        <label>API Key
+          <input id="modelApiKey" type="password" placeholder="留空表示不修改" />
+        </label>
+        <label class="check-row">
+          <input id="modelEnabled" type="checkbox" checked />
+          <span>启用</span>
+        </label>
+      </div>
+
+      <p class="hint" id="modelHint">对话模型直接粘贴 JSON；图片/视频/语音模型先保存配置，执行适配在下一阶段。</p>
       <p class="hint" id="modelTestResult"></p>
       <div class="modal-actions">
         <button id="modelTest" class="ghost-btn">测试连接</button>
@@ -206,6 +224,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=5"></script>
+  <script src="/app.js?v=6"></script>
 </body>
 </html>
