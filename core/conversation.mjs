@@ -17,7 +17,14 @@ import * as store from './user-store.mjs'
 import { buildSystemPrompt } from './prompt.mjs'
 import { buildCanUseTool } from './permissions.mjs'
 import { buildMcpServers } from './tools.mjs'
-import { getAgentEnv, getAnthropicCredentials, getModel } from './config.mjs'
+import {
+  getAgentEnv,
+  getAnthropicCredentials,
+  getModel,
+  resolveAnthropicCredentials,
+  resolveModel,
+  buildAgentEnv,
+} from './config.mjs'
 import { logInfo, logWarn, logError } from './logger.mjs'
 import { getChatRuntime, listModels, appendUsage } from './app-store.mjs'
 
@@ -95,14 +102,30 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
       }
     }
 
-    const globalCreds = getAnthropicCredentials()
-    const apiKey = userModel?.apiKey || globalCreds.apiKey
-    const baseUrl = userModel?.baseUrl || globalCreds.baseUrl
-    const authMode = userModel?.authMode || globalCreds.authMode
-    const activeModel = userModel?.model || getModel()
+    let apiKey, baseUrl, authMode, activeModel, agentEnv
+    if (userModel?.rawConfig) {
+      // 用户整段配置：按 Claude Code settings 的同一套解析逻辑使用
+      const rawCreds = resolveAnthropicCredentials(userModel.rawConfig, {})
+      apiKey = rawCreds.apiKey
+      baseUrl = rawCreds.baseUrl
+      authMode = rawCreds.authMode
+      activeModel = resolveModel(userModel.rawConfig)
+      agentEnv = buildAgentEnv(userModel.rawConfig)
+    } else {
+      const globalCreds = canUseGlobal
+        ? getAnthropicCredentials()
+        : { apiKey: '', baseUrl: '', authMode: 'both' }
+      apiKey = userModel?.apiKey || globalCreds.apiKey
+      baseUrl = userModel?.baseUrl || (canUseGlobal ? globalCreds.baseUrl : '')
+      authMode = userModel?.authMode || (canUseGlobal ? globalCreds.authMode : 'both')
+      activeModel = userModel?.model || (canUseGlobal ? getModel() : '')
+      agentEnv = canUseGlobal ? getAgentEnv() : {}
+    }
     if (!apiKey) {
       return {
-        text: sanitizeForUser(principal, '未配置 API Key（config/agent.json 或 config/credentials.json）'),
+        text: userModel
+          ? '模型配置里没有可用的 API Key，请检查配置。'
+          : sanitizeForUser(principal, '未配置 API Key（config/agent.json 或 config/credentials.json）'),
         cost: 0,
         turns: 0,
         isError: true,
@@ -146,7 +169,7 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
         apiKey,
         baseUrl,
         authMode,
-        agentEnv: getAgentEnv(),
+        agentEnv,
         cwd: workspace,
         resumeSessionId: persistSessionId || resumeId,
         systemPrompt,

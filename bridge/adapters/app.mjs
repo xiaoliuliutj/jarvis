@@ -33,6 +33,7 @@ import { resolvePrincipal } from '../../core/principals.mjs'
 import { getCurrentSession, readMessages } from '../../core/user-store.mjs'
 import * as appStore from '../../core/app-store.mjs'
 import { listCatalog, getTool as getCatalogTool } from '../../core/tool-catalog.mjs'
+import { resolveAnthropicCredentials } from '../../core/config.mjs'
 
 export const id = 'app'
 
@@ -311,14 +312,34 @@ function modelTestUrl(baseUrl, provider) {
 }
 
 async function testModelConnection(principalId, model) {
-  const apiKey = appStore.getSecret(principalId, `model:${model.id}`)
+  let apiKey = ''
+  let baseUrl = ''
+  let provider = model.provider || 'anthropic'
+  let authMode = model.authMode || 'both'
+  if (model.raw) {
+    const raw = appStore.getRawModelConfig(principalId, model.id)
+    if (!raw) return { ok: false, error: '原始配置不存在' }
+    const creds = resolveAnthropicCredentials(raw, {})
+    apiKey = creds.apiKey
+    baseUrl = creds.baseUrl
+    provider = 'anthropic'
+    authMode = creds.authMode
+  } else {
+    apiKey = appStore.getSecret(principalId, `model:${model.id}`) || ''
+    baseUrl = model.baseUrl || ''
+    provider = model.provider || 'anthropic'
+  }
   if (!apiKey) return { ok: false, error: '还没有配置 API Key' }
-  const url = modelTestUrl(model.baseUrl, model.provider)
+  const url = modelTestUrl(baseUrl, provider)
   if (!url) return { ok: false, error: '缺少 baseUrl' }
-  const isAnthropic = /anthropic/i.test(model.provider) || /anthropic/i.test(model.baseUrl)
-  const headers = isAnthropic
-    ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
-    : { 'Authorization': `Bearer ${apiKey}` }
+  const isAnthropic = /anthropic/i.test(provider) || /anthropic/i.test(baseUrl)
+  const headers = authMode === 'auth_token'
+    ? { 'Authorization': `Bearer ${apiKey}` }
+    : authMode === 'api_key'
+      ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
+      : (isAnthropic
+        ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Authorization': `Bearer ${apiKey}` }
+        : { 'Authorization': `Bearer ${apiKey}` })
   try {
     const resp = await fetch(url, {
       method: 'GET',

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=8" />
+  <link rel="stylesheet" href="/style.css?v=9" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -89,7 +89,7 @@
             <h3>模型与能力</h3>
             <button id="addModel" class="ghost-btn">添加模型</button>
           </div>
-          <p class="hint">普通用户需要配置自己的模型 API 才能聊天；Owner/主会话可回退全局模型。Key 只显示掩码。</p>
+          <p class="hint">LLM 配置整段 JSON 加密保存；普通用户需要配置自己的配置才能聊天；Owner/主会话可回退全局模型。</p>
           <div id="modelList" class="model-list"></div>
         </div>
 
@@ -165,15 +165,14 @@
       <div id="modelChatBox">
         <label>LLM 配置（JSON）
           <textarea id="modelConfigText" rows="9" spellcheck="false" placeholder='{
-  "name": "我的模型",
-  "provider": "anthropic",
-  "baseUrl": "https://...",
-  "model": "...",
-  "apiKey": "",
-  "enabled": true
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://...",
+    "ANTHROPIC_AUTH_TOKEN": "..."
+  },
+  "model": "opus"
 }'></textarea>
         </label>
-        <p class="hint">直接粘贴一个 JSON 对象即可。字段：name / provider / baseUrl / model / apiKey / enabled / authMode / priority / params。apiKey 留空表示保持原值。</p>
+        <p class="hint">整段 JSON 会加密保存，不拆分字段；兼容 Claude Code settings 格式（env.ANTHROPIC_* / model）。编辑时留空表示保持原配置。</p>
       </div>
 
       <div id="modelFields" class="hidden">
@@ -224,6 +223,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=8"></script>
+  <script src="/app.js?v=9"></script>
 </body>
 </html>

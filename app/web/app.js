@@ -1038,10 +1038,12 @@
       name.textContent = model.name || model.model || '未命名模型'
       const sub = document.createElement('div')
       sub.className = 'model-sub'
-      sub.textContent = `${capabilityLabel(model.capability)} · ${model.provider || 'custom'} · ${model.model || '—'}`
+      sub.textContent = model.raw
+        ? '原始 LLM 配置 · 已加密保存'
+        : `${capabilityLabel(model.capability)} · ${model.provider || 'custom'} · ${model.model || '—'}`
       const key = document.createElement('div')
       key.className = 'model-sub ' + (model.hasKey ? 'key-ok' : 'key-missing')
-      key.textContent = model.hasKey ? 'API Key 已配置' : 'API Key 未配置'
+      key.textContent = model.raw ? '配置已保存' : (model.hasKey ? 'API Key 已配置' : 'API Key 未配置')
       main.appendChild(name)
       main.appendChild(sub)
       main.appendChild(key)
@@ -1136,7 +1138,7 @@
     el.modelChatBox.classList.toggle('hidden', !chat)
     el.modelFields.classList.toggle('hidden', chat)
     el.modelHint.textContent = chat
-      ? '支持顶层 apiKey/baseUrl/model，也支持 env.ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL；普通用户需要自己的 Key，留空表示保持原值。'
+      ? '整段 JSON 加密保存；兼容 Claude Code settings（env.ANTHROPIC_* / model）。编辑时留空保持原配置。'
       : '图片/视频/语音模型先保存配置，实际 provider 适配在下一阶段。'
   }
 
@@ -1151,7 +1153,10 @@
     el.modelApiKey.value = ''
     el.modelEnabled.checked = model ? model.enabled !== false : true
     el.modelTestResult.textContent = ''
-    if (!model || model.capability === 'chat') {
+    if (model?.raw) {
+      el.modelConfigText.value = ''
+      el.modelConfigText.placeholder = '已保存一份配置；留空保持不变，粘贴新的整段 JSON 会覆盖'
+    } else if (!model || model.capability === 'chat') {
       const config = model
         ? {
             name: model.name || '',
@@ -1173,6 +1178,7 @@
             enabled: true,
           }
       el.modelConfigText.value = JSON.stringify(config, null, 2)
+      el.modelConfigText.placeholder = '粘贴整段 LLM 配置 JSON'
     }
     syncModelFields()
     el.modelModal.classList.remove('hidden')
@@ -1188,39 +1194,33 @@
     const capability = el.modelCapability.value
     let body
     if (capability === 'chat') {
-      let parsed
-      try {
-        parsed = JSON.parse(el.modelConfigText.value || '{}')
-      } catch {
-        el.modelTestResult.textContent = 'JSON 格式错误，请检查逗号和引号'
-        return
-      }
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        el.modelTestResult.textContent = '请粘贴一个 JSON 对象'
-        return
-      }
-      const cfg = extractLlmConfig(parsed)
-      if (!cfg.model) {
-        el.modelTestResult.textContent = '配置里缺少 model 字段'
-        return
-      }
+      const rawText = (el.modelConfigText.value || '').trim()
       const existing = state.models.find(m => m.id === state.editingModelId)
-      if (!cfg.apiKey && !existing?.hasKey) {
-        el.modelTestResult.textContent = '没有识别到 API Key。请把 Key 放在 apiKey，或 env.ANTHROPIC_API_KEY / env.ANTHROPIC_AUTH_TOKEN 里。'
-        return
+      if (!rawText) {
+        if (!existing?.raw) {
+          el.modelTestResult.textContent = '请粘贴整段 LLM 配置 JSON'
+          return
+        }
+        // 编辑已有原始配置：留空只更新元数据，保留原配置
+        body = { capability: 'chat', name: existing.name, enabled: existing.enabled }
+      } else {
+        let parsed
+        try {
+          parsed = JSON.parse(rawText)
+        } catch {
+          el.modelTestResult.textContent = 'JSON 格式错误，请检查逗号和引号'
+          return
+        }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          el.modelTestResult.textContent = '请粘贴一个 JSON 对象'
+          return
+        }
+        body = {
+          capability: 'chat',
+          rawConfig: parsed,
+          name: parsed.name || parsed.model || existing?.name || 'LLM 配置',
+        }
       }
-      body = {
-        capability: 'chat',
-        name: cfg.name || cfg.model,
-        provider: cfg.provider,
-        baseUrl: cfg.baseUrl,
-        model: cfg.model,
-        authMode: cfg.authMode,
-        params: cfg.params,
-        enabled: cfg.enabled,
-        priority: cfg.priority,
-      }
-      if (cfg.apiKey) body.apiKey = cfg.apiKey
     } else {
       body = {
         capability,

@@ -187,9 +187,10 @@ function writeModels(principalId, models) {
 }
 
 function publicModel(principalId, model) {
+  const hasRaw = !!model.raw && hasSecret(principalId, `model:${model.id}:raw`)
   return {
     ...model,
-    hasKey: hasSecret(principalId, `model:${model.id}`),
+    hasKey: hasRaw || hasSecret(principalId, `model:${model.id}`),
   }
 }
 
@@ -205,6 +206,49 @@ export function upsertModel(principalId, input = {}) {
   const id = String(input.id || `model_${crypto.randomBytes(6).toString('hex')}`)
   const existingIndex = models.models.findIndex(m => m.id === id)
   const existing = existingIndex >= 0 ? models.models[existingIndex] : {}
+
+  // 原始 LLM 配置：整段 JSON 加密保存，不拆 provider/baseUrl/model/apiKey。
+  // 只保留 name/enabled/priority 这类展示元数据。
+  if (capability === 'chat' && input.rawConfig !== undefined) {
+    let raw = input.rawConfig
+    if (typeof raw === 'string') {
+      try { raw = JSON.parse(raw) } catch { throw new Error('rawConfig JSON 格式错误') }
+    }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error('rawConfig 必须是 JSON 对象')
+    }
+    const entry = {
+      id,
+      capability: 'chat',
+      name: String(input.name || raw.name || raw.model || existing.name || 'LLM 配置').slice(0, 80),
+      raw: true,
+      enabled: input.enabled !== undefined ? !!input.enabled : (existing.enabled !== false),
+      priority: Number.isFinite(Number(input.priority)) ? Number(input.priority) : (existing.priority || 0),
+      createdAt: existing.createdAt || nowIso(),
+      updatedAt: nowIso(),
+    }
+    setSecret(principalId, `model:${id}:raw`, JSON.stringify(raw))
+    deleteSecret(principalId, `model:${id}`)
+    if (existingIndex >= 0) models.models[existingIndex] = entry
+    else models.models.push(entry)
+    writeModels(principalId, models.models)
+    return publicModel(principalId, entry)
+  }
+
+  // 原始配置的元数据更新（编辑时文本框留空，保持原配置）
+  if (existing.raw && input.rawConfig === undefined) {
+    const entry = {
+      ...existing,
+      name: String(input.name || existing.name || 'LLM 配置').slice(0, 80),
+      enabled: input.enabled !== undefined ? !!input.enabled : (existing.enabled !== false),
+      priority: Number.isFinite(Number(input.priority)) ? Number(input.priority) : (existing.priority || 0),
+      updatedAt: nowIso(),
+    }
+    if (existingIndex >= 0) models.models[existingIndex] = entry
+    writeModels(principalId, models.models)
+    return publicModel(principalId, entry)
+  }
+
   const entry = {
     ...existing,
     id,
@@ -236,15 +280,41 @@ export function deleteModel(principalId, id) {
   if (next.length === models.models.length) return false
   writeModels(principalId, next)
   deleteSecret(principalId, `model:${id}`)
+  deleteSecret(principalId, `model:${id}:raw`)
   return true
 }
 
-/** 供 conversation 使用：解析当前用户启用的 chat 模型（无配置返回 null）。 */
+/** 读取原始 LLM 配置（整段 JSON；含 Key，只在服务端内存使用）。 */
+export function getRawModelConfig(principalId, id) {
+  const text = getSecret(principalId, `model:${id}:raw`)
+  if (!text) return null
+  try {
+    const parsed = JSON.parse(text)
+    return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+/** 供 conversation 使用：优先原始配置，其次旧的分字段 chat 模型。 */
 export function getChatRuntime(principalId) {
   const models = readModels(principalId).models
     .filter(m => m.capability === 'chat' && m.enabled !== false)
     .sort((a, b) => (b.priority || 0) - (a.priority || 0))
   for (const model of models) {
+    if (model.raw) {
+      const rawConfig = getRawModelConfig(principalId, model.id)
+      if (!rawConfig) continue
+      return {
+        id: model.id,
+        name: model.name,
+        raw: true,
+        rawConfig,
+      }
+    }
+  }
+  for (const model of models) {
+    if (model.raw) continue
     const apiKey = getSecret(principalId, `model:${model.id}`)
     if (!apiKey) continue
     return {
