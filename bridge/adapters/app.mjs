@@ -629,7 +629,6 @@ function setupWs(httpServer) {
     } catch {}
 
     ws.send(JSON.stringify({ type: 'hello', clientId, deviceId, owner }))
-    if (owner) ws.send(JSON.stringify({ type: 'notice', text: 'Owner 权限已启用' }))
     for (const key of [clientId, deviceId]) {
       const queue = pending.get(key)
       if (!queue?.length) continue

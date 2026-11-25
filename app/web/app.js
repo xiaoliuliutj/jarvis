@@ -336,6 +336,8 @@
       return
     }
     if (msg.type === 'notice' && msg.text) {
+      // Owner 状态用顶栏标记表示，不再刷会话
+      if (String(msg.text).includes('Owner 权限已启用')) return
       appendMessage({ role: 'system', text: msg.text, ts: new Date().toISOString() })
       return
     }
