@@ -31,6 +31,7 @@ public class MainActivity extends Activity {
     private static final int REQ_FILE = 1001;
 
     private SharedPreferences prefs;
+    private LinearLayout toolbar;
     private LinearLayout setupPanel;
     private WebView webView;
     private EditText urlInput;
@@ -47,7 +48,8 @@ public class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.parseColor("#f7f5ef"));
 
-        root.addView(buildToolbar(), new LinearLayout.LayoutParams(
+        toolbar = buildToolbar();
+        root.addView(toolbar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         setupPanel = buildSetupPanel();
@@ -158,6 +160,15 @@ public class MainActivity extends Activity {
         settings.setUseWideViewPort(true);
 
         view.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView v, String url) {
+                super.onPageFinished(v, url);
+                // 页面正常加载后隐藏原生工具栏，只保留网页顶部状态栏
+                if (toolbar != null) {
+                    toolbar.setVisibility(View.GONE);
+                }
+            }
+
             @Override
             public boolean shouldOverrideUrlLoading(WebView v, android.webkit.WebResourceRequest request) {
                 Uri uri = request.getUrl();
