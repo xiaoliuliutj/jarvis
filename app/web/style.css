@@ -484,6 +484,62 @@ body { overflow: hidden; }
 }
 .device-item span { color: var(--muted); }
 
+/* ── attachment sheet ─────────────────────────────────────────────────── */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.sheet.hidden { display: none !important; }
+.sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(18, 59, 47, 0.35);
+}
+.sheet-panel {
+  position: relative;
+  background: var(--canvas);
+  border-radius: 18px 18px 0 0;
+  padding: 16px 14px calc(12px + env(safe-area-inset-bottom));
+  box-shadow: 0 -10px 40px rgba(18, 59, 47, 0.18);
+}
+.sheet-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.sheet-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.sheet-icon { font-size: 24px; line-height: 1; }
+.sheet-cancel {
+  width: 100%;
+  margin-top: 12px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
 /* ── overlay / modal ──────────────────────────────────────────────────── */
 
 .setup, .modal {

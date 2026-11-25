@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=12" />
+  <link rel="stylesheet" href="/style.css?v=13" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -125,6 +125,20 @@
     </nav>
   </div>
 
+  <div id="attachSheet" class="sheet hidden">
+    <div id="attachBackdrop" class="sheet-backdrop"></div>
+    <div class="sheet-panel">
+      <div class="sheet-grid">
+        <button class="sheet-item" data-kind="image"><span class="sheet-icon">🖼️</span><span>图片</span></button>
+        <button class="sheet-item" data-kind="camera"><span class="sheet-icon">📷</span><span>拍照</span></button>
+        <button class="sheet-item" data-kind="video"><span class="sheet-icon">🎬</span><span>视频</span></button>
+        <button class="sheet-item" data-kind="audio"><span class="sheet-icon">🎤</span><span>语音</span></button>
+        <button class="sheet-item" data-kind="file"><span class="sheet-icon">📄</span><span>文件</span></button>
+      </div>
+      <button id="attachCancel" class="sheet-cancel">取消</button>
+    </div>
+  </div>
+
   <div id="setup" class="setup hidden">
     <div class="setup-card">
       <h1>连接 Jarvis</h1>
@@ -223,6 +237,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=12"></script>
+  <script src="/app.js?v=13"></script>
 </body>
 </html>

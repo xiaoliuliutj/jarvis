@@ -192,10 +192,24 @@ public class MainActivity extends Activity {
                     fileCallback.onReceiveValue(null);
                 }
                 fileCallback = callback;
+                String[] acceptTypes = params.getAcceptTypes();
+                String mimeType = "*/*";
+                if (acceptTypes != null) {
+                    for (String accept : acceptTypes) {
+                        if (accept == null) continue;
+                        String first = accept.split(",")[0].trim();
+                        if (first.contains("/")) {
+                            mimeType = first;
+                            break;
+                        }
+                    }
+                }
                 Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
                 intent.addCategory(Intent.CATEGORY_OPENABLE);
-                intent.setType("*/*");
-                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                intent.setType(mimeType);
+                if (params.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) {
+                    intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                }
                 try {
                     startActivityForResult(Intent.createChooser(intent, "选择文件"), REQ_FILE);
                     return true;

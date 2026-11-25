@@ -57,6 +57,10 @@
     input: $('input'),
     send: $('sendBtn'),
     attach: $('attachBtn'),
+    attachSheet: $('attachSheet'),
+    attachBackdrop: $('attachBackdrop'),
+    attachCancel: $('attachCancel'),
+    attachItems: Array.from(document.querySelectorAll('.sheet-item')),
     fileInput: $('fileInput'),
     attachPreview: $('attachPreview'),
     toolCount: $('toolCount'),
@@ -535,7 +539,40 @@
   }
 
   // attachments
-  el.attach.addEventListener('click', () => el.fileInput.click())
+  el.attach.addEventListener('click', toggleAttachSheet)
+  el.attachBackdrop.addEventListener('click', closeAttachSheet)
+  el.attachCancel.addEventListener('click', closeAttachSheet)
+  for (const item of el.attachItems) {
+    item.addEventListener('click', () => pickAttachment(item.dataset.kind))
+  }
+
+  function toggleAttachSheet() {
+    const willOpen = el.attachSheet.classList.contains('hidden')
+    el.attachSheet.classList.toggle('hidden', !willOpen)
+    el.attach.setAttribute('aria-expanded', willOpen ? 'true' : 'false')
+  }
+  function closeAttachSheet() {
+    el.attachSheet.classList.add('hidden')
+    el.attach.setAttribute('aria-expanded', 'false')
+  }
+  function pickAttachment(kind) {
+    const configs = {
+      image: { accept: 'image/*', multiple: true },
+      camera: { accept: 'image/*', multiple: false, capture: 'environment' },
+      video: { accept: 'video/*', multiple: true },
+      audio: { accept: 'audio/*', multiple: false },
+      file: { accept: '', multiple: true },
+    }
+    const config = configs[kind] || configs.file
+    if (config.accept) el.fileInput.setAttribute('accept', config.accept)
+    else el.fileInput.removeAttribute('accept')
+    if (config.multiple) el.fileInput.setAttribute('multiple', '')
+    else el.fileInput.removeAttribute('multiple')
+    if (config.capture) el.fileInput.setAttribute('capture', config.capture)
+    else el.fileInput.removeAttribute('capture')
+    closeAttachSheet()
+    el.fileInput.click()
+  }
 
   el.fileInput.addEventListener('change', async () => {
     const files = Array.from(el.fileInput.files || [])
