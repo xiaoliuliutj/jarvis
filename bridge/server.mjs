@@ -193,6 +193,7 @@ export function routeIncoming({
   text,
   attachments = [],
   timestamp = new Date().toISOString(),
+  owner = false,
 }) {
   const principal = resolvePrincipal({ sourceType, accountId, externalUserId })
   ensureUser(principal.id)
@@ -204,6 +205,7 @@ export function routeIncoming({
     sourceType,
     textLen: String(text || '').length,
     attachments: attachments?.length || 0,
+    owner: !!owner,
   })
 
   // 让 PC 端实时看到用户发来的消息；source 只用于 UI/路由
@@ -276,6 +278,7 @@ export function routeIncoming({
         result = await runTurn({
           principalId: principal.id,
           prompt,
+          roleOverride: owner ? 'owner' : null,
           emit: (event) => broadcast({
             ...event,
             sourceType,
@@ -420,6 +423,7 @@ for (const [adapterId, adapterConf] of Object.entries(config.adapters ?? {})) {
       text: payload.text,
       attachments: payload.attachments,
       timestamp: payload.timestamp,
+      owner: payload.owner === true,
     }), { accountId }).catch(err => {
       logError('adapter.fail', err.message, { adapterId, accountId })
     })

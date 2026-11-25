@@ -46,8 +46,18 @@ function sanitizeForUser(principal, text) {
  * @param {(event: object) => void} opts.emit
  * @returns {Promise<{text, cost, turns, isError, sessionId}>}
  */
-export async function runTurn({ principalId, prompt, sessionId = null, forceNew = false, source = 'chat', emit = () => {} }) {
-  const principal = getPrincipal(principalId)
+export async function runTurn({ principalId, prompt, sessionId = null, forceNew = false, source = 'chat', emit = () => {}, roleOverride = null }) {
+  const basePrincipal = getPrincipal(principalId)
+  const principal = roleOverride
+    ? {
+        ...basePrincipal,
+        role: roleOverride,
+        capabilities: {
+          ...basePrincipal.capabilities,
+          editJarvisCode: roleOverride === 'owner' || roleOverride === 'maintainer',
+        },
+      }
+    : basePrincipal
 
   return withPrincipalLock(principalId, async () => {
     store.ensureUser(principalId)

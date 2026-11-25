@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=3" />
+  <link rel="stylesheet" href="/style.css?v=4" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -61,6 +61,10 @@
             <span>访问令牌</span>
             <span id="settingsToken">—</span>
           </div>
+          <div class="settings-row">
+            <span>Owner 令牌</span>
+            <span id="settingsOwnerToken">—</span>
+          </div>
         </div>
         <div class="settings-actions">
           <button id="editConnection" class="primary-btn">修改连接</button>
@@ -88,6 +92,9 @@
       <label>访问令牌
         <input id="setupToken" type="password" placeholder="userdata/app-adapter/token.txt" />
       </label>
+      <label>Owner 令牌（可选）
+        <input id="setupOwnerToken" type="password" placeholder="填写后获得 owner 权限" />
+      </label>
       <label>设备标识
         <input id="setupDevice" type="text" placeholder="owner" />
       </label>
@@ -96,6 +103,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=3"></script>
+  <script src="/app.js?v=4"></script>
 </body>
 </html>

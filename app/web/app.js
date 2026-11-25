@@ -5,6 +5,7 @@
   const KEYS = {
     url: 'jarvis.app.url',
     token: 'jarvis.app.token',
+    ownerToken: 'jarvis.app.ownerToken',
     device: 'jarvis.app.device',
     history: 'jarvis.app.history',
   }
@@ -22,6 +23,7 @@
     setup: document.getElementById('setup'),
     setupUrl: document.getElementById('setupUrl'),
     setupToken: document.getElementById('setupToken'),
+    setupOwnerToken: document.getElementById('setupOwnerToken'),
     setupDevice: document.getElementById('setupDevice'),
     setupSave: document.getElementById('setupSave'),
     setupError: document.getElementById('setupError'),
@@ -37,6 +39,7 @@
     settingsUrl: document.getElementById('settingsUrl'),
     settingsDevice: document.getElementById('settingsDevice'),
     settingsToken: document.getElementById('settingsToken'),
+    settingsOwnerToken: document.getElementById('settingsOwnerToken'),
     editConnection: document.getElementById('editConnection'),
     reconnectBtn: document.getElementById('reconnectBtn'),
     clearLocalBtn: document.getElementById('clearLocalBtn'),
@@ -45,6 +48,7 @@
   const state = {
     url: '',
     token: '',
+    ownerToken: '',
     device: 'owner',
     ws: null,
     retry: 0,
@@ -80,15 +84,18 @@
   function initConfig() {
     const params = new URLSearchParams(location.search)
     const qToken = params.get('token')
+    const qOwnerToken = params.get('ownerToken')
     const qDevice = params.get('device')
     if (qToken) write(KEYS.token, qToken)
+    if (qOwnerToken) write(KEYS.ownerToken, qOwnerToken)
     if (qDevice) write(KEYS.device, qDevice)
-    if (qToken || qDevice) {
+    if (qToken || qOwnerToken || qDevice) {
       try { history.replaceState(null, '', location.pathname) } catch {}
     }
 
     state.url = (read(KEYS.url, '') || location.origin).replace(/\/+$/, '')
     state.token = read(KEYS.token, '')
+    state.ownerToken = read(KEYS.ownerToken, '')
     state.device = read(KEYS.device, 'owner') || 'owner'
     write(KEYS.url, state.url)
   }
@@ -96,6 +103,7 @@
   function openSetup(error) {
     el.setupUrl.value = state.url || location.origin
     el.setupToken.value = state.token || ''
+    el.setupOwnerToken.value = state.ownerToken || ''
     el.setupDevice.value = state.device || 'owner'
     el.setupError.textContent = error || ''
     el.setup.classList.remove('hidden')
@@ -109,15 +117,18 @@
   el.setupSave.addEventListener('click', () => {
     const url = (el.setupUrl.value || '').trim().replace(/\/+$/, '')
     const token = (el.setupToken.value || '').trim()
+    const ownerToken = (el.setupOwnerToken.value || '').trim()
     const device = (el.setupDevice.value || 'owner').trim()
     if (!/^https?:\/\//i.test(url)) { el.setupError.textContent = '地址要以 http:// 或 https:// 开头'; return }
     if (!token) { el.setupError.textContent = '请填写访问令牌'; return }
     state.url = url
     state.token = token
+    state.ownerToken = ownerToken
     state.device = device || 'owner'
     state.authFailed = false
     write(KEYS.url, state.url)
     write(KEYS.token, state.token)
+    write(KEYS.ownerToken, state.ownerToken)
     write(KEYS.device, state.device)
     closeSetup()
     connect()
@@ -152,7 +163,9 @@
 
   function wsUrl() {
     const base = state.url.replace(/^http/i, 'ws')
-    return `${base}/ws?token=${encodeURIComponent(state.token)}&device=${encodeURIComponent(state.device)}`
+    let url = `${base}/ws?token=${encodeURIComponent(state.token)}&device=${encodeURIComponent(state.device)}`
+    if (state.ownerToken) url += `&ownerToken=${encodeURIComponent(state.ownerToken)}`
+    return url
   }
 
   function connect() {
@@ -405,6 +418,7 @@
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${state.token}`,
           'X-Device-Id': state.device,
+          ...(state.ownerToken ? { 'X-Owner-Token': state.ownerToken } : {}),
         },
         body: JSON.stringify({ text, attachments }),
       })
@@ -438,7 +452,10 @@
   async function fetchHistory() {
     if (!state.token) return []
     const res = await fetch(`${state.url}/api/history?device=${encodeURIComponent(state.device)}`, {
-      headers: { 'Authorization': `Bearer ${state.token}` },
+      headers: {
+        'Authorization': `Bearer ${state.token}`,
+        ...(state.ownerToken ? { 'X-Owner-Token': state.ownerToken } : {}),
+      },
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
@@ -515,6 +532,13 @@
       el.settingsToken.textContent = '已配置'
     } else {
       el.settingsToken.textContent = `${state.token.slice(0, 4)}****${state.token.slice(-4)}`
+    }
+    if (!state.ownerToken) {
+      el.settingsOwnerToken.textContent = '未配置'
+    } else if (state.ownerToken.length <= 8) {
+      el.settingsOwnerToken.textContent = '已配置'
+    } else {
+      el.settingsOwnerToken.textContent = `${state.ownerToken.slice(0, 4)}****${state.ownerToken.slice(-4)}`
     }
     el.settingsStatus.textContent = el.status.textContent || '—'
   }

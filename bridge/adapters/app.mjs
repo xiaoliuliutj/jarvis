@@ -36,6 +36,7 @@ export const id = 'app'
 
 const APP_WEB_DIR = path.join(ROOT, 'app', 'web')
 const TOKEN_FILE = path.join(ROOT, 'userdata', 'app-adapter', 'token.txt')
+const OWNER_TOKEN_FILE = path.join(ROOT, 'userdata', 'app-adapter', 'owner-token.txt')
 const FILES_DIR = path.join(ROOT, 'userdata', 'app-adapter', 'files')
 const DEFAULT_PORT = 17779
 const MAX_TEXT_CHARS = 20000
@@ -81,6 +82,36 @@ function tokenOk(input) {
   const provided = Buffer.from(String(input || ''))
   const expected = Buffer.from(accessToken)
   return provided.length === expected.length && crypto.timingSafeEqual(provided, expected)
+}
+
+/** owner-token.txt：管理员令牌，匹配时把当前用户按 owner 角色处理；明文不打印。 */
+function readOwnerToken() {
+  try {
+    if (!fs.existsSync(OWNER_TOKEN_FILE)) return ''
+    return fs.readFileSync(OWNER_TOKEN_FILE, 'utf-8').trim()
+  } catch {
+    return ''
+  }
+}
+
+function ownerTokenFromRequest(req, url = null) {
+  const header = typeof req.get === 'function'
+    ? req.get('X-Owner-Token')
+    : req.headers?.['x-owner-token']
+  const query = url
+    ? url.searchParams.get('ownerToken')
+    : (req.query?.ownerToken || '')
+  return String(header || query || '')
+}
+
+function ownerTokenOk(req, url = null) {
+  const expected = readOwnerToken()
+  if (!expected) return false
+  const provided = ownerTokenFromRequest(req, url)
+  if (!provided) return false
+  const a = crypto.createHash('sha256').update(provided).digest()
+  const b = crypto.createHash('sha256').update(expected).digest()
+  return crypto.timingSafeEqual(a, b)
 }
 
 function sanitizeDevice(value) {
@@ -185,6 +216,7 @@ function buildServer() {
   // 历史消息：与微信共用同一个 principal / 当前会话
   app.get('/api/history', auth, (req, res) => {
     const deviceId = getDevice(req)
+    const owner = ownerTokenOk(req)
     try {
       const principal = resolvePrincipal({
         sourceType: 'app',
@@ -192,7 +224,7 @@ function buildServer() {
         externalUserId: deviceId,
       })
       const session = getCurrentSession(principal.id)
-      if (!session) return res.json({ ok: true, messages: [] })
+      if (!session) return res.json({ ok: true, messages: [], owner })
       const messages = readMessages(principal.id, session.sessionId)
         .filter(r => (r.type === 'user' || r.type === 'assistant') && typeof r.text === 'string' && r.text.trim())
         .slice(-80)
@@ -201,7 +233,7 @@ function buildServer() {
           text: r.text,
           ts: r.timestamp || '',
         }))
-      res.json({ ok: true, messages })
+      res.json({ ok: true, messages, owner })
     } catch (err) {
       logError('app.history.fail', err.message, { deviceId })
       res.status(500).json({ ok: false, error: '读取历史消息失败' })
@@ -210,6 +242,7 @@ function buildServer() {
 
   app.post('/api/message', auth, (req, res) => {
     const deviceId = getDevice(req)
+    const owner = ownerTokenOk(req)
     if (!checkRate(deviceId)) {
       return res.status(429).json({ ok: false, error: '消息太频繁，稍等一下喵' })
     }
@@ -240,8 +273,9 @@ function buildServer() {
         text,
         attachments,
         timestamp: new Date().toISOString(),
+        owner,
       })
-      logInfo('app.message.in', '', { deviceId, textLen: text.length, attachments: attachments.length })
+      logInfo('app.message.in', '', { deviceId, textLen: text.length, attachments: attachments.length, owner })
       res.json({ ok: true })
     } catch (err) {
       logError('app.message.fail', err.message, { deviceId })
@@ -279,12 +313,14 @@ function setupWs(httpServer) {
       return
     }
     const deviceId = sanitizeDevice(url.searchParams.get('device') || 'owner')
+    const owner = ownerTokenOk(req, url)
     let set = clients.get(deviceId)
     if (!set) { set = new Set(); clients.set(deviceId, set) }
     set.add(ws)
     ws.deviceId = deviceId
 
-    ws.send(JSON.stringify({ type: 'hello', deviceId }))
+    ws.send(JSON.stringify({ type: 'hello', deviceId, owner }))
+    if (owner) ws.send(JSON.stringify({ type: 'notice', text: 'Owner 权限已启用' }))
     const queue = pending.get(deviceId)
     if (queue?.length) {
       for (const payload of queue) {
@@ -307,7 +343,7 @@ function setupWs(httpServer) {
       if (bucket.size === 0) clients.delete(deviceId)
     })
 
-    logInfo('app.ws.connect', '', { deviceId })
+    logInfo('app.ws.connect', '', { deviceId, owner })
   })
 
   keepAliveTimer = setInterval(() => {
