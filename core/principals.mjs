@@ -23,6 +23,10 @@ function writeRegistry(registry) {
 function capabilitiesForRole(role) {
   return {
     editJarvisCode: role === 'maintainer' || role === 'owner',
+    // 全局模型/全局 API 属于特权能力；普通用户默认必须配置自己的 Key。
+    // 需要让某个普通用户使用全局模型时，可在 principals.json 显式加
+    // "capabilities": { "useGlobalModel": true }。
+    useGlobalModel: role === 'maintainer' || role === 'owner',
   }
 }
 

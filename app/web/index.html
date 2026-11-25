@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=6" />
+  <link rel="stylesheet" href="/style.css?v=7" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -89,7 +89,7 @@
             <h3>模型与能力</h3>
             <button id="addModel" class="ghost-btn">添加模型</button>
           </div>
-          <p class="hint">每个用户可以配置自己的模型 API；未配置时聊天会自动使用全局模型；Key 只显示掩码。</p>
+          <p class="hint">普通用户需要配置自己的模型 API 才能聊天；Owner/主会话可回退全局模型。Key 只显示掩码。</p>
           <div id="modelList" class="model-list"></div>
         </div>
 
@@ -224,6 +224,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=6"></script>
+  <script src="/app.js?v=7"></script>
 </body>
 </html>

@@ -1024,7 +1024,7 @@
     if (!state.models.length) {
       const empty = document.createElement('div')
       empty.className = 'empty-state'
-      empty.textContent = '还没有用户模型配置；聊天会自动使用全局模型。点右上角添加可覆盖全局配置。'
+      empty.textContent = '还没有用户模型配置；普通用户需要先配置自己的模型 API。点右上角添加。'
       el.modelList.appendChild(empty)
       return
     }
@@ -1073,7 +1073,7 @@
     el.modelChatBox.classList.toggle('hidden', !chat)
     el.modelFields.classList.toggle('hidden', chat)
     el.modelHint.textContent = chat
-      ? '直接粘贴一个 JSON 对象；apiKey 留空表示保持原值。'
+      ? '直接粘贴一个 JSON 对象；普通用户需要配置自己的 Key，apiKey 留空表示保持原值。'
       : '图片/视频/语音模型先保存配置，实际 provider 适配在下一阶段。'
   }
 

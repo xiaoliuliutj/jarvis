@@ -19,7 +19,7 @@ import { buildCanUseTool } from './permissions.mjs'
 import { buildMcpServers } from './tools.mjs'
 import { getAgentEnv, getAnthropicCredentials, getModel } from './config.mjs'
 import { logInfo, logWarn, logError } from './logger.mjs'
-import { getChatRuntime, appendUsage } from './app-store.mjs'
+import { getChatRuntime, listModels, appendUsage } from './app-store.mjs'
 
 const locks = new Map()
 
@@ -56,6 +56,7 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
         capabilities: {
           ...basePrincipal.capabilities,
           editJarvisCode: roleOverride === 'owner' || roleOverride === 'maintainer',
+          useGlobalModel: roleOverride === 'owner' || roleOverride === 'maintainer',
         },
       }
     : basePrincipal
@@ -75,8 +76,26 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
     const mcpServers = buildMcpServers(principal)
     const canUseTool = buildCanUseTool({ principal, workspace })
 
-    const globalCreds = getAnthropicCredentials()
     const userModel = getChatRuntime(principalId)
+    const canUseGlobal = !!principal.capabilities?.useGlobalModel
+      || principal.role === 'owner'
+      || principal.role === 'maintainer'
+
+    // 普通用户没有自己的模型 Key 时，不能静默使用 owner 的全局 Key。
+    if (!userModel && !canUseGlobal) {
+      const hasChatConfig = listModels(principalId).some(m => m.capability === 'chat' && m.enabled !== false)
+      return {
+        text: hasChatConfig
+          ? '你的对话模型还没有配置 API Key，请在 App 设置 → 模型与能力里补上。'
+          : '当前账号还没有配置对话模型 API，请在 App 设置 → 模型与能力里添加自己的模型。',
+        cost: 0,
+        turns: 0,
+        isError: true,
+        sessionId: resumeId,
+      }
+    }
+
+    const globalCreds = getAnthropicCredentials()
     const apiKey = userModel?.apiKey || globalCreds.apiKey
     const baseUrl = userModel?.baseUrl || globalCreds.baseUrl
     const authMode = userModel?.authMode || globalCreds.authMode
