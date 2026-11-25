@@ -1068,12 +1068,75 @@
     return ({ chat: '对话', image: '图片', video: '视频', voice: '语音', embedding: 'Embedding' })[capability] || capability
   }
 
+  function firstValue(...values) {
+    for (const value of values) {
+      if (value !== undefined && value !== null && String(value).trim() !== '') return value
+    }
+    return ''
+  }
+
+  /** 兼容常见 LLM 配置文件：顶层字段、config/credentials/auth、env.ANTHROPIC_*。 */
+  function extractLlmConfig(parsed) {
+    const env = (parsed.env && typeof parsed.env === 'object') ? parsed.env : {}
+    const sources = [parsed, parsed.config, parsed.credentials, parsed.auth, parsed.authentication]
+      .filter(object => object && typeof object === 'object')
+    const sourceValue = (keys) => {
+      for (const source of sources) {
+        for (const key of keys) {
+          const value = source[key]
+          if (value !== undefined && value !== null && String(value).trim() !== '') return value
+        }
+      }
+      return ''
+    }
+    const apiKey = firstValue(
+      sourceValue(['apiKey', 'api_key', 'key', 'token', 'authToken', 'accessToken']),
+      env.ANTHROPIC_API_KEY,
+      env.ANTHROPIC_AUTH_TOKEN,
+      env.OPENAI_API_KEY,
+      env.API_KEY,
+      env.TOKEN,
+    )
+    const baseUrl = firstValue(
+      sourceValue(['baseUrl', 'base_url', 'baseURL', 'endpoint', 'url']),
+      env.ANTHROPIC_BASE_URL,
+      env.OPENAI_BASE_URL,
+      env.BASE_URL,
+      env.API_BASE_URL,
+    )
+    const model = firstValue(
+      sourceValue(['model', 'model_name', 'modelName']),
+      parsed.model_name,
+      parsed.modelName,
+    )
+    const name = firstValue(sourceValue(['name', 'title', 'displayName']), model)
+    const provider = firstValue(
+      sourceValue(['provider', 'type']),
+      env.OPENAI_API_KEY ? 'openai' : 'anthropic',
+    )
+    const inferredAuthMode = (env.ANTHROPIC_AUTH_TOKEN && !env.ANTHROPIC_API_KEY)
+      ? 'auth-token'
+      : ((env.ANTHROPIC_API_KEY && !env.ANTHROPIC_AUTH_TOKEN) ? 'api-key' : 'both')
+    const authMode = firstValue(sourceValue(['authMode', 'auth_mode']), env.AUTH_MODE, inferredAuthMode)
+    return {
+      apiKey: String(apiKey || '').trim(),
+      baseUrl: String(baseUrl || '').trim(),
+      model: String(model || '').trim(),
+      name: String(name || '').trim(),
+      provider: String(provider || 'anthropic'),
+      authMode: String(authMode || 'both'),
+      params: (parsed.params && typeof parsed.params === 'object') ? parsed.params : {},
+      enabled: parsed.enabled !== false,
+      priority: Number(parsed.priority) || 0,
+    }
+  }
+
   function syncModelFields() {
     const chat = el.modelCapability.value === 'chat'
     el.modelChatBox.classList.toggle('hidden', !chat)
     el.modelFields.classList.toggle('hidden', chat)
     el.modelHint.textContent = chat
-      ? '直接粘贴一个 JSON 对象；普通用户需要配置自己的 Key，apiKey 留空表示保持原值。'
+      ? '支持顶层 apiKey/baseUrl/model，也支持 env.ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL；普通用户需要自己的 Key，留空表示保持原值。'
       : '图片/视频/语音模型先保存配置，实际 provider 适配在下一阶段。'
   }
 
@@ -1136,23 +1199,28 @@
         el.modelTestResult.textContent = '请粘贴一个 JSON 对象'
         return
       }
-      const apiKey = parsed.apiKey || parsed.api_key || parsed.key || ''
-      body = {
-        capability: 'chat',
-        name: String(parsed.name || parsed.title || '').trim(),
-        provider: parsed.provider || 'anthropic',
-        baseUrl: String(parsed.baseUrl || parsed.base_url || '').trim(),
-        model: String(parsed.model || parsed.model_name || '').trim(),
-        authMode: parsed.authMode || parsed.auth_mode || 'both',
-        params: (parsed.params && typeof parsed.params === 'object') ? parsed.params : {},
-        enabled: parsed.enabled !== false,
-        priority: Number(parsed.priority) || 0,
-      }
-      if (apiKey) body.apiKey = String(apiKey)
-      if (!body.model) {
+      const cfg = extractLlmConfig(parsed)
+      if (!cfg.model) {
         el.modelTestResult.textContent = '配置里缺少 model 字段'
         return
       }
+      const existing = state.models.find(m => m.id === state.editingModelId)
+      if (!cfg.apiKey && !existing?.hasKey) {
+        el.modelTestResult.textContent = '没有识别到 API Key。请把 Key 放在 apiKey，或 env.ANTHROPIC_API_KEY / env.ANTHROPIC_AUTH_TOKEN 里。'
+        return
+      }
+      body = {
+        capability: 'chat',
+        name: cfg.name || cfg.model,
+        provider: cfg.provider,
+        baseUrl: cfg.baseUrl,
+        model: cfg.model,
+        authMode: cfg.authMode,
+        params: cfg.params,
+        enabled: cfg.enabled,
+        priority: cfg.priority,
+      }
+      if (cfg.apiKey) body.apiKey = cfg.apiKey
     } else {
       body = {
         capability,
