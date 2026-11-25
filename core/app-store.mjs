@@ -469,23 +469,43 @@ export function usageSummary(principalId, { month = monthKey() } = {}) {
 
 // ── devices ──────────────────────────────────────────────────────────────────
 
+function normalizeDevices(devices = {}) {
+  const byDevice = new Map()
+  for (const [key, item] of Object.entries(devices || {})) {
+    if (!item || typeof item !== 'object') continue
+    const deviceId = item.deviceId || key
+    const entry = {
+      deviceId,
+      clientId: item.clientId || key,
+      name: item.name || deviceId || 'App',
+      lastSeen: item.lastSeen || nowIso(),
+    }
+    const prev = byDevice.get(deviceId)
+    if (!prev || new Date(entry.lastSeen) > new Date(prev.lastSeen)) {
+      byDevice.set(deviceId, entry)
+    }
+  }
+  return Object.fromEntries(byDevice)
+}
+
 function readDevices(principalId) {
   const data = readJson(appFile(principalId, 'devices.json'), {})
-  return { version: 1, devices: (data.devices && typeof data.devices === 'object') ? data.devices : {} }
+  return { version: 1, devices: normalizeDevices(data.devices) }
 }
 
 export function recordDevice(principalId, { clientId, deviceId, name = '' } = {}) {
   if (!clientId) return null
   const data = readDevices(principalId)
-  data.devices[clientId] = {
+  const key = deviceId || clientId
+  data.devices[key] = {
+    deviceId: key,
     clientId,
-    deviceId: deviceId || '',
-    name: name || deviceId || 'App',
+    name: name || deviceId || key || 'App',
     lastSeen: nowIso(),
   }
   ensureAppDir(principalId)
   writeJson(appFile(principalId, 'devices.json'), data)
-  return data.devices[clientId]
+  return data.devices[key]
 }
 
 export function listDevices(principalId) {
@@ -493,10 +513,13 @@ export function listDevices(principalId) {
     .sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen))
 }
 
-export function removeDevice(principalId, clientId) {
+export function removeDevice(principalId, key) {
   const data = readDevices(principalId)
-  if (!data.devices[clientId]) return false
-  delete data.devices[clientId]
+  const deviceId = Object.keys(data.devices).find(k =>
+    k === key || data.devices[k]?.clientId === key
+  )
+  if (!deviceId) return false
+  delete data.devices[deviceId]
   writeJson(appFile(principalId, 'devices.json'), data)
   return true
 }

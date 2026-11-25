@@ -1285,7 +1285,10 @@
         const item = document.createElement('div')
         item.className = 'device-item'
         const name = document.createElement('span')
-        name.textContent = `${device.name || device.deviceId || 'App'} · ${device.deviceId || ''}`
+        const deviceName = device.name || device.deviceId || 'App'
+        name.textContent = device.deviceId && deviceName !== device.deviceId
+          ? `${deviceName} · ${device.deviceId}`
+          : deviceName
         const last = document.createElement('span')
         last.textContent = formatTime(device.lastSeen)
         item.appendChild(name)
