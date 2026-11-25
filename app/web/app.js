@@ -1,4 +1,4 @@
-/* Jarvis App 端 Demo —— 依赖后端 /api/message + /ws */
+/* Jarvis App 管理台 —— 聊天 / 历史 / 设置 */
 (function () {
   'use strict'
 
@@ -19,13 +19,27 @@
     preview: document.getElementById('attachPreview'),
     dot: document.getElementById('statusDot'),
     status: document.getElementById('statusText'),
-    settings: document.getElementById('settingsBtn'),
     setup: document.getElementById('setup'),
     setupUrl: document.getElementById('setupUrl'),
     setupToken: document.getElementById('setupToken'),
     setupDevice: document.getElementById('setupDevice'),
     setupSave: document.getElementById('setupSave'),
     setupError: document.getElementById('setupError'),
+    views: {
+      chat: document.getElementById('view-chat'),
+      history: document.getElementById('view-history'),
+      settings: document.getElementById('view-settings'),
+    },
+    navButtons: Array.from(document.querySelectorAll('.nav-btn')),
+    historyList: document.getElementById('historyList'),
+    historyRefresh: document.getElementById('historyRefresh'),
+    settingsStatus: document.getElementById('settingsStatus'),
+    settingsUrl: document.getElementById('settingsUrl'),
+    settingsDevice: document.getElementById('settingsDevice'),
+    settingsToken: document.getElementById('settingsToken'),
+    editConnection: document.getElementById('editConnection'),
+    reconnectBtn: document.getElementById('reconnectBtn'),
+    clearLocalBtn: document.getElementById('clearLocalBtn'),
   }
 
   const state = {
@@ -38,6 +52,7 @@
     attachments: [],
     typingEl: null,
     typingTimer: null,
+    tab: 'chat',
   }
 
   // ── 存储 ────────────────────────────────────────────────────────────────
@@ -46,6 +61,9 @@
   }
   function write(key, value) {
     try { localStorage.setItem(key, value) } catch {}
+  }
+  function remove(key) {
+    try { localStorage.removeItem(key) } catch {}
   }
 
   function historyKey() {
@@ -104,14 +122,32 @@
     closeSetup()
     connect()
     renderAll()
+    renderSettings()
+    showTab('chat')
   })
 
-  el.settings.addEventListener('click', () => openSetup(''))
+  el.editConnection.addEventListener('click', () => openSetup(''))
+  el.reconnectBtn.addEventListener('click', () => {
+    state.authFailed = false
+    if (state.ws) {
+      try { state.ws.close() } catch {}
+      state.ws = null
+    }
+    setStatus('连接中…', '')
+    connect()
+  })
+  el.clearLocalBtn.addEventListener('click', () => {
+    remove(historyKey())
+    renderAll()
+    loadServerHistory()
+    appendMessage({ role: 'system', text: '本地缓存已清空，正在从服务端重新同步', ts: new Date().toISOString() })
+  })
 
-  // ── 连接 ────────────────────────────────────────────────────────────────
+  // ── 状态 / 连接 ─────────────────────────────────────────────────────────
   function setStatus(text, mode) {
     el.status.textContent = text
     el.dot.className = 'dot' + (mode ? ' ' + mode : '')
+    if (el.settingsStatus) el.settingsStatus.textContent = text
   }
 
   function wsUrl() {
@@ -155,18 +191,14 @@
       scheduleReconnect()
     }
 
-    ws.onerror = () => {
-      setStatus('连接失败', 'offline')
-    }
+    ws.onerror = () => setStatus('连接失败', 'offline')
   }
 
   function scheduleReconnect() {
     if (!state.token || state.authFailed) return
     state.retry = Math.min(state.retry + 1, 6)
     const delay = Math.min(1000 * Math.pow(1.6, state.retry), 15000)
-    setTimeout(() => {
-      if (!state.ws) connect()
-    }, delay)
+    setTimeout(() => { if (!state.ws) connect() }, delay)
   }
 
   setInterval(() => {
@@ -192,6 +224,25 @@
     } else if (msg.type === 'notice') {
       appendMessage({ role: 'system', text: msg.text || '', ts: new Date().toISOString() })
     }
+  }
+
+  // ── 标签页 ──────────────────────────────────────────────────────────────
+  function showTab(name) {
+    if (!el.views[name]) return
+    state.tab = name
+    for (const key of Object.keys(el.views)) {
+      el.views[key].classList.toggle('hidden', key !== name)
+    }
+    for (const btn of el.navButtons) {
+      btn.classList.toggle('active', btn.dataset.tab === name)
+    }
+    if (name === 'chat') scrollToBottom()
+    if (name === 'history') loadHistoryView()
+    if (name === 'settings') renderSettings()
+  }
+
+  for (const btn of el.navButtons) {
+    btn.addEventListener('click', () => showTab(btn.dataset.tab))
   }
 
   // ── 渲染 ────────────────────────────────────────────────────────────────
@@ -316,15 +367,15 @@
       chip.className = 'attach-chip'
       const name = document.createElement('span')
       name.textContent = att.fileName.length > 16 ? att.fileName.slice(0, 14) + '…' : att.fileName
-      const remove = document.createElement('button')
-      remove.textContent = '×'
-      remove.type = 'button'
-      remove.addEventListener('click', () => {
+      const removeBtn = document.createElement('button')
+      removeBtn.textContent = '×'
+      removeBtn.type = 'button'
+      removeBtn.addEventListener('click', () => {
         state.attachments.splice(index, 1)
         renderAttachments()
       })
       chip.appendChild(name)
-      chip.appendChild(remove)
+      chip.appendChild(removeBtn)
       el.preview.appendChild(chip)
     })
   }
@@ -340,11 +391,7 @@
     const displayText = attachNames
       ? `${text}${text ? '\n' : ''}📎 ${attachNames}`
       : text
-    appendMessage({
-      role: 'user',
-      text: displayText,
-      ts: new Date().toISOString(),
-    })
+    appendMessage({ role: 'user', text: displayText, ts: new Date().toISOString() })
     el.input.value = ''
     state.attachments = []
     renderAttachments()
@@ -387,24 +434,96 @@
     el.input.style.height = Math.min(el.input.scrollHeight, 132) + 'px'
   }
 
-  // ── 启动 ────────────────────────────────────────────────────────────────
+  // ── 历史 ────────────────────────────────────────────────────────────────
+  async function fetchHistory() {
+    if (!state.token) return []
+    const res = await fetch(`${state.url}/api/history?device=${encodeURIComponent(state.device)}`, {
+      headers: { 'Authorization': `Bearer ${state.token}` },
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    return Array.isArray(data.messages) ? data.messages : []
+  }
+
   async function loadServerHistory() {
-    if (!state.token) return
     try {
-      const res = await fetch(`${state.url}/api/history?device=${encodeURIComponent(state.device)}`, {
-        headers: { 'Authorization': `Bearer ${state.token}` },
-      })
-      if (!res.ok) return
-      const data = await res.json()
-      if (Array.isArray(data.messages) && data.messages.length) {
-        saveHistory(data.messages.slice(-MAX_HISTORY))
+      const messages = await fetchHistory()
+      if (messages.length) {
+        saveHistory(messages.slice(-MAX_HISTORY))
         renderAll()
       }
     } catch {}
   }
 
+  async function loadHistoryView() {
+    if (!state.token) {
+      el.historyList.innerHTML = '<div class="history-empty">请先在设置里配置连接</div>'
+      return
+    }
+    el.historyList.innerHTML = '<div class="history-empty">加载中…</div>'
+    try {
+      const messages = await fetchHistory()
+      renderHistoryList(messages)
+    } catch (err) {
+      // 旧版 Bridge 可能还没有 /api/history：先显示本地记录
+      const local = loadHistory()
+      renderHistoryList(local)
+      const note = document.createElement('div')
+      note.className = 'history-empty'
+      note.textContent = `服务端历史暂不可用（${err.message}），先显示本地记录`
+      el.historyList.prepend(note)
+    }
+  }
+
+  function renderHistoryList(messages) {
+    el.historyList.textContent = ''
+    if (!messages.length) {
+      const empty = document.createElement('div')
+      empty.className = 'history-empty'
+      empty.textContent = '还没有历史消息'
+      el.historyList.appendChild(empty)
+      return
+    }
+    for (const msg of messages) {
+      const item = document.createElement('div')
+      item.className = 'history-item'
+      const who = document.createElement('div')
+      who.className = 'who'
+      who.textContent = `${msg.role === 'user' ? '我' : 'Jarvis'} · ${formatTime(msg.ts)}`
+      const text = document.createElement('div')
+      text.className = 'text'
+      text.textContent = msg.text || ''
+      item.appendChild(who)
+      item.appendChild(text)
+      el.historyList.appendChild(item)
+    }
+  }
+
+  function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+  }
+
+  el.historyRefresh.addEventListener('click', loadHistoryView)
+
+  // ── 设置 ────────────────────────────────────────────────────────────────
+  function renderSettings() {
+    el.settingsUrl.textContent = state.url || '—'
+    el.settingsDevice.textContent = state.device || '—'
+    if (!state.token) {
+      el.settingsToken.textContent = '未配置'
+    } else if (state.token.length <= 8) {
+      el.settingsToken.textContent = '已配置'
+    } else {
+      el.settingsToken.textContent = `${state.token.slice(0, 4)}****${state.token.slice(-4)}`
+    }
+    el.settingsStatus.textContent = el.status.textContent || '—'
+  }
+
+  // ── 启动 ────────────────────────────────────────────────────────────────
   initConfig()
   renderAll()
+  renderSettings()
+  showTab('chat')
   if (!state.token) {
     setStatus('未配置', 'offline')
     openSetup('')
