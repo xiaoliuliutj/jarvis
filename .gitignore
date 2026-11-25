@@ -5,6 +5,7 @@ node_modules/
 dist/
 out/
 .vite/
+app/web/dl/
 
 # ── 日志 ──────────────────────────────────────────────
 *.log
