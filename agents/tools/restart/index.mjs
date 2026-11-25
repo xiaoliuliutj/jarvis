@@ -126,8 +126,8 @@ server.tool(
       skipChecks,
       noBuild: true,
       request: () => bridgePost('/restart-bridge'),
-      successText: '✅ Bridge Server 已重启并通过健康检查。',
-      verify: waitForBridgeHealth,
+      // 新 Bridge 会等当前回合结束再退出；不再等待健康检查，避免工具/回合被截断。
+      successText: '✅ Bridge 重启已排队，将在当前回合结束后执行。',
     })
   }
 )

@@ -537,9 +537,26 @@ function restartBridgeProcess(delayMs = 500) {
   }, delayMs)
 }
 
+let bridgeRestartQueued = false
+
+/** 等调度器没有 active/queued 回合后再退出，避免截断当前回复。 */
+function scheduleBridgeRestart(delayMs = 500) {
+  if (bridgeRestartQueued) return
+  bridgeRestartQueued = true
+  const check = () => {
+    const status = scheduler.getStatus()
+    if (status.active === 0 && status.principals.length === 0) {
+      restartBridgeProcess(delayMs)
+      return
+    }
+    setTimeout(check, 1000)
+  }
+  setTimeout(check, delayMs)
+}
+
 app.post('/restart-bridge', (_req, res) => {
-  res.json({ ok: true, message: 'Bridge Server 将在 500ms 后重启' })
-  restartBridgeProcess()
+  res.json({ ok: true, message: 'Bridge Server 将在当前回合结束后重启' })
+  scheduleBridgeRestart()
 })
 
 // 同时重启 Bridge 和 Electron。Electron 仍走回合感知的重启队列。
@@ -550,8 +567,8 @@ app.post('/restart-all', (req, res) => {
   } else {
     void postSupervisor('/restart-electron').catch(() => {})
   }
-  res.json({ ok: true, message: 'Bridge 即将重启；Electron 将在当前回合结束后重启' })
-  restartBridgeProcess(700)
+  res.json({ ok: true, message: 'Bridge 将在当前回合结束后重启；Electron 将按原重启队列执行' })
+  scheduleBridgeRestart(700)
 })
 
 const server = createServer(app)
