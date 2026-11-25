@@ -763,7 +763,9 @@
 
   el.send.addEventListener('click', sendMessage)
   el.input.addEventListener('keydown', event => {
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    // 手机上没有 Shift；回车只换行，发送统一走按钮。
+    // 桌面端保留 Ctrl/Cmd + Enter 快捷发送。
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) {
       event.preventDefault()
       sendMessage()
     }
@@ -811,7 +813,10 @@
 
   function renderTools() {
     const tools = state.tools.filter(tool => {
-      if (state.toolScope === 'my') return tool.source === 'user' || tool.enabled
+      if (state.toolScope === 'my') {
+        const meId = state.me?.principalId || ''
+        return tool.source === 'user' && !!meId && tool.ownerId === meId
+      }
       return true
     })
     if (state.expandedToolId && !tools.some(tool => tool.id === state.expandedToolId)) {
