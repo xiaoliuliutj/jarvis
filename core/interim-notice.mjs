@@ -17,7 +17,13 @@ function looksLikeCat(persona = '') {
   return /喵|猫娘|nya|ฅ/i.test(persona)
 }
 
-/** 模型偶尔会忘记人设语气；猫娘人设下至少保证有喵。 */
+/** 用户显式选择的运行状态语气；auto 按人设内容判断。 */
+function resolveStatusTone(statusStyle, persona) {
+  if (statusStyle === 'cat' || statusStyle === 'plain' || statusStyle === 'custom') return statusStyle
+  return looksLikeCat(persona) ? 'cat' : 'plain'
+}
+
+/** 模型偶尔会忘记人设语气；猫娘语气下至少保证有喵。 */
 function enforcePersonaTone(text, persona = '') {
   const value = String(text || '').trim()
   if (!value) return value
@@ -27,8 +33,13 @@ function enforcePersonaTone(text, persona = '') {
   return value
 }
 
-export function fallbackInterimNotice(persona = '') {
-  return looksLikeCat(persona) ? FALLBACK_CAT : FALLBACK_PLAIN
+export function fallbackInterimNotice(persona = '', statusStyle = 'auto', statusSuffix = '') {
+  const tone = resolveStatusTone(statusStyle, persona)
+  if (tone === 'cat') return FALLBACK_CAT
+  if (tone === 'custom' && String(statusSuffix || '').trim()) {
+    return `收到${String(statusSuffix).trim()}～正在处理，稍等一下`
+  }
+  return FALLBACK_PLAIN
 }
 
 function buildHeaders(apiKey, authMode) {
@@ -58,23 +69,32 @@ function sanitize(text) {
 
 /**
  * 生成一句符合用户人设的「正在处理」提示。
- * @param {{persona?: string, displayName?: string}} opts
+ * @param {{persona?: string, displayName?: string, statusStyle?: string, statusSuffix?: string}} opts
  * @returns {Promise<string>}
  */
-export async function generateInterimNotice({ persona = '', displayName = '' } = {}) {
-  const fallback = fallbackInterimNotice(persona)
+export async function generateInterimNotice({
+  persona = '',
+  displayName = '',
+  statusStyle = 'auto',
+  statusSuffix = '',
+} = {}) {
+  const tone = resolveStatusTone(statusStyle, persona)
+  const fallback = fallbackInterimNotice(persona, statusStyle, statusSuffix)
   const { apiKey, baseUrl, authMode } = getAnthropicCredentials()
   if (!apiKey) return fallback
 
   try {
     const url = `${(baseUrl || 'https://api.anthropic.com').replace(/\/$/, '')}/v1/messages`
+    const styleHint = tone === 'plain'
+      ? '\n这次只是运行状态提示，请用简洁、中性的语气，不要使用猫娘口癖。'
+      : ''
     const res = await fetch(url, {
       method: 'POST',
       headers: buildHeaders(apiKey, authMode),
       body: JSON.stringify({
         model: getModel(),
         max_tokens: 60,
-        system: `你是 Jarvis。下面是当前用户看到的你的人设：\n${persona || '（无特殊人设，语气自然、友好、简洁）'}`,
+        system: `你是 Jarvis。下面是当前用户看到的你的人设：\n${persona || '（无特殊人设，语气自然、友好、简洁）'}${styleHint}`,
         messages: [{
           role: 'user',
           content: `用户「${displayName}」刚发来一条消息，你需要花一点时间处理。请生成一句不超过 18 个字的简短回应，表示已经收到、正在处理中。必须完全符合你的人设语气。只输出这句话本身，不要引号、不要解释、不要换行。`,
@@ -85,7 +105,7 @@ export async function generateInterimNotice({ persona = '', displayName = '' } =
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     const text = sanitize((data.content || []).map(c => c.text || '').join(''))
-    return enforcePersonaTone(text, persona) || fallback
+    return enforcePersonaTone(text, tone === 'plain' ? '' : persona) || fallback
   } catch {
     return fallback
   }

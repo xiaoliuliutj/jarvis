@@ -29,7 +29,7 @@ import { startCronManager } from '../core/cron.mjs'
 import { startScheduleManager } from '../core/schedule.mjs'
 import { formatScheduleReminder } from '../core/schedule-store.mjs'
 import { orderDeliveryAccounts } from '../core/delivery.mjs'
-import { listDevices, isToolEnabled } from '../core/app-store.mjs'
+import { listDevices, isToolEnabled, readSettings as readAppSettings } from '../core/app-store.mjs'
 import { getExternalToolDefinition } from '../core/external-tools.mjs'
 import { handleIncomingOnboarding } from '../core/onboarding.mjs'
 import { loadAdapters } from '../core/adapters.mjs'
@@ -331,7 +331,13 @@ export function routeIncoming({
         if (replyDone) return
         try {
           const persona = readPersona(principal.id)
-          const rawNotice = await generateInterimNotice({ persona, displayName: principal.displayName })
+          const appSettings = readAppSettings(principal.id)
+          const rawNotice = await generateInterimNotice({
+            persona,
+            displayName: principal.displayName,
+            statusStyle: appSettings.aiStatusStyle,
+            statusSuffix: appSettings.aiStatusSuffix,
+          })
           if (replyDone) return
           const notice = sanitizeOutgoingText(rawNotice).text
           if (!notice) return

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=61" />
+  <link rel="stylesheet" href="/style.css?v=62" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -27,7 +27,10 @@
       </button>
       <div class="context-meta">
         <span id="contextLabel" class="context-label">上下文 —</span>
-        <span id="contextPercent" class="context-percent"></span>
+        <span class="context-meta-right">
+          <span id="contextPercent" class="context-percent"></span>
+          <button id="personaEntry" class="persona-entry" type="button" title="AI 人设与运行状态">⚙ 系统设置</button>
+        </span>
       </div>
       <div id="contextLegend" class="context-legend"></div>
       <div id="contextPopover" class="context-popover hidden"></div>
@@ -133,6 +136,14 @@
           </div>
           <button id="reconnectBtn" class="ghost-btn wide">重新连接</button>
           <button id="logoutBtn" class="danger-btn" style="margin-top:8px;">退出登录</button>
+        </div>
+
+        <div class="settings-section" id="settingsPersona">
+          <div class="section-head">
+            <h3>AI 人设</h3>
+            <button id="editPersona" class="ghost-btn">编辑</button>
+          </div>
+          <p class="hint" id="personaSummary">加载中…</p>
         </div>
 
         <div class="settings-section">
@@ -336,6 +347,37 @@
     </div>
   </div>
 
+  <div id="personaModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>AI 人设与运行状态</h2>
+        <button id="personaCancel" class="icon-close" aria-label="关闭">×</button>
+      </div>
+      <div id="personaPresets" class="persona-presets"></div>
+      <label>人设内容
+        <textarea id="personaContent" class="persona-textarea" rows="10" spellcheck="false" placeholder="描述你希望 AI 的性格、语气、称呼和说话习惯…"></textarea>
+      </label>
+      <p class="hint">这是你专属的 AI 人设，保存后从下一轮对话开始生效。</p>
+      <label>运行状态语气
+        <select id="personaStatusStyle">
+          <option value="auto">跟随人设（自动判断）</option>
+          <option value="cat">猫娘可爱</option>
+          <option value="plain">简洁中性</option>
+          <option value="custom">自定义后缀</option>
+        </select>
+      </label>
+      <label id="personaSuffixRow" class="hidden">状态后缀（最多 16 字）
+        <input id="personaStatusSuffix" type="text" maxlength="16" placeholder="例如：哒、呀、~" />
+      </label>
+      <p class="hint">“思考中”“整理回复中”等运行状态会按这里的语气显示。</p>
+      <div class="modal-actions">
+        <button id="personaMoreSettings" class="ghost-btn">更多设置</button>
+        <button id="personaReset" class="ghost-btn">用默认人设</button>
+        <button id="personaSave" class="primary-btn">保存</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toolModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
@@ -349,6 +391,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=61"></script>
+  <script src="/app.js?v=62"></script>
 </body>
 </html>

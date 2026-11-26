@@ -61,6 +61,9 @@ const DEFAULT_SETTINGS = {
   testMode: true,
   notifications: { enabled: true, sound: true, doNotDisturb: false },
   appearance: { theme: 'system', language: 'zh-CN' },
+  // AI 人设的运行状态语气：auto=跟随人设自动判断，cat=猫娘，plain=简洁，custom=自定义后缀
+  aiStatusStyle: 'auto',
+  aiStatusSuffix: '',
   updatedAt: null,
 }
 

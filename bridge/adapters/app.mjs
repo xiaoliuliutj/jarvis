@@ -32,7 +32,8 @@ import { WebSocketServer } from 'ws'
 import { ROOT } from '../../core/paths.mjs'
 import { logInfo, logWarn, logError } from '../../core/logger.mjs'
 import { getPrincipal } from '../../core/principals.mjs'
-import { getCurrentSession, readMessages, appendMessage, touchSession, listSessions } from '../../core/user-store.mjs'
+import { getCurrentSession, readMessages, appendMessage, touchSession, listSessions, readPersona, writePersona } from '../../core/user-store.mjs'
+import { PERSONA_PRESETS } from '../../core/persona-presets.mjs'
 import * as appStore from '../../core/app-store.mjs'
 import * as authStore from '../../core/auth-store.mjs'
 import { listCatalog, getTool as getCatalogTool } from '../../core/tool-catalog.mjs'
@@ -46,6 +47,8 @@ const APP_WEB_DIR = path.join(ROOT, 'app', 'web')
 const FILES_DIR = path.join(ROOT, 'userdata', 'app-adapter', 'files')
 const DEFAULT_PORT = 17779
 const MAX_TEXT_CHARS = 20000
+const MAX_PERSONA_CHARS = 20000
+const PERSONA_STATUS_STYLES = new Set(['auto', 'cat', 'plain', 'custom'])
 const MAX_ATTACHMENTS = 3
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 const RATE_LIMIT_PER_MIN = 30
@@ -718,6 +721,60 @@ function buildServer() {
       res.json({ ok: true, nickname: updated.nickname, user: updated })
     } catch (err) {
       res.status(400).json({ ok: false, error: err.message })
+    }
+  })
+
+  // ── AI 人设：每个用户只读写自己的 persona.md ─────────────────────────────
+  app.get('/api/v1/persona', auth, (req, res) => {
+    const { principal } = appPrincipalFor(req)
+    try {
+      const settings = appStore.readSettings(principal.id)
+      res.json({
+        ok: true,
+        persona: readPersona(principal.id),
+        status: {
+          style: settings.aiStatusStyle || 'auto',
+          suffix: settings.aiStatusSuffix || '',
+        },
+        presets: Object.entries(PERSONA_PRESETS).map(([id, preset]) => ({
+          id,
+          label: preset.label,
+          summary: preset.summary,
+          content: preset.content,
+        })),
+      })
+    } catch (err) {
+      logError('app.persona.read.fail', err.message, { principalId: principal.id })
+      res.status(500).json({ ok: false, error: '读取人设失败' })
+    }
+  })
+
+  app.put('/api/v1/persona', auth, (req, res) => {
+    const { principal } = appPrincipalFor(req)
+    const content = String(req.body?.persona || '').trim()
+    if (!content) return res.status(400).json({ ok: false, error: '人设内容不能为空' })
+    if (content.length > MAX_PERSONA_CHARS) {
+      return res.status(400).json({ ok: false, error: `人设内容不能超过 ${MAX_PERSONA_CHARS} 字` })
+    }
+    const style = String(req.body?.statusStyle || 'auto')
+    if (!PERSONA_STATUS_STYLES.has(style)) {
+      return res.status(400).json({ ok: false, error: '运行状态语气无效' })
+    }
+    const suffix = String(req.body?.statusSuffix || '').trim().slice(0, 16)
+    try {
+      writePersona(principal.id, content.endsWith('\n') ? content : `${content}\n`)
+      const settings = appStore.updateSettings(principal.id, {
+        aiStatusStyle: style,
+        aiStatusSuffix: suffix,
+      })
+      res.json({
+        ok: true,
+        persona: readPersona(principal.id),
+        status: { style: settings.aiStatusStyle, suffix: settings.aiStatusSuffix },
+      })
+    } catch (err) {
+      logError('app.persona.write.fail', err.message, { principalId: principal.id })
+      res.status(500).json({ ok: false, error: `保存人设失败：${err.message}` })
     }
   })
 

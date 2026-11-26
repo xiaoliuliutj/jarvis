@@ -34,7 +34,8 @@
     connectionStatus: '',
     attachments: [],
     messages: [],
-    runStatus: { timer: null, since: 0, text: '' },
+    runStatus: { timer: null, since: 0, text: '', raw: null },
+    persona: { loaded: false, content: '', statusStyle: 'auto', statusSuffix: '', presets: [] },
     wsSeen: new Set(),
     tab: 'chat',
     tools: [],
@@ -114,6 +115,19 @@
     usageDetailsToggle: $('usageDetailsToggle'),
     usageMessageCount: $('usageMessageCount'),
     usageMessages: $('usageMessages'),
+    personaEntry: $('personaEntry'),
+    personaSummary: $('personaSummary'),
+    editPersona: $('editPersona'),
+    personaModal: $('personaModal'),
+    personaCancel: $('personaCancel'),
+    personaPresets: $('personaPresets'),
+    personaContent: $('personaContent'),
+    personaStatusStyle: $('personaStatusStyle'),
+    personaSuffixRow: $('personaSuffixRow'),
+    personaStatusSuffix: $('personaStatusSuffix'),
+    personaMoreSettings: $('personaMoreSettings'),
+    personaReset: $('personaReset'),
+    personaSave: $('personaSave'),
     settingsStatus: $('settingsStatus'),
     settingsUrl: $('settingsUrl'),
     settingsNickname: $('settingsNickname'),
@@ -814,6 +828,7 @@
       setStatus('连接中…', '')
       connect()
       loadMe()
+      loadPersona()
       loadSession()
       showTab('chat')
       appendMessage({
@@ -837,6 +852,8 @@
     state.authFailed = false
     state.messages = []
     state.context = null
+    state.persona = { loaded: false, content: '', statusStyle: 'auto', statusSuffix: '', presets: [] }
+    renderPersonaSummary()
     renderContext(null)
     setUnread(0)
     remove(KEYS.token)
@@ -883,6 +900,7 @@
       setStatus('连接中…', '')
       connect()
       loadMe()
+      loadPersona()
       loadSession()
       showTab('chat')
     } else {
@@ -1181,7 +1199,7 @@
     if (!items.length) {
       const empty = document.createElement('div')
       empty.className = 'empty-state'
-      empty.textContent = '和 Jarvis 说点什么喵～'
+      empty.textContent = personaGreeting()
       el.messages.appendChild(empty)
       requestAnimationFrame(updateChatScrollbar)
       return
@@ -1877,17 +1895,57 @@
     return '执行操作中'
   }
 
-  // 状态文案跟随 Jarvis 的猫娘人设，只做轻微的语气调整，不打扰使用。
-  function runStatusLabel(status) {
+  // 状态文案按当前用户自己的 AI 人设语气显示，不再固定为猫娘。
+  function runStatusTone() {
+    const meta = state.persona || {}
+    // 人设还没加载好时保持旧版观感，加载后再按用户自己的设置切换。
+    if (!meta.loaded) return 'cat'
+    if (meta.statusStyle === 'cat' || meta.statusStyle === 'plain' || meta.statusStyle === 'custom') {
+      return meta.statusStyle
+    }
+    // auto：人设里写了猫娘/喵等特征才使用猫娘语气。
+    return /喵|猫娘|nya|ฅ/i.test(meta.content || '') ? 'cat' : 'plain'
+  }
+
+  function statusBaseLabel(status) {
     switch (status?.state) {
-      case 'queued': return '排队中喵…'
-      case 'tool': return `${toolTip(status.tool)}喵…`
-      case 'writing': return '整理回复中喵…'
-      case 'interim': return String(status.text || '').trim() || '处理中喵…'
+      case 'queued': return '排队中'
+      case 'tool': return toolTip(status.tool)
+      case 'writing': return '整理回复中'
       case 'started':
       case 'thinking':
-      default: return '思考中喵…'
+      default: return '思考中'
     }
+  }
+
+  function decorateStatus(base) {
+    const tone = runStatusTone()
+    if (tone === 'cat') return `${base}喵…`
+    if (tone === 'custom') {
+      const suffix = String(state.persona?.statusSuffix || '').trim()
+      return suffix ? `${base}${suffix}…` : `${base}…`
+    }
+    return `${base}…`
+  }
+
+  function runStatusLabel(status) {
+    if (status?.state === 'interim') {
+      // interim 是服务端按人设生成的整句，直接展示。
+      return String(status.text || '').trim() || decorateStatus('处理中')
+    }
+    return decorateStatus(statusBaseLabel(status))
+  }
+
+  /** 输入框/空会话文案也跟着人设走，非猫娘用户不再被塞一句“喵～”。 */
+  function personaGreeting() {
+    return `和 Jarvis 说点什么${runStatusTone() === 'cat' ? '喵～' : '～'}`
+  }
+
+  function applyPersonaChrome() {
+    const greeting = personaGreeting()
+    if (el.input) el.input.placeholder = greeting
+    const empty = el.messages?.querySelector('.empty-state')
+    if (empty) empty.textContent = greeting
   }
 
   // 运行状态独立于消息时间线：刷新/重连/插入消息都不会把它冲掉。
@@ -1897,6 +1955,7 @@
     const label = runStatusLabel(status)
     state.runStatus.since = Number(status.since) || state.runStatus.since || Date.now()
     state.runStatus.text = label
+    state.runStatus.raw = status
     el.runStatusText.textContent = label
     el.runStatus.classList.remove('hidden')
     renderRunElapsed()
@@ -1923,8 +1982,18 @@
     state.runStatus.staleTimer = null
     state.runStatus.since = 0
     state.runStatus.text = ''
+    state.runStatus.raw = null
     if (el.runStatus) el.runStatus.classList.add('hidden')
     if (el.runStatusElapsed) el.runStatusElapsed.textContent = ''
+  }
+
+  /** 人设保存后立即刷新状态条语气，不必等下一次状态事件。 */
+  function refreshRunStatusTone() {
+    const raw = state.runStatus.raw
+    if (!raw || !el.runStatus || el.runStatus.classList.contains('hidden')) return
+    const label = runStatusLabel(raw)
+    state.runStatus.text = label
+    el.runStatusText.textContent = label
   }
 
   function showTyping() {
@@ -2049,6 +2118,156 @@
       renderConnection()
       if (el.testChip) el.testChip.textContent = data.testMode ? '测试' : 'App'
     } catch {}
+  }
+
+  // ── AI 人设 ─────────────────────────────────────────────────────────────
+
+  async function loadPersona() {
+    if (!state.token) return false
+    try {
+      const data = await api('/api/v1/persona')
+      state.persona = {
+        loaded: true,
+        content: String(data.persona || ''),
+        statusStyle: data.status?.style || 'auto',
+        statusSuffix: data.status?.suffix || '',
+        presets: Array.isArray(data.presets) ? data.presets : [],
+      }
+      renderPersonaSummary()
+      applyPersonaChrome()
+      refreshRunStatusTone()
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  const PERSONA_STATUS_LABELS = {
+    auto: '跟随人设',
+    cat: '猫娘可爱',
+    plain: '简洁中性',
+    custom: '自定义后缀',
+  }
+
+  function renderPersonaSummary() {
+    if (!el.personaSummary) return
+    const meta = state.persona || {}
+    if (!meta.loaded) {
+      el.personaSummary.textContent = state.token ? '加载中…' : '登录后可设置你专属的 AI 人设。'
+      return
+    }
+    const tone = PERSONA_STATUS_LABELS[meta.statusStyle] || '跟随人设'
+    const suffix = meta.statusStyle === 'custom' && meta.statusSuffix ? `「${meta.statusSuffix}」` : ''
+    const lines = String(meta.content || '').trim().split(/\n+/).filter(Boolean)
+    const first = (lines.find(line => !line.startsWith('#')) || lines[0] || '未设置')
+      .replace(/^[-*]\s*/, '')
+      .slice(0, 60)
+    el.personaSummary.textContent = `运行状态：${tone}${suffix} · ${first}`
+  }
+
+  function renderPersonaPresets() {
+    if (!el.personaPresets) return
+    el.personaPresets.textContent = ''
+    const presets = Array.isArray(state.persona?.presets) ? state.persona.presets : []
+    for (const preset of presets) {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'persona-preset'
+      btn.textContent = preset.label || preset.id || '预设'
+      btn.title = preset.summary || ''
+      btn.addEventListener('click', () => {
+        el.personaContent.value = preset.content || ''
+        el.personaContent.focus()
+      })
+      el.personaPresets.appendChild(btn)
+    }
+    el.personaPresets.classList.toggle('hidden', !presets.length)
+  }
+
+  function togglePersonaSuffixRow() {
+    if (!el.personaSuffixRow || !el.personaStatusStyle) return
+    el.personaSuffixRow.classList.toggle('hidden', el.personaStatusStyle.value !== 'custom')
+  }
+
+  async function openPersonaModal() {
+    if (!state.token) { showLogin(''); return }
+    // 打开时重新拉取，避免聊天里刚改过人设却被旧文案覆盖。
+    const ok = await loadPersona()
+    if (!ok) {
+      toast('人设加载失败，请检查连接后重试')
+      return
+    }
+    el.personaContent.value = state.persona?.content || ''
+    el.personaStatusStyle.value = state.persona?.statusStyle || 'auto'
+    el.personaStatusSuffix.value = state.persona?.statusSuffix || ''
+    togglePersonaSuffixRow()
+    renderPersonaPresets()
+    el.personaModal.classList.remove('hidden')
+    setTimeout(() => el.personaContent.focus(), 60)
+  }
+
+  function closePersonaModal() {
+    if (el.personaModal) el.personaModal.classList.add('hidden')
+  }
+
+  async function savePersona() {
+    const content = String(el.personaContent.value || '').trim()
+    if (!content) { toast('人设内容不能为空'); return }
+    const statusStyle = el.personaStatusStyle.value || 'auto'
+    const statusSuffix = String(el.personaStatusSuffix.value || '').trim().slice(0, 16)
+    el.personaSave.disabled = true
+    try {
+      const data = await api('/api/v1/persona', {
+        method: 'PUT',
+        body: { persona: content, statusStyle, statusSuffix },
+      })
+      state.persona = {
+        ...(state.persona || {}),
+        loaded: true,
+        content: String(data.persona || content),
+        statusStyle: data.status?.style || statusStyle,
+        statusSuffix: data.status?.suffix || statusSuffix,
+      }
+      renderPersonaSummary()
+      applyPersonaChrome()
+      refreshRunStatusTone()
+      closePersonaModal()
+      toast('AI 人设已保存，下一轮对话生效')
+    } catch (err) {
+      toast(`保存失败：${err.message}`)
+    } finally {
+      el.personaSave.disabled = false
+    }
+  }
+
+  if (el.personaEntry) {
+    el.personaEntry.addEventListener('click', () => { openPersonaModal().catch(() => {}) })
+  }
+  if (el.editPersona) {
+    el.editPersona.addEventListener('click', () => { openPersonaModal().catch(() => {}) })
+  }
+  if (el.personaCancel) el.personaCancel.addEventListener('click', closePersonaModal)
+  if (el.personaStatusStyle) el.personaStatusStyle.addEventListener('change', togglePersonaSuffixRow)
+  if (el.personaSave) {
+    el.personaSave.addEventListener('click', () => { savePersona().catch(() => {}) })
+  }
+  if (el.personaReset) {
+    el.personaReset.addEventListener('click', () => {
+      const preset = (state.persona?.presets || [])[0]
+      if (!preset) return
+      el.personaContent.value = preset.content || ''
+      el.personaStatusStyle.value = 'auto'
+      togglePersonaSuffixRow()
+      el.personaContent.focus()
+    })
+  }
+  if (el.personaMoreSettings) {
+    el.personaMoreSettings.addEventListener('click', () => {
+      closePersonaModal()
+      showTab('settings')
+      const section = $('settingsPersona')
+      if (section) setTimeout(() => section.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80)
+    })
   }
 
   // attachments
@@ -3216,6 +3435,8 @@
   async function loadSettings() {
     if (!state.token) return
     renderConnection()
+    renderPersonaSummary()
+    loadPersona().catch(() => {})
     refreshNotifyStatus()
     refreshUpdateSection()
     try {
@@ -3664,6 +3885,7 @@
   } else {
     connect()
     loadMe()
+    loadPersona()
     loadSession().finally(nativePageReady)
   }
 })()
