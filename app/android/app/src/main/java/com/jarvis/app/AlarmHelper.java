@@ -43,64 +43,68 @@ final class AlarmHelper {
         PackageManager pm = context.getPackageManager();
         ResolveInfo resolved = pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY);
 
-        // ColorOS 时钟包：有些版本不会注册标准 Action，但显式指定包名能命中。
-        if (resolved == null) {
-            Intent coloros = new Intent(intent);
-            coloros.setPackage("com.coloros.alarmclock");
-            ResolveInfo colorosResolved = pm.resolveActivity(coloros, PackageManager.MATCH_DEFAULT_ONLY);
-            if (colorosResolved != null) {
-                intent = coloros;
-                resolved = colorosResolved;
+        // 先按标准入口启动；即使 resolveActivity 因包可见性返回 null，也直接试一次 startActivity。
+        if (resolved != null) {
+            String pkg = resolved.activityInfo != null ? resolved.activityInfo.packageName : "";
+            if (tryStart(context, intent)) {
+                return markAndReturn(prefs, signature, now, pkg);
+            }
+        }
+        if (tryStart(context, intent)) {
+            return markAndReturn(prefs, signature, now, "implicit");
+        }
+
+        // ColorOS 时钟包：有些版本不会注册标准 Action，显式指定包名再试。
+        Intent coloros = new Intent(intent);
+        coloros.setPackage("com.coloros.alarmclock");
+        if (tryStart(context, coloros)) {
+            return markAndReturn(prefs, signature, now, "com.coloros.alarmclock");
+        }
+
+        // 再尝试几个已知时钟组件；存在但未导出时会抛异常，直接跳过。
+        String[][] candidates = {
+                {"com.coloros.alarmclock", "com.coloros.alarmclock.alarmclock.AlarmClockActivity"},
+                {"com.coloros.alarmclock", "com.coloros.alarmclock.alarmclock.AlarmSetActivity"},
+                {"com.coloros.alarmclock", "com.coloros.alarmclock.alarmclock.AlarmEditActivity"},
+                {"com.coloros.alarmclock", "com.coloros.alarmclock.alarmclock.AlarmCycleActivity"},
+                {"com.coloros.alarmclock", "com.coloros.alarmclock.AlarmClock"},
+                {"com.coloros.alarmclock", "com.coloros.alarmclock.AlarmClockActivity"},
+                {"com.coloros.alarmclock", "com.coloros.alarmclock.SetAlarm"},
+                {"com.oppo.alarmclock", "com.oppo.alarmclock.AlarmClock"},
+                {"com.oneplus.deskclock", "com.android.deskclock.AlarmClock"},
+                {"com.android.deskclock", "com.android.deskclock.AlarmClock"},
+                {"com.android.deskclock", "com.android.deskclock.activity.AlarmClockActivity"},
+                {"com.android.deskclock", "com.android.deskclock.SetAlarm"},
+                {"com.google.android.deskclock", "com.android.deskclock.AlarmClock"},
+        };
+        for (String[] candidate : candidates) {
+            Intent explicit = new Intent(intent);
+            explicit.setComponent(new ComponentName(candidate[0], candidate[1]));
+            if (tryStart(context, explicit)) {
+                return markAndReturn(prefs, signature, now, candidate[0] + "/" + candidate[1]);
             }
         }
 
-        // 最后尝试几个已知时钟组件；猜错时 resolveActivity 返回 null，不会崩溃。
-        if (resolved == null) {
-            String[][] candidates = {
-                    {"com.coloros.alarmclock", "com.coloros.alarmclock.AlarmClock"},
-                    {"com.coloros.alarmclock", "com.coloros.alarmclock.AlarmClockActivity"},
-                    {"com.coloros.alarmclock", "com.coloros.alarmclock.ui.AlarmClockActivity"},
-                    {"com.oppo.alarmclock", "com.oppo.alarmclock.AlarmClock"},
-                    {"com.oneplus.deskclock", "com.android.deskclock.AlarmClock"},
-                    {"com.android.deskclock", "com.android.deskclock.AlarmClock"},
-                    {"com.android.deskclock", "com.android.deskclock.activity.AlarmClockActivity"},
-                    {"com.google.android.deskclock", "com.android.deskclock.AlarmClock"},
-            };
-            for (String[] candidate : candidates) {
-                Intent explicit = new Intent(intent);
-                explicit.setComponent(new ComponentName(candidate[0], candidate[1]));
-                try {
-                    ResolveInfo info = pm.resolveActivity(explicit, 0);
-                    if (info != null) {
-                        intent = explicit;
-                        resolved = info;
-                        break;
-                    }
-                } catch (Exception ignored) {
-                }
-            }
-        }
+        // 没有可用的 SET_ALARM 入口：至少把用户带到闹钟界面。
+        if (openAlarmList(context)) return "opened";
+        return "error:no_alarm_app";
+    }
 
-        if (resolved == null) {
-            // 没有可用的 SET_ALARM 入口：至少把用户带到闹钟界面。
-            if (openAlarmList(context)) return "opened";
-            return "error:no_alarm_app";
-        }
-
+    private static boolean tryStart(Context context, Intent intent) {
         try {
             context.startActivity(intent);
-            prefs.edit()
-                    .putString("lastAlarmSignature", signature)
-                    .putLong("lastAlarmAt", now)
-                    .apply();
-            String pkg = resolved.activityInfo != null ? resolved.activityInfo.packageName : "";
-            return pkg.isEmpty() ? "ok" : "ok:" + pkg;
-        } catch (Exception e) {
-            // 部分 ROM 能 resolve 但会拦截启动，退回打开闹钟列表。
-            if (openAlarmList(context)) return "opened";
-            String message = e.getMessage();
-            return "error:" + (message == null || message.isEmpty() ? "start_failed" : message);
+            return true;
+        } catch (Exception ignored) {
+            return false;
         }
+    }
+
+    private static String markAndReturn(SharedPreferences prefs, String signature, long now, String by) {
+        prefs.edit()
+                .putString("lastAlarmSignature", signature)
+                .putLong("lastAlarmAt", now)
+                .apply();
+        return by == null || by.isEmpty() ? "ok" : "ok:" + by;
     }
 
     private static Intent buildIntent(int hour, int minute, String label, boolean vibrate) {

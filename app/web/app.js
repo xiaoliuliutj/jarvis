@@ -1172,7 +1172,14 @@
               outcome = `error:${err?.message || 'bridge'}`
             }
             if (outcome.startsWith('ok')) {
-              result = { ok: true, result: { delivered: true, text: '已交给系统时钟设置闹钟' } }
+              const by = outcome.length > 2 ? outcome.slice(3) : ''
+              result = {
+                ok: true,
+                result: {
+                  delivered: true,
+                  text: by ? `已交给系统时钟设置闹钟（${by}）` : '已交给系统时钟设置闹钟',
+                },
+              }
             } else if (outcome === 'duplicate') {
               result = { ok: true, result: { delivered: true, duplicate: true, text: '这个闹钟刚刚已经设置过了' } }
             } else if (outcome === 'opened') {

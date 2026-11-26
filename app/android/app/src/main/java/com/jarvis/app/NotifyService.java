@@ -513,7 +513,7 @@ public class NotifyService extends Service {
                     + "Connection: Upgrade\r\n"
                     + "Sec-WebSocket-Key: " + key + "\r\n"
                     + "Sec-WebSocket-Version: 13\r\n"
-                    + "User-Agent: JarvisAndroid/0.2.6\r\n"
+                    + "User-Agent: JarvisAndroid/0.2.7\r\n"
                     + "\r\n";
             out.write(request.getBytes(StandardCharsets.UTF_8));
             out.flush();
