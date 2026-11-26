@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=65" />
+  <link rel="stylesheet" href="/style.css?v=66" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -16,6 +16,7 @@
         <div class="brand">
           <span class="dot" id="statusDot" title="连接中…"></span>
           <span class="title">Jarvis</span>
+          <button id="personaEntry" class="persona-entry" type="button" title="AI 人设与运行状态">⚙ 系统设置</button>
         </div>
         <div class="top-right">
           <span id="ownerChip" class="chip owner hidden" title="Owner 权限已启用">Owner</span>
@@ -27,12 +28,8 @@
       </button>
       <div class="context-meta">
         <span id="contextLabel" class="context-label">上下文 —</span>
-        <span class="context-meta-right">
-          <span id="contextPercent" class="context-percent"></span>
-          <button id="personaEntry" class="persona-entry" type="button" title="AI 人设与运行状态">⚙ 系统设置</button>
-        </span>
+        <div id="contextLegend" class="context-legend"></div>
       </div>
-      <div id="contextLegend" class="context-legend"></div>
       <div id="contextPopover" class="context-popover hidden"></div>
     </header>
 
@@ -399,6 +396,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=65"></script>
+  <script src="/app.js?v=66"></script>
 </body>
 </html>

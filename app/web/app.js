@@ -65,7 +65,6 @@
     contextBar: $('contextBar'),
     contextSegments: $('contextSegments'),
     contextLabel: $('contextLabel'),
-    contextPercent: $('contextPercent'),
     contextLegend: $('contextLegend'),
     contextPopover: $('contextPopover'),
     views: {
@@ -389,7 +388,6 @@
     el.contextPopover.textContent = ''
     if (!context || !Array.isArray(context.categories) || !context.categories.length) {
       el.contextLabel.textContent = '上下文 —'
-      el.contextPercent.textContent = ''
       el.contextBar.classList.add('empty')
       const hint = document.createElement('div')
       hint.className = 'context-popover-row'
@@ -425,8 +423,6 @@
     }
     el.contextBar.classList.toggle('empty', !visible.length)
     el.contextLabel.textContent = `上下文 ${formatTokens(total)} / ${formatTokens(max)}${context.estimated ? ' · 估算' : ''}`
-    const percentage = Number(context.percentage) || (max ? total / max * 100 : 0)
-    el.contextPercent.textContent = max ? `${Math.round(percentage)}%` : ''
 
     for (const group of visible) {
       const item = document.createElement('span')

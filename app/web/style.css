@@ -116,15 +116,21 @@ body { overflow: hidden; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
+  min-width: 0;
   font-size: 10.5px;
   color: #b9c9c0;
   line-height: 1.3;
 }
-.context-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.context-meta-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-.context-percent { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.context-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .persona-entry {
+  flex: 0 0 auto;
   border: 1px solid rgba(242, 239, 228, 0.34);
   background: rgba(242, 239, 228, 0.10);
   color: #f2efe4;
@@ -139,7 +145,10 @@ body { overflow: hidden; }
 .persona-entry:hover { background: rgba(242, 239, 228, 0.22); }
 .persona-entry:focus-visible { outline: 2px solid #cfe6d8; outline-offset: 1px; }
 .context-legend {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
+  align-items: center;
   gap: 8px;
   overflow-x: auto;
   font-size: 10px;
