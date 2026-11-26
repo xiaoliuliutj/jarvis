@@ -161,6 +161,7 @@
     checkUpdateBtn: $('checkUpdateBtn'),
     installUpdateBtn: $('installUpdateBtn'),
     installPermissionBtn: $('installPermissionBtn'),
+    updateAppSettingsBtn: $('updateAppSettingsBtn'),
     setup: $('setup'),
     setupUrl: $('setupUrl'),
     setupOwnerToken: $('setupOwnerToken'),
@@ -3912,6 +3913,15 @@
       try {
         if (typeof bridge.openInstallPermission === 'function') bridge.openInstallPermission()
         else if (typeof bridge.openAppSettings === 'function') bridge.openAppSettings()
+      } catch {}
+    })
+  }
+  if (el.updateAppSettingsBtn) {
+    el.updateAppSettingsBtn.addEventListener('click', () => {
+      const bridge = notifyBridge()
+      if (!bridge) return
+      try {
+        if (typeof bridge.openAppSettings === 'function') bridge.openAppSettings()
       } catch {}
     })
   }

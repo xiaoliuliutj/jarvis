@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=76" />
+  <link rel="stylesheet" href="/style.css?v=77" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -207,10 +207,11 @@
             <span class="muted" id="updateStatus"></span>
           </div>
           <div class="settings-row"><span>当前版本</span><span id="appVersion">—</span></div>
-          <p class="hint">从 Bridge 直接下载安装，不需要微信转发安装包。</p>
+          <p class="hint">从 Bridge 直接下载安装，不需要微信转发安装包。如果“安装未知应用”开关是灰色，先在应用信息右上角允许「受限制的设置」，再打开该开关。</p>
           <button id="checkUpdateBtn" class="ghost-btn wide">检查更新</button>
           <button id="installUpdateBtn" class="primary-btn wide hidden">下载并安装</button>
           <button id="installPermissionBtn" class="ghost-btn wide">安装权限</button>
+          <button id="updateAppSettingsBtn" class="ghost-btn wide">应用设置（受限制的设置）</button>
         </div>
 
         <div class="settings-section">
@@ -401,6 +402,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=76"></script>
+  <script src="/app.js?v=77"></script>
 </body>
 </html>
