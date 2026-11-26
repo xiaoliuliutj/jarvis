@@ -599,7 +599,17 @@ function buildServer() {
     const { principal } = appPrincipalFor(req)
     const owner = ownerTokenOk(req)
     const session = getCurrentSession(principal.id)
-    if (!session) return res.json({ ok: true, session: null, messages: [], owner, unread: 0, readCursor: 0 })
+    if (!session) {
+      return res.json({
+        ok: true,
+        session: null,
+        messages: [],
+        owner,
+        unread: 0,
+        readCursor: 0,
+        context: null,
+      })
+    }
     const all = uiMessages(principal.id, session.sessionId)
     const messages = all.slice(-120)
     const readCursor = appStore.getReadCursor(principal.id, session.sessionId)
@@ -613,6 +623,7 @@ function buildServer() {
       hasMore: all.length > messages.length,
       readCursor,
       unread: all.filter(m => m.seq >= readCursor).length,
+      context: appStore.getSessionContext(principal.id, session.sessionId),
     })
   })
 
@@ -809,6 +820,15 @@ function buildServer() {
     res.json({
       ok: true,
       tool: getCatalogTool(principal.id, effectiveAppPrincipal(principal, owner), req.params.id),
+    })
+  })
+
+  app.get('/api/v1/context', auth, (req, res) => {
+    const { principal } = appPrincipalFor(req)
+    const session = getCurrentSession(principal.id)
+    res.json({
+      ok: true,
+      context: appStore.getSessionContext(principal.id, session?.sessionId || ''),
     })
   })
 

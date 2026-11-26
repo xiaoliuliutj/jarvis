@@ -26,7 +26,7 @@ import {
   buildAgentEnv,
 } from './config.mjs'
 import { logInfo, logWarn, logError } from './logger.mjs'
-import { getChatRuntime, listModels, appendUsage } from './app-store.mjs'
+import { getChatRuntime, listModels, appendUsage, setSessionContext } from './app-store.mjs'
 import { readTranscriptUsage } from './usage-transcript.mjs'
 
 const locks = new Map()
@@ -393,6 +393,18 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
       }
     } catch (err) {
       logWarn('usage.append.fail', err.message, { principalId })
+    }
+
+    let savedContext = null
+    if (result.context) {
+      try {
+        savedContext = setSessionContext(principalId, finalSessionId, result.context)
+        if (savedContext) {
+          emit({ type: 'context', principalId, sessionId: finalSessionId, context: savedContext })
+        }
+      } catch (err) {
+        logWarn('context.save.fail', err.message, { principalId })
+      }
     }
 
     const finalResult = {

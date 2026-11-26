@@ -31,6 +31,7 @@
     ws: null,
     retry: 0,
     authFailed: false,
+    connectionStatus: '',
     attachments: [],
     messages: [],
     typingEl: null,
@@ -52,15 +53,20 @@
     usageMessageOpen: {},
     usageMessageCalls: {},
     usageRequestKey: '',
+    context: null,
     editingModelId: null,
     updateInfo: null,
   }
 
   const el = {
     dot: $('statusDot'),
-    status: $('statusText'),
-    testChip: $('testChip'),
     ownerChip: $('ownerChip'),
+    contextBar: $('contextBar'),
+    contextSegments: $('contextSegments'),
+    contextLabel: $('contextLabel'),
+    contextPercent: $('contextPercent'),
+    contextLegend: $('contextLegend'),
+    contextPopover: $('contextPopover'),
     views: {
       chat: $('view-chat'),
       tools: $('view-tools'),
@@ -301,8 +307,12 @@
     return `${Math.round(value)} ms`
   }
   function setStatus(text, mode) {
-    el.status.textContent = text
-    el.dot.className = 'dot' + (mode ? ' ' + mode : '')
+    state.connectionStatus = text
+    if (el.status) el.status.textContent = text
+    if (el.dot) {
+      el.dot.className = 'dot' + (mode ? ' ' + mode : '')
+      el.dot.title = text
+    }
     if (el.settingsStatus) el.settingsStatus.textContent = text
   }
   function setOwnerChip(owner) {
@@ -311,6 +321,127 @@
   function toast(text) {
     appendMessage({ role: 'system', text, ts: new Date().toISOString() })
   }
+
+  const CONTEXT_GROUPS = [
+    { id: 'system', label: '系统', color: '#3987e5', ids: ['system_prompt'] },
+    { id: 'messages', label: '消息', color: '#d95926', ids: ['messages'] },
+    { id: 'tools', label: '工具', color: '#199e70', ids: ['system_tools', 'mcp_tools', 'mcp_instructions', 'custom_agents'] },
+    { id: 'memory', label: '记忆', color: '#9085e9', ids: ['memory_files', 'skills'] },
+    { id: 'buffer', label: '预留', color: '#c98500', ids: ['autocompact_buffer', 'compact_buffer'] },
+    { id: 'other', label: '其他', color: '#d55181', ids: [] },
+  ]
+
+  function contextCategoryId(category) {
+    if (category.id) return category.id
+    const name = String(category.name || '').toLowerCase()
+    if (name.includes('system prompt')) return 'system_prompt'
+    if (name.includes('system tool')) return 'system_tools'
+    if (name.includes('mcp')) return name.includes('instruction') ? 'mcp_instructions' : 'mcp_tools'
+    if (name.includes('message')) return 'messages'
+    if (name.includes('memory')) return 'memory_files'
+    if (name.includes('skill')) return 'skills'
+    if (name.includes('agent')) return 'custom_agents'
+    if (name.includes('autocompact')) return 'autocompact_buffer'
+    if (name.includes('compact')) return 'compact_buffer'
+    if (name.includes('free')) return 'free_space'
+    return ''
+  }
+
+  function renderContext(context) {
+    state.context = context || null
+    if (!el.contextSegments || !el.contextLabel) return
+    el.contextSegments.textContent = ''
+    el.contextLegend.textContent = ''
+    el.contextPopover.textContent = ''
+    if (!context || !Array.isArray(context.categories) || !context.categories.length) {
+      el.contextLabel.textContent = '上下文 —'
+      el.contextPercent.textContent = ''
+      el.contextBar.classList.add('empty')
+      const hint = document.createElement('div')
+      hint.className = 'context-popover-row'
+      hint.textContent = '等待下一次回复后显示上下文明细'
+      el.contextPopover.appendChild(hint)
+      return
+    }
+
+    const max = Number(context.maxTokens) || Number(context.rawMaxTokens) || 0
+    const total = Number(context.totalTokens) || 0
+    const groups = CONTEXT_GROUPS.map(group => ({ ...group, tokens: 0 }))
+    for (const category of context.categories) {
+      const categoryId = category ? contextCategoryId(category) : ''
+      if (!category || category.kind === 'deferred' || categoryId === 'free_space') continue
+      const group = groups.find(item => item.ids.includes(categoryId))
+        || groups.find(item => item.id === 'other')
+      group.tokens += Number(category.tokens) || 0
+    }
+    const summed = groups.reduce((sum, group) => sum + group.tokens, 0)
+    if (total > summed) groups.find(group => group.id === 'other').tokens += total - summed
+    const visible = groups.filter(group => group.tokens > 0)
+    const denominator = max || Math.max(total, 1)
+
+    for (const group of visible) {
+      const percent = group.tokens / denominator * 100
+      const segment = document.createElement('span')
+      segment.className = 'context-segment'
+      segment.style.background = group.color
+      segment.style.width = `${Math.max(0.4, percent)}%`
+      segment.title = `${group.label} · ${formatTokens(group.tokens)} tokens · ${percent.toFixed(1)}%`
+      segment.setAttribute('aria-label', segment.title)
+      el.contextSegments.appendChild(segment)
+    }
+    el.contextBar.classList.toggle('empty', !visible.length)
+    el.contextLabel.textContent = `上下文 ${formatTokens(total)} / ${formatTokens(max)}`
+    const percentage = Number(context.percentage) || (max ? total / max * 100 : 0)
+    el.contextPercent.textContent = max ? `${Math.round(percentage)}%` : ''
+
+    for (const group of visible) {
+      const item = document.createElement('span')
+      item.className = 'context-legend-item'
+      const dot = document.createElement('span')
+      dot.className = 'context-legend-dot'
+      dot.style.background = group.color
+      const label = document.createElement('span')
+      label.textContent = group.label
+      item.appendChild(dot)
+      item.appendChild(label)
+      el.contextLegend.appendChild(item)
+    }
+
+    const usedForBar = Math.max(total, summed)
+    const free = Math.max(0, max - usedForBar)
+    const rows = [...visible]
+    if (free > 0) rows.push({ id: 'free', label: '空闲', color: 'rgba(242,239,228,0.28)', tokens: free })
+    for (const row of rows) {
+      const rowEl = document.createElement('div')
+      rowEl.className = 'context-popover-row'
+      const dot = document.createElement('span')
+      dot.className = 'context-legend-dot'
+      dot.style.background = row.color
+      const name = document.createElement('span')
+      name.className = 'context-popover-name'
+      name.textContent = row.label
+      const value = document.createElement('span')
+      value.className = 'context-popover-value'
+      value.textContent = `${formatTokens(row.tokens)} · ${(row.tokens / denominator * 100).toFixed(1)}%`
+      rowEl.appendChild(dot)
+      rowEl.appendChild(name)
+      rowEl.appendChild(value)
+      el.contextPopover.appendChild(rowEl)
+    }
+  }
+
+  if (el.contextBar) {
+    el.contextBar.addEventListener('click', event => {
+      event.stopPropagation()
+      el.contextPopover.classList.toggle('hidden')
+    })
+  }
+  document.addEventListener('click', event => {
+    if (!el.contextPopover || el.contextPopover.classList.contains('hidden')) return
+    if (el.contextPopover.contains(event.target) || el.contextBar.contains(event.target)) return
+    el.contextPopover.classList.add('hidden')
+  })
+  renderContext(null)
 
   let viewerImage = null
 
@@ -674,6 +805,8 @@
     state.me = null
     state.authFailed = false
     state.messages = []
+    state.context = null
+    renderContext(null)
     setUnread(0)
     remove(KEYS.token)
     remove(KEYS.ownerToken)
@@ -836,9 +969,14 @@
       flushOutbox().catch(() => {})
       return
     }
+    if (msg.type === 'context') {
+      renderContext(msg.context)
+      return
+    }
     if (msg.type === 'assistant' && msg.text) {
       clearTyping()
       appendMessage({ role: 'bot', text: msg.text, ts: msg.timestamp || new Date().toISOString() })
+      refreshContext()
       if (state.tab === 'chat' && document.visibilityState === 'visible') markReadSoon()
       else setUnread(state.unread + 1)
       return
@@ -952,12 +1090,404 @@
     if (lastIndex < text.length) parent.appendChild(document.createTextNode(text.slice(lastIndex)))
   }
 
+  // ── markdown ────────────────────────────────────────────────────────────
+
+  function markdownSafeUrl(raw) {
+    const value = String(raw || '').trim().replace(/^<|>$/g, '')
+    if (!value) return ''
+    if (/^(https?:\/\/|\/)/i.test(value)) return browserSafeUrl(value)
+    if (/^[\w.-]+\.[a-z]{2,}([/:?#]|$)/i.test(value)) return browserSafeUrl(`https://${value}`)
+    return ''
+  }
+
+  function appendMarkdownInline(parent, text) {
+    const src = String(text ?? '')
+    let index = 0
+    let buffer = ''
+    const flush = () => {
+      if (!buffer) return
+      parent.appendChild(document.createTextNode(buffer))
+      buffer = ''
+    }
+    const pushEmphasis = (tag, start, marker, end) => {
+      flush()
+      const el = document.createElement(tag)
+      appendMarkdownInline(el, src.slice(start, end))
+      parent.appendChild(el)
+      return end + marker.length
+    }
+
+    while (index < src.length) {
+      const char = src[index]
+
+      if (char === '`') {
+        const end = src.indexOf('`', index + 1)
+        if (end > index + 1) {
+          flush()
+          const code = document.createElement('code')
+          code.textContent = src.slice(index + 1, end)
+          parent.appendChild(code)
+          index = end + 1
+          continue
+        }
+      }
+
+      if (char === '!' && src[index + 1] === '[') {
+        const labelEnd = src.indexOf(']', index + 2)
+        if (labelEnd > index && src[labelEnd + 1] === '(') {
+          const urlEnd = src.indexOf(')', labelEnd + 2)
+          if (urlEnd > labelEnd) {
+            const alt = src.slice(index + 2, labelEnd)
+            const url = markdownSafeUrl(src.slice(labelEnd + 2, urlEnd))
+            if (url) {
+              flush()
+              const image = document.createElement('img')
+              image.className = 'md-image'
+              image.src = url
+              image.alt = alt || '图片'
+              image.loading = 'lazy'
+              image.addEventListener('click', () => openImageViewer(url, alt || '图片'))
+              parent.appendChild(image)
+              index = urlEnd + 1
+              continue
+            }
+          }
+        }
+      }
+
+      if (char === '[') {
+        const labelEnd = src.indexOf(']', index + 1)
+        if (labelEnd > index && src[labelEnd + 1] === '(') {
+          const urlEnd = src.indexOf(')', labelEnd + 2)
+          if (urlEnd > labelEnd) {
+            const label = src.slice(index + 1, labelEnd)
+            const url = markdownSafeUrl(src.slice(labelEnd + 2, urlEnd))
+            if (url) {
+              flush()
+              const link = document.createElement('a')
+              link.href = url
+              link.target = '_blank'
+              link.rel = 'noopener'
+              appendMarkdownInline(link, label)
+              parent.appendChild(link)
+              index = urlEnd + 1
+              continue
+            }
+          }
+        }
+      }
+
+      if (char === '~' && src[index + 1] === '~') {
+        const end = src.indexOf('~~', index + 2)
+        if (end > index + 2) {
+          index = pushEmphasis('del', index + 2, '~~', end)
+          continue
+        }
+      }
+
+      if (char === '*' || char === '_') {
+        if (char === '_'
+          && /[A-Za-z0-9]/.test(src[index - 1] || '')
+          && /[A-Za-z0-9]/.test(src[index + 1] || '')) {
+          buffer += char
+          index++
+          continue
+        }
+        const triple = src.slice(index, index + 3)
+        if (triple === '***' || triple === '___') {
+          const end = src.indexOf(triple, index + 3)
+          if (end > index + 3) {
+            flush()
+            const strong = document.createElement('strong')
+            const em = document.createElement('em')
+            appendMarkdownInline(em, src.slice(index + 3, end))
+            strong.appendChild(em)
+            parent.appendChild(strong)
+            index = end + 3
+            continue
+          }
+        }
+        const double = src.slice(index, index + 2)
+        if (double === '**' || double === '__') {
+          const end = src.indexOf(double, index + 2)
+          if (end > index + 2) {
+            index = pushEmphasis('strong', index + 2, double, end)
+            continue
+          }
+        }
+        const end = src.indexOf(char, index + 1)
+        if (end > index + 1) {
+          index = pushEmphasis('em', index + 1, char, end)
+          continue
+        }
+      }
+
+      if ((char === 'h' || char === 'H') && /^https?:\/\//i.test(src.slice(index))) {
+        let end = index
+        while (end < src.length && !/[\s<>"']/.test(src[end])) end++
+        let url = src.slice(index, end)
+        const trailing = /[`"'，。；：！？)\]}>】]+$/.exec(url)
+        if (trailing) url = url.slice(0, -trailing[0].length)
+        flush()
+        const link = document.createElement('a')
+        link.href = browserSafeUrl(url)
+        link.target = '_blank'
+        link.rel = 'noopener'
+        link.textContent = url
+        parent.appendChild(link)
+        index += url.length
+        continue
+      }
+
+      if (char === '\n') {
+        flush()
+        parent.appendChild(document.createElement('br'))
+        index++
+        continue
+      }
+
+      buffer += char
+      index++
+    }
+    flush()
+  }
+
+  function markdownTableStart(lines, index) {
+    const line = lines[index] || ''
+    const next = lines[index + 1] || ''
+    return line.includes('|')
+      && next.includes('|')
+      && /^\s*\|?[\s:|-]*-{3,}[\s:|-]*\|?\s*$/.test(next)
+  }
+
+  function splitMarkdownTableRow(line) {
+    let value = String(line || '').trim()
+    if (value.startsWith('|')) value = value.slice(1)
+    if (value.endsWith('|')) value = value.slice(0, -1)
+    return value.split('|').map(cell => cell.trim())
+  }
+
+  function renderMarkdownTable(parent, lines, start) {
+    const header = splitMarkdownTableRow(lines[start])
+    const separators = splitMarkdownTableRow(lines[start + 1])
+    const alignments = separators.map(cell => {
+      const left = cell.startsWith(':')
+      const right = cell.endsWith(':')
+      return left && right ? 'center' : (right ? 'right' : 'left')
+    })
+    const wrap = document.createElement('div')
+    wrap.className = 'md-table-wrap'
+    const table = document.createElement('table')
+    const thead = document.createElement('thead')
+    const headRow = document.createElement('tr')
+    header.forEach((cell, column) => {
+      const th = document.createElement('th')
+      appendMarkdownInline(th, cell)
+      th.style.textAlign = alignments[column] || 'left'
+      headRow.appendChild(th)
+    })
+    thead.appendChild(headRow)
+    table.appendChild(thead)
+    const tbody = document.createElement('tbody')
+    let index = start + 2
+    while (index < lines.length) {
+      const line = lines[index]
+      if (!line.trim() || !line.includes('|')) break
+      const cells = splitMarkdownTableRow(line)
+      const row = document.createElement('tr')
+      for (let column = 0; column < header.length; column++) {
+        const td = document.createElement('td')
+        appendMarkdownInline(td, cells[column] || '')
+        td.style.textAlign = alignments[column] || 'left'
+        row.appendChild(td)
+      }
+      tbody.appendChild(row)
+      index++
+    }
+    table.appendChild(tbody)
+    wrap.appendChild(table)
+    parent.appendChild(wrap)
+    return index
+  }
+
+  function renderMarkdownList(lines, start) {
+    const first = /^(\s*)([-*+]|\d+\.)\s+(.*)$/.exec(lines[start])
+    if (!first) {
+      return { el: document.createElement('ul'), next: start + 1 }
+    }
+    const baseIndent = first[1].length
+    const ordered = /^\d+\./.test(first[2])
+    const list = document.createElement(ordered ? 'ol' : 'ul')
+    let index = start
+    let lastItem = null
+
+    while (index < lines.length) {
+      const match = /^(\s*)([-*+]|\d+\.)\s+(.*)$/.exec(lines[index])
+      if (!match) break
+      const indent = match[1].length
+      const itemOrdered = /^\d+\./.test(match[2])
+      if (indent < baseIndent) break
+      if (indent === baseIndent && itemOrdered !== ordered) break
+
+      if (indent > baseIndent) {
+        if (!lastItem) break
+        const nested = renderMarkdownList(lines, index)
+        lastItem.appendChild(nested.el)
+        if (nested.next === index) break
+        index = nested.next
+        continue
+      }
+
+      lastItem = document.createElement('li')
+      const task = /^\[([ xX])\]\s+(.*)$/.exec(match[3])
+      if (task) {
+        const box = document.createElement('span')
+        box.className = 'md-task'
+        box.textContent = task[1].toLowerCase() === 'x' ? '☑' : '☐'
+        lastItem.appendChild(box)
+        appendMarkdownInline(lastItem, task[2])
+      } else {
+        appendMarkdownInline(lastItem, match[3])
+      }
+      list.appendChild(lastItem)
+      index++
+
+      while (index < lines.length) {
+        const nextLine = lines[index]
+        if (!nextLine.trim()) { index++; break }
+        if (/^(\s*)([-*+]|\d+\.)\s+/.test(nextLine)) break
+        const spaces = nextLine.length - nextLine.trimStart().length
+        if (spaces <= baseIndent) break
+        appendMarkdownInline(lastItem, '\n' + nextLine.trim())
+        index++
+      }
+    }
+    return { el: list, next: index }
+  }
+
+  function renderMarkdownBlocks(parent, lines) {
+    let index = 0
+    while (index < lines.length) {
+      const line = lines[index]
+      if (!line.trim()) { index++; continue }
+
+      const fence = /^\s*(```+|~~~+)\s*([A-Za-z0-9_+-]*)\s*$/.exec(line)
+      if (fence) {
+        const marker = fence[1][0]
+        const fenceLength = fence[1].length
+        const body = []
+        index++
+        while (index < lines.length) {
+          const close = new RegExp(`^\\s*${marker}{${fenceLength},}\\s*$`)
+          if (close.test(lines[index])) { index++; break }
+          body.push(lines[index])
+          index++
+        }
+        const wrap = document.createElement('div')
+        wrap.className = 'md-code'
+        const pre = document.createElement('pre')
+        const code = document.createElement('code')
+        if (fence[2]) code.className = `language-${fence[2]}`
+        code.textContent = body.join('\n')
+        pre.appendChild(code)
+        const copy = document.createElement('button')
+        copy.type = 'button'
+        copy.className = 'md-copy'
+        copy.textContent = '复制'
+        copy.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(body.join('\n'))
+            copy.textContent = '已复制'
+            setTimeout(() => { copy.textContent = '复制' }, 1200)
+          } catch {
+            copy.textContent = '复制失败'
+          }
+        })
+        wrap.appendChild(pre)
+        wrap.appendChild(copy)
+        parent.appendChild(wrap)
+        continue
+      }
+
+      const heading = /^(#{1,6})\s+(.*)$/.exec(line)
+      if (heading) {
+        const el = document.createElement(`h${heading[1].length}`)
+        appendMarkdownInline(el, heading[2])
+        parent.appendChild(el)
+        index++
+        continue
+      }
+
+      if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
+        parent.appendChild(document.createElement('hr'))
+        index++
+        continue
+      }
+
+      if (/^\s*>/.test(line)) {
+        const quoteLines = []
+        while (index < lines.length && /^\s*>/.test(lines[index])) {
+          quoteLines.push(lines[index].replace(/^\s*>\s?/, ''))
+          index++
+        }
+        const quote = document.createElement('blockquote')
+        renderMarkdownBlocks(quote, quoteLines)
+        parent.appendChild(quote)
+        continue
+      }
+
+      if (markdownTableStart(lines, index)) {
+        index = renderMarkdownTable(parent, lines, index)
+        continue
+      }
+
+      if (/^\s*([-*+]|\d+\.)\s+/.test(line)) {
+        const list = renderMarkdownList(lines, index)
+        parent.appendChild(list.el)
+        index = list.next
+        continue
+      }
+
+      const paragraph = []
+      while (index < lines.length) {
+        const current = lines[index]
+        if (!current.trim()) break
+        if (paragraph.length && (
+          /^\s*(```|~~~)/.test(current)
+          || /^(#{1,6})\s+/.test(current)
+          || /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(current)
+          || /^\s*>/.test(current)
+          || /^\s*([-*+]|\d+\.)\s+/.test(current)
+          || markdownTableStart(lines, index)
+        )) break
+        paragraph.push(current)
+        index++
+      }
+      if (!paragraph.length) { index++; continue }
+      const p = document.createElement('p')
+      appendMarkdownInline(p, paragraph.join('\n'))
+      parent.appendChild(p)
+    }
+  }
+
+  function renderMarkdown(parent, text) {
+    const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n')
+    renderMarkdownBlocks(parent, lines)
+  }
+
   function buildMessageEl(item) {
     const div = document.createElement('div')
     div.className = 'msg ' + (item.role === 'user' ? 'user' : item.role === 'system' ? 'system' : 'bot')
 
     if (item.text) {
-      appendLinkedText(div, item.text)
+      if (item.role === 'bot') {
+        const md = document.createElement('div')
+        md.className = 'md'
+        renderMarkdown(md, item.text)
+        div.appendChild(md)
+      } else {
+        appendLinkedText(div, item.text)
+      }
     }
 
     if (item.attachments) {
@@ -1167,6 +1697,14 @@
     if (state.typingEl) { state.typingEl.remove(); state.typingEl = null }
   }
 
+  async function refreshContext() {
+    if (!state.token) return
+    try {
+      const data = await api('/api/v1/context')
+      renderContext(data.context || null)
+    } catch {}
+  }
+
   async function loadSession() {
     if (!state.token) return
     try {
@@ -1174,6 +1712,8 @@
       state.sessionId = data.session?.sessionId || data.sessionId || ''
       state.syncCursor = Number(data.cursor || 0)
       state.messages = Array.isArray(data.messages) ? data.messages : []
+      state.context = data.context || null
+      renderContext(state.context)
       state.oldestSeq = Number(data.oldestSeq ?? (state.messages[0]?.seq || 0))
       state.hasMore = !!data.hasMore
       const localFiles = readLocalFiles().filter(item => item.sessionId === state.sessionId)
@@ -1269,7 +1809,7 @@
         el.settingsUsername.textContent = data.username || data.displayName || '—'
       }
       renderConnection()
-      el.testChip.textContent = data.testMode ? '测试' : 'App'
+      if (el.testChip) el.testChip.textContent = data.testMode ? '测试' : 'App'
     } catch {}
   }
 
@@ -2382,7 +2922,7 @@
   function renderConnection() {
     if (!el.settingsStatus) return
     el.settingsUsername.textContent = state.me?.username || state.me?.displayName || '—'
-    el.settingsStatus.textContent = el.status.textContent || '—'
+    el.settingsStatus.textContent = state.connectionStatus || '—'
     el.settingsUrl.textContent = state.url || '—'
     el.settingsDevice.textContent = state.device || '—'
     el.settingsToken.textContent = mask(state.token)
@@ -2758,7 +3298,7 @@
   el.testModeToggle.addEventListener('change', async () => {
     try {
       await api('/api/v1/settings', { method: 'PUT', body: { testMode: el.testModeToggle.checked } })
-      el.testChip.textContent = el.testModeToggle.checked ? '测试' : 'App'
+      if (el.testChip) el.testChip.textContent = el.testModeToggle.checked ? '测试' : 'App'
     } catch (err) {
       toast(`保存失败：${err.message}`)
     }

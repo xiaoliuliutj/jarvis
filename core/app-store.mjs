@@ -88,6 +88,40 @@ export function updateSettings(principalId, patch = {}) {
   return next
 }
 
+// ── context usage ─────────────────────────────────────────────────────────────
+
+export function setSessionContext(principalId, sessionId, context) {
+  if (!context) return null
+  ensureAppDir(principalId)
+  const entry = {
+    sessionId: sessionId || '',
+    totalTokens: Number(context.totalTokens) || 0,
+    maxTokens: Number(context.maxTokens) || 0,
+    rawMaxTokens: Number(context.rawMaxTokens) || 0,
+    percentage: Number(context.percentage) || 0,
+    categories: Array.isArray(context.categories)
+      ? context.categories.map(item => ({
+          id: item?.id || '',
+          name: item?.name || '',
+          tokens: Number(item?.tokens) || 0,
+          color: item?.color || '',
+          kind: item?.kind || 'used',
+          isDeferred: !!item?.isDeferred,
+        }))
+      : [],
+    updatedAt: nowIso(),
+  }
+  writeJson(appFile(principalId, 'context.json'), entry)
+  return entry
+}
+
+export function getSessionContext(principalId, sessionId) {
+  const data = readJson(appFile(principalId, 'context.json'), null)
+  if (!data || !Array.isArray(data.categories)) return null
+  if (sessionId && data.sessionId && data.sessionId !== sessionId) return null
+  return data
+}
+
 // ── secrets ──────────────────────────────────────────────────────────────────
 
 function masterKey() {
