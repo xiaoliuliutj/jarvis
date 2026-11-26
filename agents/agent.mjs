@@ -63,6 +63,12 @@ export function buildInjectedEnv({
   }
   delete injectedEnv.CLAUDECODE
 
+  // 主会话上下文过长会拖慢每一次工具调用；把自动压缩窗口从模型默认的 1M
+  // 降到 200k，让 CLI 更早压缩历史，后续回合的 cache/延迟都会明显下降。
+  if (!injectedEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW) {
+    injectedEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '200000'
+  }
+
   if (authMode === 'auth_token') {
     injectedEnv.ANTHROPIC_AUTH_TOKEN = apiKey
     delete injectedEnv.ANTHROPIC_API_KEY
@@ -141,6 +147,7 @@ export async function* run(prompt, options = {}) {
 
   let collectedText = ''
   const fileOpsThisTurn = []
+  const seenAssistantUsage = new Set()
   let signalWatcher = null
   let activeSessionId = resumeSessionId || null
 
@@ -170,6 +177,29 @@ export async function* run(prompt, options = {}) {
       }
 
       if (msg.type === 'assistant') {
+        const usage = msg.message?.usage
+        const usageKey = msg.message?.id || msg.uuid || ''
+        const hasUsage = usage && (
+          Number(usage.input_tokens)
+          || Number(usage.output_tokens)
+          || Number(usage.cache_read_input_tokens)
+          || Number(usage.cache_creation_input_tokens)
+        )
+        if (hasUsage && (!usageKey || !seenAssistantUsage.has(usageKey))) {
+          if (usageKey) seenAssistantUsage.add(usageKey)
+          yield {
+            type: 'llm_usage',
+            messageId: usageKey,
+            usage,
+            model: msg.message?.model || '',
+            tools: (msg.message?.content ?? [])
+              .filter(block => block.type === 'tool_use')
+              .map(block => block.name),
+            subagent: !!msg.parent_tool_use_id,
+            ts: new Date().toISOString(),
+          }
+        }
+
         for (const block of (msg.message?.content ?? [])) {
           if (block.type === 'tool_use') {
             yield { type: 'tool', name: block.name, input: block.input }

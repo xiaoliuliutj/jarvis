@@ -30,7 +30,7 @@ import { WebSocketServer } from 'ws'
 import { ROOT } from '../../core/paths.mjs'
 import { logInfo, logWarn, logError } from '../../core/logger.mjs'
 import { resolvePrincipal, getPrincipal } from '../../core/principals.mjs'
-import { getCurrentSession, readMessages, appendMessage, touchSession } from '../../core/user-store.mjs'
+import { getCurrentSession, readMessages, appendMessage, touchSession, listSessions } from '../../core/user-store.mjs'
 import * as appStore from '../../core/app-store.mjs'
 import * as authStore from '../../core/auth-store.mjs'
 import { listCatalog, getTool as getCatalogTool } from '../../core/tool-catalog.mjs'
@@ -814,13 +814,44 @@ function buildServer() {
 
   app.get('/api/v1/usage/summary', auth, (req, res) => {
     const { principal } = appPrincipalFor(req)
-    res.json({ ok: true, summary: appStore.usageSummary(principal.id, { month: req.query.month }) })
+    const messageLimit = Math.min(500, Math.max(20, Number(req.query.messageLimit) || 200))
+    const summary = appStore.usageSummaryRange(principal.id, {
+      from: req.query.from,
+      to: req.query.to,
+      messageLimit,
+    })
+    const names = new Map(listSessions(principal.id).map(item => [item.sessionId, item.name]))
+    summary.sessionList = Object.values(summary.bySession || {})
+      .map(item => ({ ...item, name: names.get(item.sessionId) || '' }))
+      .sort((a, b) => String(b.lastTs || '').localeCompare(String(a.lastTs || '')))
+    summary.messages = (summary.messages || []).map(item => ({
+      ...item,
+      sessionName: names.get(item.sessionId) || '',
+    }))
+    res.json({ ok: true, summary })
+  })
+
+  app.get('/api/v1/usage/message', auth, (req, res) => {
+    const { principal } = appPrincipalFor(req)
+    const turnId = typeof req.query.turnId === 'string' ? req.query.turnId.slice(0, 160) : ''
+    if (!turnId) return res.status(400).json({ ok: false, error: 'turnId required' })
+    res.json({ ok: true, records: appStore.listUsageByTurn(principal.id, turnId) })
   })
 
   app.get('/api/v1/usage/records', auth, (req, res) => {
     const { principal } = appPrincipalFor(req)
-    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 50))
-    res.json({ ok: true, records: appStore.listUsage(principal.id, { month: req.query.month, limit }) })
+    const limit = Math.min(2000, Math.max(1, Number(req.query.limit) || 50))
+    const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId.slice(0, 80) : ''
+    const level = req.query.level === 'call' ? 'call' : (req.query.level === 'turn' ? 'turn' : '')
+    res.json({
+      ok: true,
+      records: appStore.listUsage(principal.id, {
+        month: req.query.month,
+        limit,
+        sessionId,
+        level,
+      }),
+    })
   })
 
   app.get('/api/v1/devices', auth, (req, res) => {
