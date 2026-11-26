@@ -47,10 +47,16 @@ function listUserToolDirs() {
   return result
 }
 
+/** 前端展示用的一句话简介：去掉多余空白，限制长度。 */
+export function normalizeToolSummary(value) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)
+}
+
 export function listAllTools() {
   const system = readSystemRegistry().map(e => ({
     name: e.name,
     description: e.description,
+    summary: e.summary || '',
     enabled: e.enabled !== false,
     scope: 'system',
     // 有 ownerId 表示这个工具虽然放在系统目录，但由某个用户创建/拥有。
@@ -60,6 +66,7 @@ export function listAllTools() {
   const user = listUserToolDirs().map(m => ({
     name: m.name,
     description: m.description || '',
+    summary: m.summary || '',
     enabled: m.enabled !== false,
     scope: 'user',
     ownerId: m.ownerId,
@@ -108,7 +115,7 @@ export function signalReload() {
 
 // ── 用户工具 CRUD ─────────────────────────────────────────────────────────────
 
-export function createUserTool({ principalId, name, description, code, access = 'all' }) {
+export function createUserTool({ principalId, name, description, summary, code, access = 'all' }) {
   assertNameAvailable(name)
   const dir = path.join(USER_TOOLS_DIR, principalId, name)
   ensureDir(dir)
@@ -125,6 +132,7 @@ export function createUserTool({ principalId, name, description, code, access = 
   const manifest = {
     name,
     description,
+    summary: normalizeToolSummary(summary),
     ownerId: principalId,
     createdAt: new Date().toISOString(),
     version: '1.0.0',
@@ -143,7 +151,7 @@ function assertCanManage(principalId, role, tool) {
   }
 }
 
-export function updateUserTool({ principalId, role, name, code, description, access }) {
+export function updateUserTool({ principalId, role, name, code, description, summary, access }) {
   const tool = findUserTool(name)
   if (!tool) throw new Error(`用户工具 "${name}" 不存在；系统工具请直接修改项目文件`)
   assertCanManage(principalId, role, tool)
@@ -164,6 +172,7 @@ export function updateUserTool({ principalId, role, name, code, description, acc
   const manifestFile = path.join(tool.dir, 'manifest.json')
   const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf-8'))
   if (description) manifest.description = description
+  if (summary !== undefined) manifest.summary = normalizeToolSummary(summary)
   if (access === 'all' || access === 'owner') manifest.access = access
   manifest.version = bumpVersion(manifest.version)
   manifest.updatedAt = new Date().toISOString()

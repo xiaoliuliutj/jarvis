@@ -1816,7 +1816,7 @@
 
   function toolTip(name) {
     const raw = String(name || '').trim()
-    if (!raw) return '执行操作中…'
+    if (!raw) return '执行操作中'
     const direct = TOOL_TIPS.get(raw) || TOOL_TIPS.get(raw.replace(/^mcp__/, ''))
     if (direct) return direct
 
@@ -1827,18 +1827,19 @@
     const actions = TOOL_SERVICE_ACTIONS.get(service)
     if (actions) return actions[action] || actions.default
     // 不认识的自定义工具：给通用描述，绝不展示代码方法名。
-    return '执行操作中…'
+    return '执行操作中'
   }
 
+  // 状态文案跟随 Jarvis 的猫娘人设，只做轻微的语气调整，不打扰使用。
   function runStatusLabel(status) {
     switch (status?.state) {
-      case 'queued': return '排队中…'
-      case 'tool': return toolTip(status.tool)
-      case 'writing': return '正在整理回复…'
-      case 'interim': return String(status.text || '').trim() || '正在处理…'
+      case 'queued': return '排队中喵…'
+      case 'tool': return `${toolTip(status.tool)}喵…`
+      case 'writing': return '整理回复中喵…'
+      case 'interim': return String(status.text || '').trim() || '处理中喵…'
       case 'started':
       case 'thinking':
-      default: return '思考中…'
+      default: return '思考中喵…'
     }
   }
 
@@ -2395,7 +2396,7 @@
 
     const desc = document.createElement('div')
     desc.className = 'tool-desc tool-desc-collapsed'
-    desc.textContent = tool.description || '无描述'
+    desc.textContent = toolDisplayDescription(tool)
     info.appendChild(desc)
 
     const meta = document.createElement('div')
@@ -2469,10 +2470,15 @@
     }
   }
 
+  // 前端只展示给用户看的一句话简介；description 是给模型的能力说明，可能很长。
+  function toolDisplayDescription(tool) {
+    return tool.summary || tool.description || '无描述'
+  }
+
   function renderToolExpanded(panel, tool) {
     const desc = document.createElement('p')
     desc.className = 'tool-detail-desc'
-    desc.textContent = tool.description || '无描述'
+    desc.textContent = toolDisplayDescription(tool)
     panel.appendChild(desc)
 
     if (!tool.available) {
@@ -2602,7 +2608,7 @@
 
     const desc = document.createElement('p')
     desc.className = 'tool-detail-desc'
-    desc.textContent = tool.description || '无描述'
+    desc.textContent = toolDisplayDescription(tool)
     el.toolModalBody.appendChild(desc)
 
     if (!tool.available) {

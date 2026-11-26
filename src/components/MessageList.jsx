@@ -155,7 +155,7 @@ export default function MessageList({ messages = [], pending = null, userName = 
             </Box>
           ) : (
             <Box bg={ui.canvas.surfaceMuted} borderWidth={ui.dividerWidth} borderColor={ui.canvas.border} borderRadius="12px" px={3} py={2} fontSize="14px" color={ui.canvas.muted}>
-              Jarvis 思考中…
+              Jarvis 思考中喵…
             </Box>
           )}
         </VStack>

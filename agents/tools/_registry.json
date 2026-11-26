@@ -4,49 +4,56 @@
     "description": "查询指定地点的当前天气和未来 1-7 天预报，支持中英文地名",
     "enabled": true,
     "createdAt": "2026-11-14T03:29:29.553Z",
-    "version": "1.1.0"
+    "version": "1.1.0",
+    "summary": "查天气和未来几天预报"
   },
   {
     "name": "cron__list",
     "description": "列出当前用户的定时任务；main 可以列出所有用户的任务",
     "enabled": true,
     "createdAt": "2026-11-14T18:09:53.783Z",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "summary": "查看我的定时任务"
   },
   {
     "name": "cron__add",
     "description": "为当前用户创建定时任务；任务使用该用户的人设/记忆/权限，结果发回该用户",
     "enabled": true,
     "createdAt": "2026-11-14T18:10:00.071Z",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "summary": "创建一个定时任务"
   },
   {
     "name": "cron__update",
     "description": "修改当前用户的定时任务；main 可以指定其他用户",
     "enabled": true,
     "createdAt": "2026-11-14T18:10:06.086Z",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "summary": "修改定时任务"
   },
   {
     "name": "cron__delete",
     "description": "删除当前用户的定时任务；main 可以指定其他用户",
     "enabled": true,
     "createdAt": "2026-11-14T18:10:11.299Z",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "summary": "删除定时任务"
   },
   {
     "name": "cn_calendar",
     "description": "查询中国法定日历：工作日、调休、节假日；支持多数据源镜像和离线降级",
     "enabled": true,
     "createdAt": "2026-11-14T18:28:02.088Z",
-    "version": "1.1.0"
+    "version": "1.1.0",
+    "summary": "查中国法定节假日和调休"
   },
   {
     "name": "restart",
     "description": "重启 Jarvis 组件。restart__renderer 刷新 React（改 src/）；restart__bridge 重启 Bridge（bridge/ 或 core/）；restart__electron 重启 Electron（electron/、core/、agents/，等待当前回合结束）；restart__all 同时重启 Bridge 和 Electron。默认先做语法/构建检查。",
     "enabled": true,
     "createdAt": "2026-11-15T00:00:00.000Z",
-    "version": "1.1.0"
+    "version": "1.1.0",
+    "summary": "重启 Jarvis 服务"
   },
   {
     "name": "notes",
@@ -54,7 +61,8 @@
     "enabled": true,
     "createdAt": "2026-11-15T04:24:39.364Z",
     "version": "1.0.0",
-    "ownerId": "user_1efb13a1ec"
+    "ownerId": "user_1efb13a1ec",
+    "summary": "记待办、笔记和日程"
   },
   {
     "name": "unzip_file",
@@ -62,7 +70,8 @@
     "enabled": true,
     "createdAt": "2026-11-16T16:38:57.460Z",
     "version": "1.0.0",
-    "ownerId": "user_1efb13a1ec"
+    "ownerId": "user_1efb13a1ec",
+    "summary": "解压压缩包"
   },
   {
     "name": "read_word",
@@ -70,21 +79,24 @@
     "enabled": true,
     "createdAt": "2026-11-16T17:17:22.449Z",
     "version": "1.0.0",
-    "ownerId": "user_1efb13a1ec"
+    "ownerId": "user_1efb13a1ec",
+    "summary": "读取 Word 文档内容"
   },
   {
     "name": "persona",
     "description": "管理当前用户自己的 AI 人设（persona.md），用户可以让自己的人设由 AI 修改",
     "enabled": true,
     "createdAt": "2026-11-18T15:10:13.907Z",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "summary": "调整我的语气和人设"
   },
   {
     "name": "schedule",
     "description": "日程工具：添加、查看、修改、删除当前用户自己的日程，并按提前量提醒",
     "enabled": true,
     "createdAt": "2026-11-18T17:00:25.832Z",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "summary": "管理带提醒的日程"
   },
   {
     "name": "screenshot",
@@ -92,7 +104,8 @@
     "enabled": true,
     "access": "owner",
     "createdAt": "2026-11-19T12:20:00.000Z",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "summary": "截屏并查看或发送"
   },
   {
     "name": "mouse_control",
@@ -100,7 +113,8 @@
     "enabled": true,
     "access": "owner",
     "createdAt": "2026-11-19T12:45:00.000Z",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "summary": "模拟鼠标操作"
   },
   {
     "name": "keyboard_control",
@@ -108,7 +122,8 @@
     "enabled": true,
     "access": "owner",
     "createdAt": "2026-11-19T12:45:00.000Z",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "summary": "模拟键盘输入"
   },
   {
     "name": "input_session",
@@ -116,14 +131,16 @@
     "enabled": true,
     "access": "owner",
     "createdAt": "2026-11-19T13:40:00.000Z",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "summary": "连续键鼠操作模式"
   },
   {
     "name": "file_builder",
     "description": "生成文件：txt / md / docx / xlsx / pdf，可结构化为标题/段落/列表/表格，或直接发回给用户",
     "enabled": true,
     "createdAt": "2026-11-19T15:30:00.000Z",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "summary": "生成 txt/Word/Excel/PDF"
   },
   {
     "name": "image_gen",
@@ -131,14 +148,16 @@
     "enabled": true,
     "access": "owner",
     "createdAt": "2026-11-19T16:10:00.000Z",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "summary": "AI 文生图 / 图生图"
   },
   {
     "name": "abstract_image",
     "description": "抽象沙雕表情图：按语境生成并直接发送（生成仅限主人/主会话），个人表情库 + 家庭共享库（list/send/unshare 所有用户可用）",
     "enabled": true,
     "createdAt": "2026-11-19T16:40:00.000Z",
-    "version": "1.1.0"
+    "version": "1.1.0",
+    "summary": "生成或收藏沙雕表情图"
   },
   {
     "name": "festival_query",
@@ -146,7 +165,8 @@
     "enabled": true,
     "createdAt": "2026-11-20T11:54:06.404Z",
     "version": "1.0.0",
-    "ownerId": "user_1efb13a1ec"
+    "ownerId": "user_1efb13a1ec",
+    "summary": "查各地节日和纪念日"
   },
   {
     "name": "my_location",
@@ -154,6 +174,7 @@
     "enabled": true,
     "createdAt": "2026-11-20T11:54:06.404Z",
     "version": "1.0.0",
-    "ownerId": "user_1efb13a1ec"
+    "ownerId": "user_1efb13a1ec",
+    "summary": "获取当前所在城市"
   }
 ]

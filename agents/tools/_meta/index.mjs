@@ -63,19 +63,21 @@ server.tool(
 server.tool(
   'create_tool',
   '创建一个用户工具。默认所有用户可以使用；access=owner 时仅主人和主会话可用。' +
-  '只有创建者/main 可以修改或删除。代码必须是完整的 MCP server，并以 await server.connect(new StdioServerTransport()) 结尾。',
+  '只有创建者/main 可以修改或删除。代码必须是完整的 MCP server，并以 await server.connect(new StdioServerTransport()) 结尾。' +
+  '创建时必须自己生成 summary：用一句话概括工具能做什么，供 App 工具列表展示；不要照抄给模型看的 description，也不要写实现细节。',
   {
     name: z.string().regex(/^[a-z][a-z0-9_]*$/, '小写字母/数字/下划线，字母开头').describe('工具全局唯一名称'),
-    description: z.string().min(1).describe('工具描述'),
+    description: z.string().min(1).describe('给模型看的能力说明（工具用途、参数、限制）'),
+    summary: z.string().min(1).max(80).describe('给用户看的一句话简介，用于前端工具列表展示；10-30 字，不要技术细节'),
     code: z.string().min(50).describe('完整 MCP server 实现代码'),
     access: z.enum(['all', 'owner']).optional().describe('访问范围：all=所有用户（默认），owner=仅主人和主会话'),
   },
-  async ({ name, description, code, access }) => {
+  async ({ name, description, summary, code, access }) => {
     try {
       requirePrincipal()
-      const tool = createUserTool({ principalId, name, description, code, access })
+      const tool = createUserTool({ principalId, name, description, summary, code, access })
       const scopeText = tool.access === 'owner' ? '仅主人和主会话可用' : '所有用户都可以使用'
-      return ok(`✅ 工具 "${name}" 已创建（${scopeText}）。\n路径：${tool.dir}`)
+      return ok(`✅ 工具 "${name}" 已创建（${scopeText}）。\n简介：${tool.summary}\n路径：${tool.dir}`)
     } catch (err) {
       return fail(err)
     }
@@ -90,13 +92,14 @@ server.tool(
   {
     name: z.string().describe('工具名称'),
     code: z.string().min(50).describe('新的完整 MCP server 代码'),
-    description: z.string().optional().describe('可选：新描述'),
+    description: z.string().optional().describe('可选：给模型看的新能力说明'),
+    summary: z.string().max(80).optional().describe('可选：给用户看的一句话简介（前端展示），10-30 字'),
     access: z.enum(['all', 'owner']).optional().describe('可选：访问范围，all=所有用户，owner=仅主人和主会话'),
   },
-  async ({ name, code, description, access }) => {
+  async ({ name, code, description, summary, access }) => {
     try {
       requirePrincipal()
-      const manifest = updateUserTool({ principalId, role, name, code, description, access })
+      const manifest = updateUserTool({ principalId, role, name, code, description, summary, access })
       const scopeText = manifest.access === 'owner' ? '，仅主人和主会话可用' : ''
       return ok(`✅ 工具 "${name}" 已更新到 v${manifest.version}${scopeText}，所有会话会自动热加载。`)
     } catch (err) {

@@ -141,6 +141,7 @@ function matches(tool, query) {
   const haystack = [
     tool.id,
     tool.name,
+    tool.summary,
     tool.description,
     tool.category,
     tool.source,
@@ -160,6 +161,7 @@ function fromRegistryTool(tool, principalId, principal) {
   return {
     id,
     name: id,
+    summary: tool.summary || '',
     description: tool.description || '',
     icon: ICONS[id] || (isUserTool ? '🧩' : '🧰'),
     category: CATEGORIES[id] || (isUserTool ? '我的工具' : '系统'),
