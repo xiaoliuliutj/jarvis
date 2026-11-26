@@ -283,8 +283,8 @@ const MEMORY_CHARS_PER_TOKEN = 3
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 200000
 
 const MEMORY_SECTIONS = [
-  ['session_summary', '历史会话摘要'],
   ['preference', '用户偏好'],
+  ['session_summary', '历史会话摘要'],
   ['fact', '记录的事实'],
   ['project_file', '近期文件操作'],
 ]
@@ -391,7 +391,7 @@ function compressMemorySections(sections, targetTokens) {
  *
  * 预算按上下文窗口的 5%-10% 计算：
  *   - 低于 10%：原样保留，不压缩；
- *   - 超过 10%：压缩到 5%，优先保留会话摘要/偏好/事实，再保留最近的去重文件记录。
+ *   - 超过 10%：压缩到 5%，优先保留用户偏好/会话摘要/事实，再保留最近的去重文件记录。
  */
 export function formatMemory(principalId, options = {}) {
   const opts = options && typeof options === 'object' ? options : {}
