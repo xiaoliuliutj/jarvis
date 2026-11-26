@@ -64,7 +64,7 @@
     ownerChip: $('ownerChip'),
     contextBar: $('contextBar'),
     contextSegments: $('contextSegments'),
-    contextLabel: $('contextLabel'),
+    contextValue: $('contextValue'),
     contextLegend: $('contextLegend'),
     contextPopover: $('contextPopover'),
     views: {
@@ -382,12 +382,12 @@
 
   function renderContext(context) {
     state.context = context || null
-    if (!el.contextSegments || !el.contextLabel) return
+    if (!el.contextSegments || !el.contextValue) return
     el.contextSegments.textContent = ''
     el.contextLegend.textContent = ''
     el.contextPopover.textContent = ''
     if (!context || !Array.isArray(context.categories) || !context.categories.length) {
-      el.contextLabel.textContent = '上下文 —'
+      el.contextValue.textContent = '—'
       el.contextBar.classList.add('empty')
       const hint = document.createElement('div')
       hint.className = 'context-popover-row'
@@ -422,7 +422,8 @@
       el.contextSegments.appendChild(segment)
     }
     el.contextBar.classList.toggle('empty', !visible.length)
-    el.contextLabel.textContent = `上下文 ${formatTokens(total)} / ${formatTokens(max)}${context.estimated ? ' · 估算' : ''}`
+    const percentage = Number(context.percentage) || (max ? total / max * 100 : 0)
+    el.contextValue.textContent = max ? `${formatTokens(max)} · ${Math.round(percentage)}%` : '—'
 
     for (const group of visible) {
       const item = document.createElement('span')
