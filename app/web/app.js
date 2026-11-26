@@ -3873,15 +3873,17 @@
       const url = absUrl(state.updateInfo.url)
       const fileName = `Jarvis-${state.updateInfo.version || 'update'}.apk`
       try {
-        // 不再使用 App 内置安装器：交给系统 DownloadManager 下载，用户从通知/文件管理器手动安装。
+        // 设置里的更新只负责把安装包交给浏览器；下载和安装由用户自己完成。
+        if (typeof bridge.openExternal === 'function'
+          && bridge.openExternal(browserSafeUrl(url))) {
+          if (el.updateStatus) el.updateStatus.textContent = '已打开浏览器，下载完成后手动安装'
+          return
+        }
         if (typeof bridge.downloadFile === 'function') {
           const ok = bridge.downloadFile(url, fileName)
           if (el.updateStatus) el.updateStatus.textContent = ok
             ? '已开始下载，完成后点通知里的安装包安装'
             : '下载失败，请稍后重试'
-        } else if (typeof bridge.openExternal === 'function') {
-          bridge.openExternal(browserSafeUrl(url))
-          if (el.updateStatus) el.updateStatus.textContent = '已打开浏览器下载安装包'
         } else {
           window.location.href = url
         }

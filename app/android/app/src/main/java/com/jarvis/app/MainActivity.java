@@ -566,9 +566,16 @@ public class MainActivity extends Activity {
                 params.setAppPackageName(getPackageName());
                 sessionId = installer.createSession(params);
                 Intent resultIntent = new Intent(this, InstallResultReceiver.class)
-                        .setAction(InstallResultReceiver.ACTION_INSTALL_RESULT);
+                        .setAction(InstallResultReceiver.ACTION_INSTALL_RESULT)
+                        .setPackage(getPackageName());
                 int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    // PackageInstaller 需要在回调 Intent 里写入 EXTRA_STATUS / EXTRA_INTENT。
+                    // IMMUTABLE 会把这些 extras 丢掉，结果被误判成安装权限失败。
+                    flags |= PendingIntent.FLAG_MUTABLE;
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    flags |= PendingIntent.FLAG_IMMUTABLE;
+                }
                 PendingIntent resultPending = PendingIntent.getBroadcast(this, 11, resultIntent, flags);
 
                 PackageInstaller.Session session = installer.openSession(sessionId);
