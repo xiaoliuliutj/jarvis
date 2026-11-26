@@ -226,7 +226,7 @@ function stageFile(sourcePath, fileName) {
   const name = sanitizeFileName(fileName || path.basename(sourcePath))
   const target = path.join(FILES_DIR, `${id}_${name}`)
   fs.copyFileSync(sourcePath, target)
-  pruneStagedFiles()
+  // 文件默认长期保留；只在主人明确要求时手动清理，不再按 7 天/100 个自动删除。
   fileRegistry.set(id, { filePath: target, fileName: name })
   return { id, name }
 }
@@ -588,8 +588,30 @@ function buildServer() {
       messages,
       owner,
       cursor: messages.length ? messages[messages.length - 1].seq + 1 : 0,
+      oldestSeq: messages.length ? messages[0].seq : 0,
+      hasMore: all.length > messages.length,
       readCursor,
       unread: all.filter(m => m.seq >= readCursor).length,
+    })
+  })
+
+  /** 向上翻历史：before 是当前最老消息的 seq，返回更早的一页。 */
+  app.get('/api/v1/session/history', auth, (req, res) => {
+    const { principal } = appPrincipalFor(req)
+    const session = getCurrentSession(principal.id)
+    if (!session) return res.json({ ok: true, session: null, messages: [], hasMore: false, oldestSeq: 0 })
+    const all = uiMessages(principal.id, session.sessionId)
+    const before = Math.max(0, Number(req.query.before) || all.length)
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 120))
+    const eligible = all.filter(m => m.seq < before)
+    const messages = eligible.slice(-limit)
+    res.json({
+      ok: true,
+      session,
+      sessionId: session.sessionId,
+      messages,
+      hasMore: eligible.length > messages.length,
+      oldestSeq: messages.length ? messages[0].seq : before,
     })
   })
 

@@ -24,6 +24,9 @@
     clientId: '',
     sessionId: '',
     syncCursor: 0,
+    oldestSeq: 0,
+    hasMore: false,
+    loadingOlder: false,
     unread: 0,
     ws: null,
     retry: 0,
@@ -1030,6 +1033,8 @@
       state.sessionId = data.session?.sessionId || data.sessionId || ''
       state.syncCursor = Number(data.cursor || 0)
       state.messages = Array.isArray(data.messages) ? data.messages : []
+      state.oldestSeq = Number(data.oldestSeq ?? (state.messages[0]?.seq || 0))
+      state.hasMore = !!data.hasMore
       const localFiles = readLocalFiles().filter(item => item.sessionId === state.sessionId)
       const fileKey = item => item?.id ? `id:${item.id}` : `url:${item?.url || ''}`
       const knownFiles = new Set(state.messages.filter(m => m.file).map(m => fileKey(m.file)))
@@ -1066,6 +1071,38 @@
         renderMessages([])
         appendMessage({ role: 'system', text: `会话加载失败：${err.message}`, ts: new Date().toISOString() })
       }
+    }
+  }
+
+  async function loadOlder() {
+    if (!state.token || !state.hasMore || state.loadingOlder) return
+    state.loadingOlder = true
+    const container = el.messages
+    const previousHeight = container.scrollHeight
+    const previousTop = container.scrollTop
+    try {
+      const data = await api(`/api/v1/session/history?before=${encodeURIComponent(state.oldestSeq || 0)}&limit=120`)
+      if (data.sessionId && state.sessionId && data.sessionId !== state.sessionId) {
+        await loadSession()
+        return
+      }
+      const older = Array.isArray(data.messages) ? data.messages : []
+      if (!older.length) {
+        state.hasMore = false
+        return
+      }
+      const known = new Set(state.messages.map(m => m.id).filter(Boolean))
+      const prepend = older.filter(m => !known.has(m.id))
+      state.messages = [...prepend, ...state.messages]
+      state.oldestSeq = Number(data.oldestSeq ?? state.oldestSeq)
+      state.hasMore = !!data.hasMore
+      renderMessages(state.messages)
+      requestAnimationFrame(() => {
+        container.scrollTop = previousTop + (container.scrollHeight - previousHeight)
+      })
+    } catch {}
+    finally {
+      state.loadingOlder = false
     }
   }
 
@@ -1230,6 +1267,10 @@
       })
     }
   }
+
+  el.messages.addEventListener('scroll', () => {
+    if (el.messages.scrollTop < 32) loadOlder().catch(() => {})
+  })
 
   el.send.addEventListener('click', sendMessage)
   el.input.addEventListener('keydown', event => {
