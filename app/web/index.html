@@ -12,15 +12,24 @@
 <body>
   <div id="app">
     <header id="topbar">
-      <div class="brand">
-        <span class="dot" id="statusDot"></span>
-        <span class="title">Jarvis</span>
-        <span class="status-text" id="statusText">连接中…</span>
+      <div class="topbar-row">
+        <div class="brand">
+          <span class="dot" id="statusDot" title="连接中…"></span>
+          <span class="title">Jarvis</span>
+        </div>
+        <div class="top-right">
+          <span id="ownerChip" class="chip owner hidden" title="Owner 权限已启用">Owner</span>
+        </div>
       </div>
-      <div class="top-right">
-        <span id="testChip" class="chip">测试</span>
-        <span id="ownerChip" class="chip owner hidden" title="Owner 权限已启用">Owner</span>
+      <button id="contextBar" class="context-bar empty" type="button" aria-label="上下文窗口使用情况">
+        <span id="contextSegments" class="context-segments"></span>
+      </button>
+      <div class="context-meta">
+        <span id="contextLabel" class="context-label">上下文 —</span>
+        <span id="contextPercent" class="context-percent"></span>
       </div>
+      <div id="contextLegend" class="context-legend"></div>
+      <div id="contextPopover" class="context-popover hidden"></div>
     </header>
 
     <main id="main">

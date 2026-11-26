@@ -246,6 +246,16 @@ export async function* run(prompt, options = {}) {
           yield { type: 'memory', action: 'append', entry }
         }
 
+        let contextUsage = null
+        try {
+          if (typeof q.getContextUsage === 'function') {
+            contextUsage = await q.getContextUsage({ detail: 'summary' })
+          }
+        } catch (err) {
+          // 上下文统计不可用时不影响正常回复
+          console.warn('[agent] context usage failed:', err.message)
+        }
+
         yield {
           type: 'result',
           text,
@@ -254,6 +264,7 @@ export async function* run(prompt, options = {}) {
           isError: msg.is_error ?? (msg.subtype !== 'success'),
           sessionId: msg.session_id ?? activeSessionId,
           usage: msg.usage ?? null,
+          context: contextUsage,
         }
         return
       }
