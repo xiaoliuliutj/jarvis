@@ -688,8 +688,11 @@ function buildServer() {
     const session = getCurrentSession(principal.id)
     if (!session) return res.json({ ok: true, readCursor: 0, unread: 0 })
     const all = uiMessages(principal.id, session.sessionId)
-    const requested = req.body?.cursor === undefined ? all.length : Number(req.body.cursor)
-    const cursor = Math.min(all.length, Math.max(0, Number.isFinite(requested) ? requested : all.length))
+    // 游标必须是消息 seq，而不是消息条数：uiMessages 的 seq 来自全局消息序号，
+    // 用条数会导致 unread 永远算不平（表现为 99+）。
+    const latestCursor = all.length ? all[all.length - 1].seq + 1 : 0
+    const requested = req.body?.cursor === undefined ? latestCursor : Number(req.body.cursor)
+    const cursor = Math.min(latestCursor, Math.max(0, Number.isFinite(requested) ? requested : latestCursor))
     const readCursor = appStore.markRead(principal.id, session.sessionId, cursor)
     res.json({
       ok: true,
