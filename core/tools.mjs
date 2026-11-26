@@ -53,7 +53,8 @@ export function listAllTools() {
     description: e.description,
     enabled: e.enabled !== false,
     scope: 'system',
-    ownerId: null,
+    // 有 ownerId 表示这个工具虽然放在系统目录，但由某个用户创建/拥有。
+    ownerId: e.ownerId || null,
     access: e.access === 'owner' ? 'owner' : 'all',
   }))
   const user = listUserToolDirs().map(m => ({

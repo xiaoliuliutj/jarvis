@@ -154,19 +154,22 @@ function matches(tool, query) {
 function fromRegistryTool(tool, principalId, principal) {
   const id = tool.name
   const enabled = tool.enabled !== false && appStore.isToolEnabled(principalId, id, true)
+  // 有 ownerId 的工具按「用户工具」展示，即使代码放在 agents/tools 里。
+  const ownedByUser = !!tool.ownerId
+  const isUserTool = ownedByUser || tool.scope === 'user'
   return {
     id,
     name: id,
     description: tool.description || '',
-    icon: ICONS[id] || (tool.scope === 'user' ? '🧩' : '🧰'),
-    category: CATEGORIES[id] || (tool.scope === 'user' ? '我的工具' : '系统'),
-    source: tool.scope === 'user' ? 'user' : 'system',
+    icon: ICONS[id] || (isUserTool ? '🧩' : '🧰'),
+    category: CATEGORIES[id] || (isUserTool ? '我的工具' : '系统'),
+    source: isUserTool ? 'user' : 'system',
     risk: RISK[id] || 'low',
     access: tool.access || 'all',
     accessible: canAccessTool(tool, principal),
     enabled,
     available: true,
-    configurable: tool.scope === 'user',
+    configurable: isUserTool,
     ownerId: tool.ownerId || null,
     tags: [],
     configFields: [],

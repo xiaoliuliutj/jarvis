@@ -53,21 +53,24 @@
     "description": "记录工具：待办、笔记、纯文本日程记录；需要定时提醒请用 schedule 工具",
     "enabled": true,
     "createdAt": "2026-11-15T04:24:39.364Z",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "ownerId": "user_1efb13a1ec"
   },
   {
     "name": "unzip_file",
     "description": "解压 zip 文件到指定目录",
     "enabled": true,
     "createdAt": "2026-11-16T16:38:57.460Z",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "ownerId": "user_1efb13a1ec"
   },
   {
     "name": "read_word",
     "description": "解析 Word (.docx) 文件，提取纯文本或转换为 Markdown",
     "enabled": true,
     "createdAt": "2026-11-16T17:17:22.449Z",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "ownerId": "user_1efb13a1ec"
   },
   {
     "name": "persona",
@@ -142,13 +145,15 @@
     "description": "查询某一天世界各地的节日和纪念日（中国及 20 个主要国家的公共假日 + 常见国际节日/纪念日）",
     "enabled": true,
     "createdAt": "2026-11-20T11:54:06.404Z",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "ownerId": "user_1efb13a1ec"
   },
   {
     "name": "my_location",
     "description": "自动检测用户当前位置：优先 Windows 系统精确定位，不可用时退回 IP 归属地（城市级），结果缓存 10 分钟",
     "enabled": true,
     "createdAt": "2026-11-20T11:54:06.404Z",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "ownerId": "user_1efb13a1ec"
   }
 ]
