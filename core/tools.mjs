@@ -17,6 +17,9 @@ import {
   ensureDir,
 } from './paths.mjs'
 import { isToolEnabled } from './app-store.mjs'
+import { normalizeJarvisTool } from './tool-definition.mjs'
+import { listExternalToolDefinitions } from './external-tools.mjs'
+import { buildProviderMcpServers } from './tool-providers/index.mjs'
 
 const SYSTEM_REGISTRY = path.join(SYSTEM_TOOLS_DIR, '_registry.json')
 const NAME_RE = /^[a-z][a-z0-9_]*$/
@@ -52,28 +55,54 @@ export function normalizeToolSummary(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)
 }
 
-export function listAllTools() {
-  const system = readSystemRegistry().map(e => ({
-    name: e.name,
-    description: e.description,
-    summary: e.summary || '',
-    enabled: e.enabled !== false,
+/** 系统工具 + userdata 用户工具，统一成 Jarvis 工具定义。 */
+export function listJarvisToolDefinitions() {
+  const system = readSystemRegistry().map(entry => normalizeJarvisTool({
+    ...entry,
+    id: entry.name,
+    name: entry.name,
+    source: 'system',
     scope: 'system',
-    // 有 ownerId 表示这个工具虽然放在系统目录，但由某个用户创建/拥有。
-    ownerId: e.ownerId || null,
-    access: e.access === 'owner' ? 'owner' : 'all',
+    globalEnabled: entry.enabled !== false,
+    ownerId: entry.ownerId || null,
+    access: entry.access === 'owner' ? 'owner' : 'all',
+    impl: {
+      type: 'local-mcp',
+      server: entry.name,
+      tool: entry.name,
+      path: path.join(SYSTEM_TOOLS_DIR, entry.name, 'index.mjs'),
+    },
   }))
-  const user = listUserToolDirs().map(m => ({
-    name: m.name,
-    description: m.description || '',
-    summary: m.summary || '',
-    enabled: m.enabled !== false,
+  const user = listUserToolDirs().map(manifest => normalizeJarvisTool({
+    ...manifest,
+    id: manifest.name,
+    name: manifest.name,
+    source: 'user',
     scope: 'user',
-    ownerId: m.ownerId,
-    createdAt: m.createdAt,
-    access: m.access === 'owner' ? 'owner' : 'all',
+    globalEnabled: manifest.enabled !== false,
+    ownerId: manifest.ownerId,
+    access: manifest.access === 'owner' ? 'owner' : 'all',
+    impl: {
+      type: 'local-mcp',
+      server: manifest.name,
+      tool: manifest.name,
+      path: manifest.indexFile,
+    },
   }))
   return [...system, ...user]
+}
+
+export function listAllTools() {
+  return listJarvisToolDefinitions().map(def => ({
+    name: def.id,
+    description: def.description,
+    summary: def.summary,
+    enabled: def.globalEnabled !== false,
+    scope: def.source === 'user' ? 'user' : 'system',
+    ownerId: def.ownerId || null,
+    createdAt: def.createdAt,
+    access: def.access === 'owner' ? 'owner' : 'all',
+  }))
 }
 
 /**
@@ -97,11 +126,15 @@ export function findUserTool(name) {
 function assertNameAvailable(name) {
   if (!NAME_RE.test(name)) throw new Error('工具名只能是小写字母/数字/下划线，且以字母开头')
   if (name === '_meta') throw new Error('"_meta" 是保留名称')
+  if (name === 'android_native') throw new Error('"android_native" 是原生工具保留名称')
   if (readSystemRegistry().some(e => e.name === name)) {
     throw new Error(`系统工具 "${name}" 已存在，请换一个名字`)
   }
   if (findUserTool(name)) {
     throw new Error(`工具 "${name}" 已存在，且工具名必须全局唯一`)
+  }
+  if (listExternalToolDefinitions().some(tool => tool.id === name)) {
+    throw new Error(`外接工具 "${name}" 已存在，工具 id 必须全局唯一`)
   }
 }
 
@@ -220,11 +253,36 @@ function toolEnv(principal) {
 }
 
 /**
- * 所有会话加载同一套工具：系统工具 + 所有用户工具。
+ * 所有会话加载同一套工具：
+ *   - Jarvis 工具（系统 + 用户创建）
+ *   - 用户已启用的外接工具
  * `_meta` 永远加载，用于工具管理。
+ *
+ * 具体 MCP server 的形态由 tool-providers 按 impl.type 生成。
  */
 export function buildMcpServers(principal) {
   const env = toolEnv(principal)
+  const androidEnv = {
+    ...(process.env.JARVIS_BRIDGE_INTERNAL_URL
+      ? { JARVIS_BRIDGE_INTERNAL_URL: String(process.env.JARVIS_BRIDGE_INTERNAL_URL) }
+      : {}),
+    ...(process.env.JARVIS_INTERNAL_TOKEN
+      ? { JARVIS_INTERNAL_TOKEN: String(process.env.JARVIS_INTERNAL_TOKEN) }
+      : {}),
+  }
+
+  const definitions = [...listJarvisToolDefinitions(), ...listExternalToolDefinitions()]
+  const usable = definitions.filter(def => {
+    if (def.kind !== 'tool') return false
+    if (!def.available) return false
+    if (!canAccessTool(def, principal)) return false
+    if (def.class === 'jarvis') {
+      if (def.globalEnabled === false) return false
+      return isToolEnabled(principal.id, def.id, true)
+    }
+    return isToolEnabled(principal.id, def.id, def.enabledByDefault === true)
+  })
+
   const servers = {
     _meta: {
       command: 'node',
@@ -233,23 +291,16 @@ export function buildMcpServers(principal) {
     },
   }
 
-  for (const entry of readSystemRegistry()) {
-    if (entry.enabled === false) continue
-    if (!isToolEnabled(principal.id, entry.name, true)) continue
-    if (!canAccessTool(entry, principal)) continue
-    const indexFile = path.join(SYSTEM_TOOLS_DIR, entry.name, 'index.mjs')
-    if (!fs.existsSync(indexFile)) continue
-    servers[entry.name] = { command: 'node', args: [indexFile], env }
-  }
-
-  for (const tool of listUserToolDirs()) {
-    if (tool.enabled === false) continue
-    if (!isToolEnabled(principal.id, tool.name, true)) continue
-    if (!canAccessTool(tool, principal)) continue
-    if (servers[tool.name]) {
-      throw new Error(`工具名冲突：${tool.name}（系统工具/其他用户工具已存在）`)
+  const providerServers = buildProviderMcpServers(usable, {
+    env,
+    androidEnv,
+    principal,
+  })
+  for (const [name, config] of Object.entries(providerServers)) {
+    if (servers[name]) {
+      throw new Error(`工具名冲突：${name}（系统工具/其他用户工具已存在）`)
     }
-    servers[tool.name] = { command: 'node', args: [tool.indexFile], env }
+    servers[name] = config
   }
 
   return servers

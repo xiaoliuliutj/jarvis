@@ -1,9 +1,11 @@
 /**
- * App 工具目录：把系统工具、用户工具、外部/原生占位工具统一成可展示的目录。
- * 执行仍走 core/tools.mjs + agents/tools；这里只负责元数据、图标、搜索和用户启用状态。
+ * App 工具目录：把 Jarvis 工具和外接工具统一成可展示的目录。
+ * 执行仍走 core/tools.mjs + tool-providers；这里只负责元数据、分组和用户启用状态。
  */
 
-import { listAllTools, canAccessTool } from './tools.mjs'
+import { listJarvisToolDefinitions, canAccessTool } from './tools.mjs'
+import { listExternalToolDefinitions } from './external-tools.mjs'
+import { isOwnerOrMaintainer } from './tool-definition.mjs'
 import * as appStore from './app-store.mjs'
 
 const ICONS = {
@@ -65,76 +67,6 @@ const RISK = {
   image_gen: 'low',
 }
 
-const EXTERNAL_TOOLS = [
-  {
-    id: 'phone_alarm',
-    name: '手机闹钟',
-    description: '通过 App 原生能力创建系统闹钟（Android 原生桥，待接入）',
-    icon: '⏰',
-    category: '手机',
-    source: 'native',
-    risk: 'medium',
-    available: false,
-    configurable: true,
-    tags: ['alarm', 'phone', 'native', '闹钟'],
-    configFields: [],
-  },
-  {
-    id: 'phone_notification',
-    name: '手机通知',
-    description: '发送本地通知/提醒（Android 原生桥，待接入）',
-    icon: '🔔',
-    category: '手机',
-    source: 'native',
-    risk: 'low',
-    available: false,
-    configurable: true,
-    tags: ['notification', 'phone', 'native', '通知'],
-    configFields: [],
-  },
-  {
-    id: 'phone_location',
-    name: '手机定位',
-    description: '读取当前位置（原生权限，待接入）',
-    icon: '📍',
-    category: '手机',
-    source: 'native',
-    risk: 'high',
-    available: false,
-    configurable: true,
-    tags: ['location', 'gps', 'native', '定位'],
-    configFields: [],
-  },
-  {
-    id: 'amap_route',
-    name: '高德地图',
-    description: '地点搜索、路线规划、导航深链（需要高德 API Key，待接入）',
-    icon: '🗺️',
-    category: '出行',
-    source: 'external',
-    risk: 'medium',
-    available: false,
-    configurable: true,
-    tags: ['amap', 'map', 'route', '高德', '地图', '导航'],
-    configFields: [
-      { key: 'apiKey', label: '高德 API Key', secret: true, placeholder: '填写高德开放平台 Key' },
-    ],
-  },
-  {
-    id: 'calendar_native',
-    name: '系统日历',
-    description: '读写系统日历/提醒（原生权限，待接入）',
-    icon: '📆',
-    category: '手机',
-    source: 'native',
-    risk: 'medium',
-    available: false,
-    configurable: true,
-    tags: ['calendar', 'schedule', '日历'],
-    configFields: [],
-  },
-]
-
 function matches(tool, query) {
   if (!query) return true
   const q = String(query).toLowerCase()
@@ -143,6 +75,9 @@ function matches(tool, query) {
     tool.name,
     tool.summary,
     tool.description,
+    tool.class,
+    tool.kind,
+    tool.provider,
     tool.category,
     tool.source,
     tool.risk,
@@ -152,40 +87,48 @@ function matches(tool, query) {
   return haystack.includes(q)
 }
 
-function fromRegistryTool(tool, principalId, principal) {
-  const id = tool.name
-  const enabled = tool.enabled !== false && appStore.isToolEnabled(principalId, id, true)
-  // 有 ownerId 的工具按「用户工具」展示，即使代码放在 agents/tools 里。
-  const ownedByUser = !!tool.ownerId
-  const isUserTool = ownedByUser || tool.scope === 'user'
+function enabledFor(def, principalId) {
+  if (def.globalEnabled === false) return false
+  return appStore.isToolEnabled(principalId, def.id, def.enabledByDefault === true)
+}
+
+function fromDefinition(def, principalId, principal) {
+  const external = def.class === 'external'
+  const isUserTool = !external && (def.source === 'user' || !!def.ownerId)
+  const canManage = external && isOwnerOrMaintainer(principal)
+  const configEditable = external ? canManage : isUserTool
   return {
-    id,
-    name: id,
-    summary: tool.summary || '',
-    description: tool.description || '',
-    icon: ICONS[id] || (isUserTool ? '🧩' : '🧰'),
-    category: CATEGORIES[id] || (isUserTool ? '我的工具' : '系统'),
-    source: isUserTool ? 'user' : 'system',
-    risk: RISK[id] || 'low',
-    access: tool.access || 'all',
-    accessible: canAccessTool(tool, principal),
-    enabled,
-    available: true,
-    configurable: isUserTool,
-    ownerId: tool.ownerId || null,
-    tags: [],
-    configFields: [],
+    id: def.id,
+    name: def.name || def.id,
+    class: def.class,
+    kind: def.kind,
+    provider: def.provider,
+    summary: def.summary || '',
+    description: def.description || '',
+    icon: def.icon || ICONS[def.id] || (external ? '🔌' : (isUserTool ? '🧩' : '🧰')),
+    category: def.category || CATEGORIES[def.id] || (external ? '外接' : (isUserTool ? '我的工具' : '系统')),
+    source: external ? 'external' : (isUserTool ? 'user' : 'system'),
+    risk: def.risk || RISK[def.id] || 'low',
+    access: def.access || 'all',
+    accessible: canAccessTool(def, principal),
+    enabled: enabledFor(def, principalId),
+    available: def.available !== false,
+    configurable: configEditable,
+    configEditable,
+    configScope: def.configScope,
+    manageable: canManage,
+    ownerId: def.ownerId || null,
+    tags: def.tags || [],
+    configFields: def.configFields || [],
+    impl: def.impl,
   }
 }
 
 export function listCatalog(principalId, principal, query = '') {
-  const registry = listAllTools().map(tool => fromRegistryTool(tool, principalId, principal))
-  const external = EXTERNAL_TOOLS.map(tool => ({
-    ...tool,
-    enabled: appStore.isToolEnabled(principalId, tool.id, false),
-    accessible: true,
-  }))
-  return [...registry, ...external]
+  const definitions = [...listJarvisToolDefinitions(), ...listExternalToolDefinitions()]
+  return definitions
+    .map(def => fromDefinition(def, principalId, principal))
+    .filter(tool => tool.accessible)
     .filter(tool => matches(tool, query))
     .sort((a, b) => {
       if (a.enabled !== b.enabled) return a.enabled ? -1 : 1
@@ -197,10 +140,12 @@ export function listCatalog(principalId, principal, query = '') {
 export function getTool(principalId, principal, id) {
   const tool = listCatalog(principalId, principal, '').find(t => t.id === id)
   if (!tool) return null
+  const external = tool.class === 'external'
   return {
     ...tool,
-    config: appStore.getToolConfig(principalId, id),
-    hasSecrets: (tool.configFields || []).reduce((acc, field) => {
+    // 外接工具配置是全局的，本期还没有全局配置存储；先返回空对象。
+    config: external ? {} : appStore.getToolConfig(principalId, id),
+    hasSecrets: external ? {} : (tool.configFields || []).reduce((acc, field) => {
       if (field.secret) acc[field.key] = appStore.hasToolSecret(principalId, id, field.key)
       return acc
     }, {}),
@@ -208,5 +153,5 @@ export function getTool(principalId, principal, id) {
 }
 
 export function listExternal() {
-  return EXTERNAL_TOOLS.map(t => ({ ...t }))
+  return listExternalToolDefinitions().map(def => ({ ...def }))
 }

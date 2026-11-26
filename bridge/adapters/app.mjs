@@ -65,6 +65,7 @@ const fileRegistry = new Map() // fileId -> { filePath, fileName }
 const rateBuckets = new Map()  // deviceId -> number[]
 const principalClients = new Map() // principalId -> Set<WebSocket>
 const runningTurns = new Map()     // principalId -> { state, tool, text, since, pending }
+const nativeRequests = new Map()   // requestId -> { principalId, clientId, resolve, timer }
 const CLIENT_HISTORY_TTL = 24 * 3600_000
 let keepAliveTimer = null
 
@@ -224,6 +225,107 @@ function pushToTarget(target, payload, principalId = '') {
   queue.push(payload)
   while (queue.length > QUEUE_LIMIT) queue.shift()
   pending.set(queueKey, queue)
+}
+
+/** 找到该 principal 最新的指定类型连接：优先原生服务，再网页。 */
+function latestClientFor(principalId, native) {
+  const pid = String(principalId || '')
+  let best = null
+  for (const [clientId, bucket] of clients) {
+    for (const ws of bucket) {
+      if (ws.readyState !== 1) continue
+      if (ws.principalId !== pid) continue
+      if (!!ws.isNative !== !!native) continue
+      const connectedAt = ws.connectedAt || 0
+      if (!best || connectedAt > best.connectedAt) {
+        best = {
+          clientId,
+          deviceId: ws.deviceId,
+          connectedAt,
+          native: !!ws.isNative,
+          userAgent: ws.userAgent || '',
+        }
+      }
+    }
+  }
+  return best
+}
+
+function nativeClientSupportsTools(userAgent) {
+  const match = /JarvisAndroid\/(\d+(?:\.\d+)*)/i.exec(String(userAgent || ''))
+  if (!match) return false
+  const parts = match[1].split('.').map(Number)
+  const score = (parts[0] || 0) * 10_000 + (parts[1] || 0) * 100 + (parts[2] || 0)
+  return score >= 204 // 0.2.4+
+}
+
+/**
+ * 向手机发起一个原生工具调用，并等待 native_tool_result。
+ * 优先 NotifyService 后台连接（0.2.4+），其次网页连接。
+ */
+export function callNativeTool(principalId, tool, args = {}, opts = {}) {
+  const pid = String(principalId || '')
+  const name = String(tool || '')
+  if (!pid || !name) return Promise.resolve({ ok: false, error: '缺少原生工具参数' })
+
+  const native = latestClientFor(pid, true)
+  const web = latestClientFor(pid, false)
+  const target = (native && nativeClientSupportsTools(native.userAgent)) ? native : web
+  if (!target) {
+    if (native) return Promise.resolve({ ok: false, error: '请更新 Android App 到 0.2.4 后再使用手机原生工具' })
+    return Promise.resolve({ ok: false, error: '手机未连接，请打开 App 或通知服务' })
+  }
+
+  const requestId = crypto.randomUUID()
+  const timeoutMs = Math.min(30_000, Math.max(1_000, Number(opts.timeoutMs) || 15_000))
+  const payload = { type: 'native_tool_call', requestId, tool: name, args }
+  if (!sendToClient(target.clientId, payload, pid)) {
+    return Promise.resolve({ ok: false, error: '手机连接已断开' })
+  }
+
+  logInfo('app.native_tool.call', '', {
+    principalId: pid,
+    tool: name,
+    requestId,
+    deviceId: target.deviceId,
+    via: target.native ? 'service' : 'web',
+  })
+
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      nativeRequests.delete(requestId)
+      logWarn('app.native_tool.timeout', '', { principalId: pid, tool: name, requestId })
+      resolve({ ok: false, error: '手机执行超时' })
+    }, timeoutMs)
+    nativeRequests.set(requestId, {
+      principalId: pid,
+      clientId: target.clientId,
+      resolve,
+      timer,
+    })
+  })
+}
+
+function handleNativeToolResult(ws, msg = {}) {
+  const requestId = String(msg.requestId || '')
+  if (!requestId) return
+  const pending = nativeRequests.get(requestId)
+  if (!pending) return
+  if (pending.principalId !== ws.principalId || pending.clientId !== ws.clientId) return
+  nativeRequests.delete(requestId)
+  clearTimeout(pending.timer)
+  const ok = !!msg.ok
+  logInfo('app.native_tool.result', '', {
+    principalId: pending.principalId,
+    requestId,
+    ok,
+    clientId: ws.clientId,
+  })
+  pending.resolve({
+    ok,
+    result: msg.result ?? null,
+    error: msg.error ? String(msg.error) : null,
+  })
 }
 
 /** 把 outbox 文件复制到 App 暂存区：Bridge 发送后会立刻把原文件移入 sent/ */
@@ -898,9 +1000,19 @@ function buildServer() {
   app.put('/api/v1/tools/:id', auth, (req, res) => {
     const { principal } = appPrincipalFor(req)
     const owner = ownerTokenOk(req)
-    const tool = getCatalogTool(principal.id, effectiveAppPrincipal(principal, owner), req.params.id)
+    const effective = effectiveAppPrincipal(principal, owner)
+    const tool = getCatalogTool(principal.id, effective, req.params.id)
     if (!tool) return res.status(404).json({ ok: false, error: '工具不存在' })
     const body = req.body || {}
+
+    if (body.enabled !== undefined && tool.available === false) {
+      return res.status(400).json({ ok: false, error: '该工具待接入，暂不可启用' })
+    }
+    // 外接工具定义/配置是全局的；普通用户只能改自己的 enabled。
+    if (tool.class === 'external' && (body.config !== undefined || body.secrets !== undefined)) {
+      return res.status(403).json({ ok: false, error: '外接工具配置由主人统一管理' })
+    }
+
     if (body.enabled !== undefined) appStore.setToolEnabled(principal.id, req.params.id, !!body.enabled)
     if (body.config && typeof body.config === 'object') appStore.setToolConfig(principal.id, req.params.id, body.config)
     if (body.secrets && typeof body.secrets === 'object') {
@@ -910,7 +1022,7 @@ function buildServer() {
     }
     res.json({
       ok: true,
-      tool: getCatalogTool(principal.id, effectiveAppPrincipal(principal, owner), req.params.id),
+      tool: getCatalogTool(principal.id, effective, req.params.id),
     })
   })
 
@@ -1008,6 +1120,7 @@ function setupWs(httpServer) {
     ws.deviceId = deviceId
     ws.clientId = clientId
     ws.isNative = /JarvisAndroid/i.test(userAgent)
+    ws.userAgent = userAgent
     ws.connectedAt = Date.now()
     let deviceSet = deviceClientSets.get(deviceId)
     if (!deviceSet) { deviceSet = new Set(); deviceClientSets.set(deviceId, deviceSet) }
@@ -1058,10 +1171,17 @@ function setupWs(httpServer) {
       try {
         const msg = JSON.parse(String(raw))
         if (msg?.type === 'ping') ws.send(JSON.stringify({ type: 'pong' }))
+        else if (msg?.type === 'native_tool_result') handleNativeToolResult(ws, msg)
       } catch {}
     })
 
     ws.on('close', () => {
+      for (const [requestId, pending] of nativeRequests) {
+        if (pending.clientId !== clientId) continue
+        clearTimeout(pending.timer)
+        nativeRequests.delete(requestId)
+        pending.resolve({ ok: false, error: '手机连接已断开' })
+      }
       if (ws.principalId) {
         const pset = principalClients.get(ws.principalId)
         if (pset) {

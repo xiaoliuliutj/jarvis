@@ -21,6 +21,13 @@ import {
   listAllTools,
   canAccessTool,
 } from '../../../core/tools.mjs'
+import {
+  listExternalToolDefinitions,
+  createExternalTool,
+  updateExternalTool,
+  deleteExternalTool,
+} from '../../../core/external-tools.mjs'
+import { isToolEnabled } from '../../../core/app-store.mjs'
 
 const principalId = process.env.JARVIS_PRINCIPAL_ID
 const role = process.env.JARVIS_ROLE
@@ -55,6 +62,97 @@ server.tool(
       return `${t.enabled ? '✅' : '⏸'} **${t.name}** [${t.scope}${owner}${locked}] — ${t.description || ''}`
     })
     return ok(`共 ${tools.length} 个工具：\n\n${lines.join('\n')}`)
+  }
+)
+
+// ── external tools ────────────────────────────────────────────────────────────
+// 外接工具定义是全局的；只有 owner / maintainer 可以增删改，普通用户只能启用/停用。
+
+server.tool(
+  'list_external_tools',
+  '列出全局外接工具定义和当前用户的启用状态。所有用户可查看；只有 owner/main 可以增删改。',
+  {},
+  async () => {
+    const tools = listExternalToolDefinitions()
+    if (!tools.length) return ok('当前没有外接工具。')
+    const lines = tools.map(t => {
+      const enabled = isToolEnabled(principalId, t.id, false)
+      return `- **${t.id}** ${t.name} [${t.provider}] ${t.available ? '可用' : '待接入'} · 当前用户${enabled ? '已启用' : '未启用'} — ${t.summary || t.description || ''}`
+    })
+    return ok(`共 ${tools.length} 个外接工具：\n\n${lines.join('\n')}`)
+  }
+)
+
+server.tool(
+  'create_external_tool',
+  '新增一个全局外接工具定义（仅 owner/main）。普通用户只能启用/停用和使用外接工具。',
+  {
+    id: z.string().regex(/^[a-z][a-z0-9_]*$/, '小写字母/数字/下划线，字母开头').describe('全局唯一 id'),
+    name: z.string().min(1).describe('显示名称'),
+    summary: z.string().min(1).max(80).describe('前端展示用的一句话简介'),
+    description: z.string().min(1).describe('给模型看的能力说明'),
+    provider: z.enum(['android-native', 'mcp', 'http']).describe('实现方式'),
+    icon: z.string().optional().describe('emoji 图标'),
+    category: z.string().optional().describe('分类'),
+    risk: z.enum(['low', 'medium', 'high']).optional().describe('风险等级'),
+    tags: z.array(z.string()).optional().describe('标签'),
+    available: z.boolean().optional().describe('是否已接入；新增工具默认 false'),
+    impl: z.any().optional().describe('实现参数（provider 专用）'),
+    configFields: z.any().optional().describe('配置字段定义'),
+    inputSchema: z.any().optional().describe('输入 schema（展示/未来 provider 用）'),
+  },
+  async (args) => {
+    try {
+      if (listAllTools().some(tool => tool.name === args.id)) {
+        throw new Error(`Jarvis 工具 "${args.id}" 已存在，工具 id 必须全局唯一`)
+      }
+      const tool = createExternalTool(args, { role })
+      return ok(`✅ 外接工具 "${tool.id}" 已创建（${tool.provider}）。`)
+    } catch (err) {
+      return fail(err)
+    }
+  }
+)
+
+server.tool(
+  'update_external_tool',
+  '修改全局外接工具定义（仅 owner/main）。普通用户只能用。',
+  {
+    id: z.string().describe('外接工具 id'),
+    name: z.string().optional(),
+    summary: z.string().max(80).optional(),
+    description: z.string().optional(),
+    provider: z.enum(['android-native', 'mcp', 'http']).optional(),
+    icon: z.string().optional(),
+    category: z.string().optional(),
+    risk: z.enum(['low', 'medium', 'high']).optional(),
+    tags: z.array(z.string()).optional(),
+    available: z.boolean().optional(),
+    impl: z.any().optional(),
+    configFields: z.any().optional(),
+    inputSchema: z.any().optional(),
+  },
+  async ({ id, ...patch }) => {
+    try {
+      const tool = updateExternalTool(id, patch, { role })
+      return ok(`✅ 外接工具 "${tool.id}" 已更新。`)
+    } catch (err) {
+      return fail(err)
+    }
+  }
+)
+
+server.tool(
+  'delete_external_tool',
+  '删除全局外接工具定义（仅 owner/main）。内置工具不能删除，只能设为 available:false。',
+  { id: z.string().describe('外接工具 id') },
+  async ({ id }) => {
+    try {
+      deleteExternalTool(id, { role })
+      return ok(`✅ 外接工具 "${id}" 已删除。`)
+    } catch (err) {
+      return fail(err)
+    }
   }
 )
 

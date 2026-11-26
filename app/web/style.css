@@ -739,7 +739,11 @@ body.viewer-open { overflow: hidden; }
 }
 .segmented button.active { background: var(--card); color: var(--green); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
 
-.tool-list { display: flex; flex-direction: column; gap: 9px; }
+.tool-list { display: flex; flex-direction: column; gap: 18px; }
+.tool-group { display: flex; flex-direction: column; gap: 9px; }
+.tool-group-head { display: flex; flex-direction: column; gap: 2px; }
+.tool-group-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.tool-group-hint { font-size: 11px; color: var(--muted); line-height: 1.45; }
 .tool-item {
   background: var(--card);
   border: 1px solid var(--line);
@@ -827,6 +831,7 @@ body.viewer-open { overflow: hidden; }
 }
 .tool-toggle.on { background: var(--green-soft); }
 .tool-toggle.on::after { left: 19px; }
+.tool-toggle:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ── usage ────────────────────────────────────────────────────────────── */
 

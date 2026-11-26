@@ -723,6 +723,16 @@ public class MainActivity extends Activity {
             return NotifyService.testNotification(MainActivity.this);
         }
 
+        /** 网页回退路径：AI 原生工具调用发现没有后台服务连接时，由前台页面执行。 */
+        @JavascriptInterface
+        public boolean sendNotification(String title, String body) {
+            if (!NotifyService.hasPermission(MainActivity.this)) {
+                runOnUiThread(MainActivity.this::requestNotificationPermissionIfNeeded);
+                return false;
+            }
+            return NotifyService.sendCustomNotification(MainActivity.this, title, body);
+        }
+
         @JavascriptInterface
         public boolean isIgnoringBatteryOptimizations() {
             try {

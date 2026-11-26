@@ -17,6 +17,7 @@ import { createServer, request as httpRequest } from 'http'
 import { spawn } from 'child_process'
 import fs from 'fs'
 import path from 'path'
+import crypto from 'crypto'
 import { ROOT, PC_MAIN_ID } from '../core/paths.mjs'
 import { loadBridgeConfig } from '../core/config.mjs'
 import { resolvePrincipal, getPrincipal, listPrincipals, getPrimaryAccount } from '../core/principals.mjs'
@@ -28,7 +29,8 @@ import { startCronManager } from '../core/cron.mjs'
 import { startScheduleManager } from '../core/schedule.mjs'
 import { formatScheduleReminder } from '../core/schedule-store.mjs'
 import { orderDeliveryAccounts } from '../core/delivery.mjs'
-import { listDevices } from '../core/app-store.mjs'
+import { listDevices, isToolEnabled } from '../core/app-store.mjs'
+import { getExternalToolDefinition } from '../core/external-tools.mjs'
 import { handleIncomingOnboarding } from '../core/onboarding.mjs'
 import { loadAdapters } from '../core/adapters.mjs'
 import { sanitizeOutgoingText } from '../core/text-filter.mjs'
@@ -40,6 +42,11 @@ const config = loadBridgeConfig()
 const HTTP_PORT = config.httpPort ?? 7779
 const WS_PORT = config.wsPort ?? 7780
 const HOST = '127.0.0.1'
+
+// 工具子进程 -> Bridge 的内部通道。只给 android_native provider 注入，且只监听本机。
+const INTERNAL_TOKEN = process.env.JARVIS_INTERNAL_TOKEN || crypto.randomBytes(24).toString('hex')
+process.env.JARVIS_INTERNAL_TOKEN = INTERNAL_TOKEN
+process.env.JARVIS_BRIDGE_INTERNAL_URL = `http://127.0.0.1:${HTTP_PORT}`
 
 // 非主会话：超过这个时间还没最终回复，先发一句「正在处理」提示
 const INTERIM_NOTICE_DELAY_MS = 10_000
@@ -676,6 +683,38 @@ app.post('/restart-all', (req, res) => {
   }
   res.json({ ok: true, message: 'Bridge 将在当前回合结束后重启；Electron 将按原重启队列执行' })
   scheduleBridgeRestart(700)
+})
+
+// 内部：MCP 工具进程 -> Bridge -> App 原生执行通道。
+// 只监听 127.0.0.1，并校验进程内随机 token；不暴露给外部 adapter。
+app.post('/internal/native-tool', async (req, res) => {
+  if (String(req.headers['x-jarvis-internal-token'] || '') !== INTERNAL_TOKEN) {
+    return res.status(403).json({ ok: false, error: 'forbidden' })
+  }
+  const { principalId, tool, args, timeoutMs } = req.body || {}
+  if (!principalId || !tool) {
+    return res.status(400).json({ ok: false, error: 'principalId 和 tool 必填' })
+  }
+  const definition = getExternalToolDefinition(tool)
+  if (!definition || definition.provider !== 'android-native' || !definition.available) {
+    return res.status(400).json({ ok: false, error: '该外接工具不可用' })
+  }
+  if (!isToolEnabled(principalId, tool, false)) {
+    return res.status(403).json({ ok: false, error: '该用户未启用此工具' })
+  }
+  if (typeof adapters.app?.callNativeTool !== 'function') {
+    return res.status(503).json({ ok: false, error: 'App 适配器未启用' })
+  }
+  try {
+    const result = await adapters.app.callNativeTool(principalId, tool, args || {}, { timeoutMs })
+    if (!result?.ok) {
+      return res.status(502).json({ ok: false, error: result?.error || '手机执行失败' })
+    }
+    const text = result.result?.delivered ? '通知已发送' : '已执行'
+    return res.json({ ok: true, result: result.result || {}, text })
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message })
+  }
 })
 
 const server = createServer(app)

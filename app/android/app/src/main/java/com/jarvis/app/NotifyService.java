@@ -62,6 +62,7 @@ public class NotifyService extends Service {
     private static final int MESSAGE_NOTIFICATION_ID = 43002;
     private static final int TEST_NOTIFICATION_ID = 43003;
     private static final int WATCHDOG_REQUEST = 43004;
+    private static final int CUSTOM_NOTIFICATION_ID = 43005;
     private static final long WATCHDOG_INTERVAL = 15 * 60 * 1000L;
     private static final int MAX_HISTORY = 8;
 
@@ -72,6 +73,7 @@ public class NotifyService extends Service {
 
     private volatile boolean running = false;
     private volatile Socket socket = null;
+    private static volatile OutputStream wsOut = null;
     private Thread worker = null;
     private SharedPreferences prefs;
 
@@ -200,6 +202,40 @@ public class NotifyService extends Service {
             NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
             if (manager == null) return false;
             manager.notify(TEST_NOTIFICATION_ID, builder.build());
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 原生通知工具：发送一条任意 title/body 的系统通知。 */
+    public static boolean sendCustomNotification(Context context, String title, String body) {
+        if (!hasPermission(context)) return false;
+        String safeBody = body == null ? "" : body.trim();
+        if (safeBody.isEmpty()) return false;
+        if (safeBody.length() > 500) safeBody = safeBody.substring(0, 500) + "…";
+        String safeTitle = title == null ? "" : title.trim();
+        if (safeTitle.isEmpty()) safeTitle = "Jarvis";
+        if (safeTitle.length() > 80) safeTitle = safeTitle.substring(0, 80) + "…";
+
+        ensureChannels(context);
+        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                ? new Notification.Builder(context, CHANNEL_MESSAGES)
+                : new Notification.Builder(context);
+        builder.setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(safeTitle)
+                .setContentText(safeBody)
+                .setContentIntent(openAppIntent(context))
+                .setAutoCancel(true)
+                .setCategory(Notification.CATEGORY_MESSAGE)
+                .setPriority(Notification.PRIORITY_HIGH);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            builder.setDefaults(Notification.DEFAULT_ALL);
+        }
+        try {
+            NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (manager == null) return false;
+            manager.notify(CUSTOM_NOTIFICATION_ID, builder.build());
             return true;
         } catch (Exception e) {
             return false;
@@ -465,6 +501,7 @@ public class NotifyService extends Service {
         try {
             InputStream in = new BufferedInputStream(raw.getInputStream());
             OutputStream out = raw.getOutputStream();
+            wsOut = out;
 
             byte[] nonce = new byte[16];
             RANDOM.nextBytes(nonce);
@@ -476,7 +513,7 @@ public class NotifyService extends Service {
                     + "Connection: Upgrade\r\n"
                     + "Sec-WebSocket-Key: " + key + "\r\n"
                     + "Sec-WebSocket-Version: 13\r\n"
-                    + "User-Agent: JarvisAndroid/0.2.2\r\n"
+                    + "User-Agent: JarvisAndroid/0.2.4\r\n"
                     + "\r\n";
             out.write(request.getBytes(StandardCharsets.UTF_8));
             out.flush();
@@ -552,7 +589,17 @@ public class NotifyService extends Service {
                 }
             }
         } finally {
+            wsOut = null;
             closeSocket();
+        }
+    }
+
+    private static void sendJson(String json) {
+        OutputStream out = wsOut;
+        if (out == null || json == null) return;
+        try {
+            sendFrame(out, 0x1, json.getBytes(StandardCharsets.UTF_8));
+        } catch (Exception ignored) {
         }
     }
 
@@ -582,7 +629,43 @@ public class NotifyService extends Service {
             if ("notice".equals(type) || "error".equals(type)) {
                 String text = object.optString("text", "").trim();
                 if (!text.isEmpty() && !text.contains("Owner 权限已启用")) notifyText(text);
+                return;
             }
+            if ("native_tool_call".equals(type)) {
+                handleNativeToolCall(object);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** Bridge -> 手机原生工具调用；当前只实现了系统通知。 */
+    private void handleNativeToolCall(JSONObject object) {
+        String requestId = object == null ? "" : object.optString("requestId", "");
+        String tool = object == null ? "" : object.optString("tool", "");
+        JSONObject args = object == null ? null : object.optJSONObject("args");
+        boolean ok = false;
+        String error = null;
+
+        if ("android_notification".equals(tool)) {
+            String title = args == null ? "Jarvis" : args.optString("title", "Jarvis");
+            String body = args == null ? "" : args.optString("body", "");
+            ok = sendCustomNotification(this, title, body);
+            if (!ok) error = hasPermission(this) ? "通知发送失败" : "通知权限未开启";
+        } else {
+            error = "设备端不支持的原生工具：" + tool;
+        }
+
+        try {
+            JSONObject result = new JSONObject();
+            result.put("type", "native_tool_result");
+            result.put("requestId", requestId);
+            result.put("ok", ok);
+            if (ok) {
+                result.put("result", new JSONObject().put("delivered", true));
+            } else {
+                result.put("error", error == null ? "执行失败" : error);
+            }
+            sendJson(result.toString());
         } catch (Exception ignored) {
         }
     }

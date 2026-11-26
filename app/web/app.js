@@ -1058,6 +1058,10 @@
       setRunStatus(msg)
       return
     }
+    if (msg.type === 'native_tool_call') {
+      handleNativeToolCall(msg)
+      return
+    }
     if (msg.type === 'assistant' && msg.text) {
       const key = msg.id
         ? `assistant:${msg.id}`
@@ -1101,6 +1105,48 @@
       clearTyping()
       appendMessage({ role: 'system', text: msg.text, ts: new Date().toISOString() })
     }
+  }
+
+  function nativeToolResult(requestId, result) {
+    try {
+      if (state.ws && state.ws.readyState === 1) {
+        state.ws.send(JSON.stringify({ type: 'native_tool_result', requestId, ...result }))
+      }
+    } catch {}
+  }
+
+  function handleNativeToolCall(msg) {
+    const requestId = String(msg?.requestId || '')
+    if (!requestId) return
+    const tool = String(msg?.tool || '')
+    const args = (msg?.args && typeof msg.args === 'object') ? msg.args : {}
+    const bridge = notifyBridge()
+    let result = { ok: false, error: '当前环境不支持手机原生工具' }
+
+    try {
+      if (tool === 'android_notification') {
+        if (!bridge || typeof bridge.sendNotification !== 'function') {
+          result = { ok: false, error: '需要 Android App 0.2.4+ 才能发送通知' }
+        } else {
+          const title = String(args.title || 'Jarvis').slice(0, 80)
+          const body = String(args.body || '').slice(0, 500)
+          if (!body) {
+            result = { ok: false, error: '通知内容不能为空' }
+          } else {
+            const sent = !!bridge.sendNotification(title, body)
+            result = sent
+              ? { ok: true, result: { delivered: true } }
+              : { ok: false, error: '通知权限未开启或发送失败' }
+          }
+        }
+      } else {
+        result = { ok: false, error: `不支持的原生工具：${tool}` }
+      }
+    } catch (err) {
+      result = { ok: false, error: err?.message || String(err) }
+    }
+
+    nativeToolResult(requestId, result)
   }
 
   // ── tabs ────────────────────────────────────────────────────────────────
@@ -1812,6 +1858,7 @@
     ['persona', { default: '处理人设中', get_persona: '查看人设中', update_persona: '修改人设中' }],
     ['restart', { default: '重启服务中' }],
     ['_meta', { default: '管理工具中', create_tool: '创建工具中', update_tool: '修改工具中', delete_tool: '删除工具中', list_tools: '查看工具中', toggle_tool: '开关工具中', get_tool_template: '查看工具模板中' }],
+    ['android_native', { default: '操作手机中', android_notification: '发送通知中', android_alarm: '设置闹钟中', android_location: '获取定位中', android_calendar: '处理日历中' }],
   ])
 
   function toolTip(name) {
@@ -2342,12 +2389,16 @@
     }
   }
 
+  function toolIsExternal(tool) {
+    return tool?.class === 'external' || tool?.source === 'external' || tool?.source === 'native'
+  }
+
   function renderTools() {
     const meId = state.me?.principalId || ''
     const tools = state.tools.filter(tool => {
       if (state.toolScope === 'my') {
-        // 「我的」= 当前账号创建/拥有的工具（含放在系统目录但带 ownerId 的工具）。
-        return tool.source === 'user' && !!meId && tool.ownerId === meId
+        // 「我的」= 当前账号创建/拥有的 Jarvis 工具（含放在系统目录但带 ownerId 的工具）。
+        return !toolIsExternal(tool) && tool.source === 'user' && !!meId && tool.ownerId === meId
       }
       return true
     })
@@ -2366,7 +2417,42 @@
       el.toolList.appendChild(empty)
       return
     }
-    for (const tool of tools) el.toolList.appendChild(buildToolItem(tool))
+
+    const groups = state.toolScope === 'my'
+      ? [{ id: 'jarvis', label: '我的 Jarvis 工具', hint: '你创建或拥有的本地工具', tools }]
+      : [
+          {
+            id: 'jarvis',
+            label: 'Jarvis 工具',
+            hint: '本地工具，包括系统工具和你创建的工具',
+            tools: tools.filter(tool => !toolIsExternal(tool)),
+          },
+          {
+            id: 'external',
+            label: '外接工具',
+            hint: '全局统一提供；启用状态只对你生效，普通用户不能修改定义',
+            tools: tools.filter(tool => toolIsExternal(tool)),
+          },
+        ]
+
+    for (const group of groups) {
+      if (!group.tools.length) continue
+      const section = document.createElement('section')
+      section.className = 'tool-group'
+      const head = document.createElement('div')
+      head.className = 'tool-group-head'
+      const title = document.createElement('div')
+      title.className = 'tool-group-title'
+      title.textContent = group.label
+      const hint = document.createElement('div')
+      hint.className = 'tool-group-hint'
+      hint.textContent = group.hint
+      head.appendChild(title)
+      head.appendChild(hint)
+      section.appendChild(head)
+      for (const tool of group.tools) section.appendChild(buildToolItem(tool))
+      el.toolList.appendChild(section)
+    }
   }
 
   function buildToolItem(tool) {
@@ -2401,7 +2487,8 @@
 
     const meta = document.createElement('div')
     meta.className = 'tool-meta'
-    meta.appendChild(badge(sourceLabel(tool.source), tool.source))
+    const external = toolIsExternal(tool)
+    meta.appendChild(badge(external ? '外接' : 'Jarvis', external ? 'external' : (tool.source === 'user' ? 'user' : 'system')))
     if (tool.risk === 'high' || tool.risk === 'medium') meta.appendChild(badge(tool.risk === 'high' ? '高风险' : '中风险', tool.risk))
     if (!tool.available) meta.appendChild(badge('待接入', 'off'))
     if (!tool.enabled) meta.appendChild(badge('已停用', 'off'))
@@ -2409,10 +2496,13 @@
     row.appendChild(info)
 
     const toggle = document.createElement('button')
+    const canToggle = tool.available !== false
     toggle.className = 'tool-toggle' + (tool.enabled ? ' on' : '')
-    toggle.title = tool.enabled ? '停用' : '启用'
+    toggle.disabled = !canToggle
+    toggle.title = canToggle ? (tool.enabled ? '停用' : '启用') : '待接入'
     toggle.addEventListener('click', async event => {
       event.stopPropagation()
+      if (!canToggle) return
       try {
         await api(`/api/v1/tools/${encodeURIComponent(tool.id)}`, {
           method: 'PUT',
@@ -2476,6 +2566,8 @@
   }
 
   function renderToolExpanded(panel, tool) {
+    const external = toolIsExternal(tool)
+    const canEditConfig = !external && tool.configEditable === true
     const desc = document.createElement('p')
     desc.className = 'tool-detail-desc'
     desc.textContent = toolDisplayDescription(tool)
@@ -2484,7 +2576,9 @@
     if (!tool.available) {
       const note = document.createElement('div')
       note.className = 'tool-unavailable'
-      note.textContent = '这个工具还处于待接入阶段；可以先保存配置，等原生/外部 SDK 接入后使用。'
+      note.textContent = external
+        ? '这个外接工具还处于待接入阶段；当前只能查看，不能启用。'
+        : '这个工具还处于待接入阶段；可以先保存配置，等原生/外部 SDK 接入后使用。'
       panel.appendChild(note)
     }
 
@@ -2494,29 +2588,44 @@
     enabled.type = 'checkbox'
     enabled.id = `toolEnabled_${tool.id}`
     enabled.checked = !!tool.enabled
+    enabled.disabled = tool.available === false
     enabledLabel.appendChild(enabled)
     const enabledText = document.createElement('span')
-    enabledText.textContent = '启用此工具'
+    enabledText.textContent = tool.available === false ? '待接入，暂不可启用' : '启用此工具'
     enabledLabel.appendChild(enabledText)
     panel.appendChild(enabledLabel)
 
-    const fields = Array.isArray(tool.configFields) ? tool.configFields : []
-    if (fields.length) {
-      for (const field of fields) {
-        const wrap = document.createElement('div')
-        wrap.className = 'tool-config-field'
-        const label = document.createElement('label')
-        label.textContent = field.label || field.key
-        const input = document.createElement('input')
-        input.id = `toolCfg_${tool.id}_${field.key}`
-        input.type = field.secret ? 'password' : 'text'
-        input.value = field.secret ? '' : (tool.config?.[field.key] || '')
-        input.placeholder = field.secret
-          ? (tool.hasSecrets?.[field.key] ? '已配置，留空保持不变' : (field.placeholder || '填写密钥'))
-          : (field.placeholder || '')
-        label.appendChild(input)
-        wrap.appendChild(label)
-        panel.appendChild(wrap)
+    if (external) {
+      const note = document.createElement('p')
+      note.className = 'hint'
+      note.textContent = tool.configEditable
+        ? '外接工具由主人统一提供；本期暂无可编辑的配置项。'
+        : '外接工具由主人统一配置；你只能启用或停用。'
+      panel.appendChild(note)
+    } else if (canEditConfig) {
+      const fields = Array.isArray(tool.configFields) ? tool.configFields : []
+      if (fields.length) {
+        for (const field of fields) {
+          const wrap = document.createElement('div')
+          wrap.className = 'tool-config-field'
+          const label = document.createElement('label')
+          label.textContent = field.label || field.key
+          const input = document.createElement('input')
+          input.id = `toolCfg_${tool.id}_${field.key}`
+          input.type = field.secret ? 'password' : 'text'
+          input.value = field.secret ? '' : (tool.config?.[field.key] || '')
+          input.placeholder = field.secret
+            ? (tool.hasSecrets?.[field.key] ? '已配置，留空保持不变' : (field.placeholder || '填写密钥'))
+            : (field.placeholder || '')
+          label.appendChild(input)
+          wrap.appendChild(label)
+          panel.appendChild(wrap)
+        }
+      } else {
+        const hint = document.createElement('p')
+        hint.className = 'hint'
+        hint.textContent = '这个工具没有需要配置的字段。'
+        panel.appendChild(hint)
       }
     } else {
       const hint = document.createElement('p')
@@ -2525,31 +2634,40 @@
       panel.appendChild(hint)
     }
 
+    if (tool.available === false) return
+
     const actions = document.createElement('div')
     actions.className = 'tool-expanded-actions'
     const save = document.createElement('button')
     save.className = 'primary-btn'
-    save.textContent = '保存配置'
+    save.textContent = canEditConfig ? '保存配置' : '保存启用状态'
     save.addEventListener('click', async event => {
       event.stopPropagation()
       const config = {}
       const secrets = {}
-      for (const field of (tool.configFields || [])) {
-        const input = $(`toolCfg_${tool.id}_${field.key}`)
-        if (!input) continue
-        if (field.secret) {
-          if (input.value) secrets[field.key] = input.value
-        } else {
-          config[field.key] = input.value
+      if (canEditConfig) {
+        for (const field of (tool.configFields || [])) {
+          const input = $(`toolCfg_${tool.id}_${field.key}`)
+          if (!input) continue
+          if (field.secret) {
+            if (input.value) secrets[field.key] = input.value
+          } else {
+            config[field.key] = input.value
+          }
         }
       }
       const enabledEl = $(`toolEnabled_${tool.id}`)
+      const body = { enabled: !!enabledEl?.checked }
+      if (canEditConfig) {
+        body.config = config
+        body.secrets = secrets
+      }
       try {
         await api(`/api/v1/tools/${encodeURIComponent(tool.id)}`, {
           method: 'PUT',
-          body: { enabled: !!enabledEl?.checked, config, secrets },
+          body,
         })
-        toast(`「${tool.name || tool.id}」配置已保存`)
+        toast(`「${tool.name || tool.id}」已保存`)
         state.expandedToolId = null
         state.toolDetail = null
         await loadTools()
@@ -2562,7 +2680,7 @@
   }
 
   function sourceLabel(source) {
-    return ({ system: '系统', user: '我的', external: '外部', native: '原生' })[source] || source || '工具'
+    return ({ system: 'Jarvis', user: '我的 Jarvis', external: '外接', native: '外接' })[source] || source || '工具'
   }
   function badge(text, cls) {
     const span = document.createElement('span')

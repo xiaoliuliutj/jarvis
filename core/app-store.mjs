@@ -421,6 +421,11 @@ export function hasToolSecret(principalId, toolId, name) {
   return hasSecret(principalId, `tool:${toolId}:${name}`)
 }
 
+/** 供外部提供方 / 未来 MCP/HTTP provider 读取工具密钥；不要写进 prompt 或日志。 */
+export function getToolSecret(principalId, toolId, name) {
+  return getSecret(principalId, `tool:${toolId}:${name}`)
+}
+
 // ── usage ────────────────────────────────────────────────────────────────────
 
 function monthKey(date = new Date()) {
