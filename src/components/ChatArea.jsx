@@ -241,7 +241,7 @@ export default function ChatArea({
             _focusVisible={{ outline: `2px solid ${ui.accent.base}`, outlineOffset: '2px' }}
             _disabled={{ bg: ui.canvas.surfaceMuted, color: ui.canvas.muted, cursor: 'not-allowed' }}
           >
-            {busy ? '运行中…' : '发送'}
+            {busy ? '运行中喵…' : '发送'}
           </Button>
         </HStack>
       )}

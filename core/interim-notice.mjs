@@ -17,6 +17,16 @@ function looksLikeCat(persona = '') {
   return /喵|猫娘|nya|ฅ/i.test(persona)
 }
 
+/** 模型偶尔会忘记人设语气；猫娘人设下至少保证有喵。 */
+function enforcePersonaTone(text, persona = '') {
+  const value = String(text || '').trim()
+  if (!value) return value
+  if (looksLikeCat(persona) && !/喵|猫|nya|ฅ/i.test(value)) {
+    return `${value.replace(/[。！!…\s]+$/u, '')}喵～`
+  }
+  return value
+}
+
 export function fallbackInterimNotice(persona = '') {
   return looksLikeCat(persona) ? FALLBACK_CAT : FALLBACK_PLAIN
 }
@@ -75,7 +85,7 @@ export async function generateInterimNotice({ persona = '', displayName = '' } =
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     const text = sanitize((data.content || []).map(c => c.text || '').join(''))
-    return text || fallback
+    return enforcePersonaTone(text, persona) || fallback
   } catch {
     return fallback
   }
