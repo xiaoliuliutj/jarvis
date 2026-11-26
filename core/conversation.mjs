@@ -38,6 +38,13 @@ import { compactSessionContext } from './context-compactor.mjs'
 import { sanitizeOutgoingText } from './text-filter.mjs'
 
 const locks = new Map()
+const DEFAULT_CONTEXT_WINDOW_TOKENS = 200000
+
+function resolveContextWindowTokens(lastContext, agentEnv) {
+  const fromSession = Number(lastContext?.maxTokens) || Number(lastContext?.rawMaxTokens) || 0
+  const fromEnv = Number(agentEnv?.CLAUDE_CODE_AUTO_COMPACT_WINDOW) || 0
+  return fromSession || fromEnv || DEFAULT_CONTEXT_WINDOW_TOKENS
+}
 
 function withPrincipalLock(principalId, fn) {
   const prev = locks.get(principalId) || Promise.resolve()
@@ -95,18 +102,7 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
     let handoffBlock = ''
 
     const persona = store.readPersona(principalId)
-    let memory = store.formatMemory(principalId, 6000)
     const rules = store.readRulesText()
-    let systemPrompt = buildSystemPrompt({ principal, rules, persona, memory })
-    const mcpServers = buildMcpServers(principal)
-    const canUseTool = buildCanUseTool({ principal, workspace })
-    let toolChars = 0
-    try { toolChars = JSON.stringify(mcpServers || {}).length } catch {}
-    let contextHints = {
-      systemChars: Math.max(0, systemPrompt.length - persona.length - memory.length),
-      memoryChars: (persona?.length || 0) + (memory?.length || 0),
-      toolChars,
-    }
 
     const userModel = getChatRuntime(principalId)
     const canUseGlobal = !!principal.capabilities?.useGlobalModel
@@ -160,10 +156,28 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
       }
     }
 
+    // 长期记忆预算按当前上下文窗口的 5%-10% 计算：
+    // 低于 10% 原样保留，超过 10% 压缩到 5%，保证摘要/偏好始终有一席之地。
+    const lastContext = displaySessionId
+      ? getSessionContext(principalId, displaySessionId)
+      : null
+    const contextWindowTokens = resolveContextWindowTokens(lastContext, agentEnv)
+
+    let memory = store.formatMemory(principalId, { contextWindowTokens })
+    let systemPrompt = buildSystemPrompt({ principal, rules, persona, memory })
+    const mcpServers = buildMcpServers(principal)
+    const canUseTool = buildCanUseTool({ principal, workspace })
+    let toolChars = 0
+    try { toolChars = JSON.stringify(mcpServers || {}).length } catch {}
+    let contextHints = {
+      systemChars: Math.max(0, systemPrompt.length - persona.length - memory.length),
+      memoryChars: (persona?.length || 0) + (memory?.length || 0),
+      toolChars,
+    }
+
     // 上下文达到窗口 75% 时，把较早对话压成长期记忆，并换一个新的 Agent 会话；
     // App 的显示会话保持不变，所以历史聊天记录不会消失。
     if (!forceNew && displaySessionId && agentSessionId) {
-      const lastContext = getSessionContext(principalId, displaySessionId)
       const ratio = lastContext
         ? (Number(lastContext.percentage) || (
           Number(lastContext.maxTokens) > 0
@@ -187,7 +201,7 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
         if (compacted) {
           rotateAgent = true
           handoffBlock = compacted.handoffBlock || ''
-          memory = store.formatMemory(principalId, 6000)
+          memory = store.formatMemory(principalId, { contextWindowTokens })
           systemPrompt = buildSystemPrompt({ principal, rules, persona, memory })
           contextHints = {
             systemChars: Math.max(0, systemPrompt.length - persona.length - memory.length),

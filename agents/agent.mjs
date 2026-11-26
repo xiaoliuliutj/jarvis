@@ -41,6 +41,38 @@ const MEMORY_TRIGGER_RE = /记住|记一下|别忘了|记录一下|remember\s+th
 const SIGNAL_FILE = path.join(import.meta.dirname, 'tools', '_reload.signal')
 
 /**
+ * SDK 会把整段 system prompt 都算进 system_prompt；
+ * 把 persona + 长期记忆的估算 token 拆到 memory_files，上下文条才能看出记忆占了多少。
+ * 只对 SDK 真实统计生效；fallback 已经自己拆分过。
+ */
+function splitMemoryContext(contextUsage, hints = {}) {
+  if (!contextUsage || contextUsage.estimated) return contextUsage
+  const memoryChars = Number(hints.memoryChars) || 0
+  const memoryTokens = Math.round(memoryChars / 3)
+  if (memoryTokens <= 0) return contextUsage
+  const categories = Array.isArray(contextUsage.categories) ? contextUsage.categories : []
+  const system = categories.find(c => c && c.id === 'system_prompt')
+  if (!system) return contextUsage
+  const systemTokens = Number(system.tokens) || 0
+  const moved = Math.min(memoryTokens, systemTokens)
+  if (moved <= 0) return contextUsage
+
+  const next = {
+    ...contextUsage,
+    categories: categories.map(c => ({ ...c })),
+  }
+  const nextSystem = next.categories.find(c => c && c.id === 'system_prompt')
+  nextSystem.tokens = Math.max(0, systemTokens - moved)
+  const memory = next.categories.find(c => c && c.id === 'memory_files')
+  if (memory) {
+    memory.tokens = (Number(memory.tokens) || 0) + moved
+  } else {
+    next.categories.push({ id: 'memory_files', name: 'Long-term memory', tokens: moved, kind: 'used' })
+  }
+  return next
+}
+
+/**
  * 构造 Agent 子进程环境。
  *
  * 规则：
@@ -325,7 +357,7 @@ export async function* run(prompt, options = {}) {
           isError: msg.is_error ?? (msg.subtype !== 'success'),
           sessionId: msg.session_id ?? activeSessionId,
           usage: msg.usage ?? null,
-          context: contextUsage,
+          context: splitMemoryContext(contextUsage, contextHints),
         }
         return
       }

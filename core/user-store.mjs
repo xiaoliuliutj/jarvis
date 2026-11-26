@@ -275,14 +275,132 @@ export function upsertSessionSummary(principalId, sessionId, content) {
   return entry
 }
 
-/** 格式化为 system prompt 片段；按权重排序并在 token 限制处截断。 */
-export function formatMemory(principalId, maxTokens = 6000) {
+// 长期记忆在上下文窗口中的预算：10% 以内原样保留，超过 10% 时压缩到 5%。
+// 5% 作为保底预留，保证重要摘要不会被大量文件操作记录挤掉。
+const MEMORY_MIN_RATIO = 0.05
+const MEMORY_MAX_RATIO = 0.10
+const MEMORY_CHARS_PER_TOKEN = 3
+const DEFAULT_CONTEXT_WINDOW_TOKENS = 200000
+
+const MEMORY_SECTIONS = [
+  ['session_summary', '历史会话摘要'],
+  ['preference', '用户偏好'],
+  ['fact', '记录的事实'],
+  ['project_file', '近期文件操作'],
+]
+
+export function estimateMemoryTokens(text) {
+  return Math.ceil(String(text || '').length / MEMORY_CHARS_PER_TOKEN)
+}
+
+export function resolveMemoryBudget(contextWindowTokens = 0) {
+  const windowTokens = Number(contextWindowTokens) > 0
+    ? Number(contextWindowTokens)
+    : DEFAULT_CONTEXT_WINDOW_TOKENS
+  return {
+    contextWindowTokens: windowTokens,
+    minTokens: Math.ceil(windowTokens * MEMORY_MIN_RATIO),
+    maxTokens: Math.ceil(windowTokens * MEMORY_MAX_RATIO),
+  }
+}
+
+function memoryLine(entry) {
+  const refs = Array.isArray(entry.refs) ? entry.refs : []
+  const suffix = entry.type === 'project_file' && refs.length ? ` [${refs.join(', ')}]` : ''
+  return `- ${String(entry.content || '').trim()}${suffix}`
+}
+
+function renderMemorySections(sections) {
+  const lines = ['## 长期记忆']
+  for (const [key, title] of MEMORY_SECTIONS) {
+    const list = sections[key] || []
+    if (!list.length) continue
+    lines.push(`\n### ${title}`)
+    for (const entry of list) lines.push(memoryLine(entry))
+  }
+  return lines.join('\n')
+}
+
+function dedupeEntries(entries) {
+  const seen = new Set()
+  const result = []
+  for (const entry of entries) {
+    const content = String(entry.content || '').trim()
+    if (!content || seen.has(content)) continue
+    seen.add(content)
+    result.push(entry)
+  }
+  return result
+}
+
+function dedupeProjectFiles(entries) {
+  const byRef = new Map()
+  for (const entry of entries) {
+    const refs = Array.isArray(entry.refs) ? entry.refs : []
+    const key = refs[0] || String(entry.content || '').trim()
+    if (!key) continue
+    const prev = byRef.get(key)
+    const prevAt = prev ? Date.parse(prev.lastMentioned) || 0 : 0
+    const nextAt = Date.parse(entry.lastMentioned) || 0
+    if (!prev || nextAt >= prevAt) byRef.set(key, entry)
+  }
+  return [...byRef.values()].sort((a, b) => (
+    (Date.parse(b.lastMentioned) || 0) - (Date.parse(a.lastMentioned) || 0)
+  ))
+}
+
+function trimMemoryText(text, maxChars) {
+  if (text.length <= maxChars) return text
+  const note = '\n...[长期记忆已按上下文预算压缩]'
+  const slice = text.slice(0, Math.max(0, maxChars - note.length))
+  const cut = Math.max(slice.lastIndexOf('\n'), slice.lastIndexOf('。'), slice.lastIndexOf('；'))
+  const body = cut > slice.length * 0.6 ? slice.slice(0, cut) : slice
+  return `${body}${note}`
+}
+
+function compressMemorySections(sections, targetTokens) {
+  const budgetChars = Math.max(0, Math.floor(targetTokens * MEMORY_CHARS_PER_TOKEN))
+  const important = {
+    session_summary: dedupeEntries(sections.session_summary || []),
+    preference: dedupeEntries(sections.preference || []),
+    fact: dedupeEntries(sections.fact || []),
+    project_file: [],
+  }
+  const baseText = renderMemorySections(important)
+  if (baseText.length >= budgetChars) {
+    return trimMemoryText(baseText, budgetChars)
+  }
+
+  let used = baseText.length
+  let headerAdded = false
+  const selected = []
+  for (const entry of dedupeProjectFiles(sections.project_file || [])) {
+    const headerCost = headerAdded ? 0 : '\n### 近期文件操作'.length
+    const line = memoryLine(entry)
+    if (used + headerCost + line.length + 1 > budgetChars) break
+    selected.push(entry)
+    used += headerCost + line.length + 1
+    headerAdded = true
+  }
+  if (!selected.length) return baseText
+  return renderMemorySections({ ...important, project_file: selected })
+}
+
+/**
+ * 格式化为 system prompt 片段。
+ *
+ * 预算按上下文窗口的 5%-10% 计算：
+ *   - 低于 10%：原样保留，不压缩；
+ *   - 超过 10%：压缩到 5%，优先保留会话摘要/偏好/事实，再保留最近的去重文件记录。
+ */
+export function formatMemory(principalId, options = {}) {
+  const opts = options && typeof options === 'object' ? options : {}
   const entries = readMemoryEntries(principalId)
   if (!entries.length) return ''
 
   const withWeight = entries
     .map(e => ({ ...e, weight: calcWeight(e) }))
-    .filter(e => e.weight >= LOW_WEIGHT_THRESHOLD)
+    .filter(e => e.weight >= LOW_WEIGHT_THRESHOLD && String(e.content || '').trim())
     .sort((a, b) => b.weight - a.weight)
 
   const sections = { project_file: [], preference: [], session_summary: [], fact: [] }
@@ -290,29 +408,12 @@ export function formatMemory(principalId, maxTokens = 6000) {
     const key = sections[e.type] ? e.type : 'fact'
     sections[key].push(e)
   }
+  if (!MEMORY_SECTIONS.some(([key]) => sections[key].length)) return ''
 
-  const lines = ['## 长期记忆']
-  if (sections.project_file.length) {
-    lines.push('\n### 近期文件操作')
-    for (const e of sections.project_file) lines.push(`- ${e.content}${e.refs.length ? ` [${e.refs.join(', ')}]` : ''}`)
-  }
-  if (sections.preference.length) {
-    lines.push('\n### 用户偏好')
-    for (const e of sections.preference) lines.push(`- ${e.content}`)
-  }
-  if (sections.session_summary.length) {
-    lines.push('\n### 历史会话摘要')
-    for (const e of sections.session_summary) lines.push(`- ${e.content}`)
-  }
-  if (sections.fact.length) {
-    lines.push('\n### 记录的事实')
-    for (const e of sections.fact) lines.push(`- ${e.content}`)
-  }
-
-  const limit = maxTokens * 4
-  let result = lines.join('\n')
-  if (result.length > limit) result = result.slice(0, limit) + '\n...[记忆已截断]'
-  return result
+  const budget = resolveMemoryBudget(opts.contextWindowTokens)
+  const full = renderMemorySections(sections)
+  if (estimateMemoryTokens(full) <= budget.maxTokens) return full
+  return compressMemorySections(sections, budget.minTokens)
 }
 
 // ── Cron ──────────────────────────────────────────────────────────────────────
