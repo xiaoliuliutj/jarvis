@@ -168,7 +168,11 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
             : 0
         ))
         : 0
-      if (ratio >= 75) {
+      // 首次启用压缩、还没有 context 数据时，用历史消息数量兜底，避免老会话一直不压缩。
+      const bootCompact = !lastContext
+        && displaySessionId
+        && store.readMessages(principalId, displaySessionId).length >= 400
+      if (ratio >= 75 || bootCompact) {
         const compacted = await compactSessionContext({
           principalId,
           displaySessionId,
