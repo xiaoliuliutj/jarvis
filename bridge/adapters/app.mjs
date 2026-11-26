@@ -38,11 +38,11 @@ import * as authStore from '../../core/auth-store.mjs'
 import { listCatalog, getTool as getCatalogTool } from '../../core/tool-catalog.mjs'
 import { resolveAnthropicCredentials } from '../../core/config.mjs'
 import { isSilentText } from '../../core/text-filter.mjs'
+import { verifyOwnerToken } from '../../core/owner-token.mjs'
 
 export const id = 'app'
 
 const APP_WEB_DIR = path.join(ROOT, 'app', 'web')
-const OWNER_TOKEN_FILE = path.join(ROOT, 'userdata', 'app-adapter', 'owner-token.txt')
 const FILES_DIR = path.join(ROOT, 'userdata', 'app-adapter', 'files')
 const DEFAULT_PORT = 17779
 const MAX_TEXT_CHARS = 20000
@@ -77,15 +77,6 @@ function readBridgeConfig() {
 }
 
 /** owner-token.txt：owner 权限的唯一凭证；明文不打印、不写日志。 */
-function readOwnerToken() {
-  try {
-    if (!fs.existsSync(OWNER_TOKEN_FILE)) return ''
-    return fs.readFileSync(OWNER_TOKEN_FILE, 'utf-8').trim()
-  } catch {
-    return ''
-  }
-}
-
 function ownerTokenFromRequest(req, url = null) {
   const header = typeof req.get === 'function'
     ? req.get('X-Owner-Token')
@@ -97,13 +88,7 @@ function ownerTokenFromRequest(req, url = null) {
 }
 
 function ownerTokenOk(req, url = null) {
-  const expected = readOwnerToken()
-  if (!expected) return false
-  const provided = ownerTokenFromRequest(req, url)
-  if (!provided) return false
-  const a = crypto.createHash('sha256').update(provided).digest()
-  const b = crypto.createHash('sha256').update(expected).digest()
-  return crypto.timingSafeEqual(a, b)
+  return verifyOwnerToken(ownerTokenFromRequest(req, url))
 }
 
 

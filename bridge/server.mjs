@@ -32,6 +32,7 @@ import { listDevices } from '../core/app-store.mjs'
 import { handleIncomingOnboarding } from '../core/onboarding.mjs'
 import { loadAdapters } from '../core/adapters.mjs'
 import { sanitizeOutgoingText } from '../core/text-filter.mjs'
+import { readOwnerToken, verifyOwnerToken } from '../core/owner-token.mjs'
 import { ensureFileDirs, prepareInbound, listOutboxFiles, takeOutboxBatch, markOutboxSent, isImageFile } from '../core/files.mjs'
 import { logInfo, logWarn, logError } from '../core/logger.mjs'
 
@@ -354,9 +355,8 @@ export function routeIncoming({
           prompt,
           displayText: text,
           userAttachments: media,
-          // App：owner 只由 owner token 决定；没有 token 就按普通用户执行。
-          // 微信端暂保持原有兜底行为，不接入 App 的 owner 判定。
-          roleOverride: sourceType === 'app' ? (owner ? 'owner' : 'user') : null,
+          // owner 只由 owner token 决定；App/微信没有 token 都按普通用户执行。
+          roleOverride: owner ? 'owner' : ((sourceType === 'app' || sourceType === 'weixin') ? 'user' : null),
           emit: (event) => {
             broadcast({
               ...event,
@@ -507,18 +507,35 @@ for (const [adapterId, adapterConf] of Object.entries(config.adapters ?? {})) {
     : [adapterConf.account || 'default']
 
   for (const accountId of accountKeys) {
-    adapter.start((payload) => routeIncoming({
-      sourceType: adapterId,
-      accountId,
-      externalUserId: payload.from,
-      principalId: payload.principalId || null,
-      replyTo: payload.replyTo || null,
-      text: payload.text,
-      attachments: payload.attachments,
-      media: payload.media || [],
-      timestamp: payload.timestamp,
-      owner: payload.owner === true,
-    }), { accountId }).catch(err => {
+    adapter.start((payload) => {
+      let owner = payload.owner === true
+      // 微信兜底方案 A：对绑定为 owner 的微信账号，服务端代持 owner token。
+      // 权限判定仍然只比较 token；这里的角色只决定是否注入服务端持有的 token。
+      if (!owner && adapterId === 'weixin' && payload.from) {
+        try {
+          const p = resolvePrincipal({
+            sourceType: adapterId,
+            accountId,
+            externalUserId: payload.from,
+          })
+          if (p?.role === 'owner') {
+            owner = verifyOwnerToken(readOwnerToken())
+          }
+        } catch {}
+      }
+      return routeIncoming({
+        sourceType: adapterId,
+        accountId,
+        externalUserId: payload.from,
+        principalId: payload.principalId || null,
+        replyTo: payload.replyTo || null,
+        text: payload.text,
+        attachments: payload.attachments,
+        media: payload.media || [],
+        timestamp: payload.timestamp,
+        owner,
+      })
+    }, { accountId }).catch(err => {
       logError('adapter.fail', err.message, { adapterId, accountId })
     })
     logInfo('adapter.start', '', { adapterId, accountId })
