@@ -735,6 +735,7 @@
     if (msg.type === 'file') {
       clearTyping()
       const file = {
+        id: msg.id,
         name: msg.fileName,
         url: msg.url,
         kind: msg.kind || (msg.isImage ? 'image' : 'file'),
@@ -873,9 +874,13 @@
   }
 
   function buildFileEl(file) {
+    const url = file.url
+      ? absUrl(file.url)
+      : (file.id ? `${state.url}/api/file/${encodeURIComponent(file.id)}?token=${encodeURIComponent(state.token)}` : '')
     return buildMediaEl({
+      id: file.id,
       name: file.name,
-      url: absUrl(file.url),
+      url,
       kind: file.kind || (file.isImage ? 'image' : 'file'),
       size: file.size,
     })
@@ -1026,13 +1031,15 @@
       state.syncCursor = Number(data.cursor || 0)
       state.messages = Array.isArray(data.messages) ? data.messages : []
       const localFiles = readLocalFiles().filter(item => item.sessionId === state.sessionId)
-      const knownFiles = new Set(state.messages.filter(m => m.file?.url).map(m => m.file.url))
+      const fileKey = item => item?.id ? `id:${item.id}` : `url:${item?.url || ''}`
+      const knownFiles = new Set(state.messages.filter(m => m.file).map(m => fileKey(m.file)))
       for (const item of localFiles) {
-        if (knownFiles.has(item.url)) continue
-        knownFiles.add(item.url)
+        const key = fileKey(item)
+        if (knownFiles.has(key)) continue
+        knownFiles.add(key)
         state.messages.push({
           role: 'bot',
-          file: { name: item.name, url: item.url, kind: item.kind, isImage: item.isImage, size: item.size },
+          file: { id: item.id, name: item.name, url: item.url, kind: item.kind, isImage: item.isImage, size: item.size },
           ts: item.ts,
           local: true,
         })

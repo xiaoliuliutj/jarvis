@@ -140,7 +140,7 @@ async function deliverOutbox(principalId, sourceType, accountId, externalUserId,
       // 图片走图片消息通道（微信里直接显示为图片），其余走文件通道
       const useImage = isImageFile(f.name) && typeof adapter.sendImage === 'function'
       const sendOne = useImage ? adapter.sendImage : adapter.sendFile
-      await sendOne.call(adapter, target, f.path, { accountId, fileName: f.name })
+      await sendOne.call(adapter, target, f.path, { accountId, fileName: f.name, principalId })
       markOutboxSent(principalId, f.path)
       broadcast({ type: 'outbound_file', principalId, fileName: f.name, ok: true, kind: useImage ? 'image' : 'file' })
       logInfo('file.sent', f.name, { principalId, kind: useImage ? 'image' : 'file' })

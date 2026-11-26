@@ -30,7 +30,7 @@ import { WebSocketServer } from 'ws'
 import { ROOT } from '../../core/paths.mjs'
 import { logInfo, logWarn, logError } from '../../core/logger.mjs'
 import { resolvePrincipal, getPrincipal } from '../../core/principals.mjs'
-import { getCurrentSession, readMessages } from '../../core/user-store.mjs'
+import { getCurrentSession, readMessages, appendMessage, touchSession } from '../../core/user-store.mjs'
 import * as appStore from '../../core/app-store.mjs'
 import * as authStore from '../../core/auth-store.mjs'
 import { listCatalog, getTool as getCatalogTool } from '../../core/tool-catalog.mjs'
@@ -259,6 +259,45 @@ function pruneStagedFiles() {
   } catch {}
 }
 
+/** 文件路由在 Bridge 重启后仍能靠磁盘上的 <id>_<name> 找回文件。 */
+function getStagedFile(fileId) {
+  const id = String(fileId || '')
+  if (!id) return null
+  const cached = fileRegistry.get(id)
+  if (cached && fs.existsSync(cached.filePath)) return cached
+  try {
+    if (!fs.existsSync(FILES_DIR)) return null
+    const prefix = `${id}_`
+    const name = fs.readdirSync(FILES_DIR).find(entry => entry.startsWith(prefix))
+    if (!name) return null
+    const filePath = path.join(FILES_DIR, name)
+    if (!fs.existsSync(filePath)) return null
+    const item = { filePath, fileName: name.slice(prefix.length) }
+    fileRegistry.set(id, item)
+    return item
+  } catch {
+    return null
+  }
+}
+
+function persistFileMessage(principalId, info) {
+  if (!principalId) return
+  try {
+    const session = getCurrentSession(principalId)
+    if (!session) return
+    appendMessage(principalId, session.sessionId, {
+      type: 'file',
+      fileId: info.fileId,
+      fileName: info.fileName,
+      kind: info.kind,
+      isImage: !!info.isImage,
+      size: info.size,
+      timestamp: info.timestamp,
+    })
+    touchSession(principalId, session.sessionId)
+  } catch {}
+}
+
 function appPrincipalFor(req) {
   const deviceId = getDevice(req)
   const user = req.auth?.user || null
@@ -464,7 +503,7 @@ function buildServer() {
   app.post('/api/message', auth, handleIncomingMessage)
 
   app.get('/api/file/:id', auth, (req, res) => {
-    const item = fileRegistry.get(String(req.params.id || ''))
+    const item = getStagedFile(String(req.params.id || ''))
     if (!item) return res.status(404).json({ ok: false, error: '文件不存在或已过期' })
     try {
       if (!fs.existsSync(item.filePath)) return res.status(410).json({ ok: false, error: '文件已清理' })
@@ -505,14 +544,34 @@ function buildServer() {
 
   function uiMessages(principalId, sessionId) {
     return readMessages(principalId, sessionId)
-      .filter(r => (r.type === 'user' || r.type === 'assistant') && typeof r.text === 'string' && r.text.trim())
-      .map(r => ({
-        id: r.id,
-        seq: r.seq,
-        role: r.type === 'user' ? 'user' : 'bot',
-        text: r.text,
-        ts: r.timestamp || '',
-      }))
+      .map(r => {
+        if (r.type === 'file' && r.fileId) {
+          return {
+            id: r.id,
+            seq: r.seq,
+            role: 'bot',
+            file: {
+              id: r.fileId,
+              name: r.fileName,
+              kind: r.kind || 'file',
+              isImage: !!r.isImage,
+              size: r.size,
+            },
+            ts: r.timestamp || '',
+          }
+        }
+        if ((r.type === 'user' || r.type === 'assistant') && typeof r.text === 'string' && r.text.trim()) {
+          return {
+            id: r.id,
+            seq: r.seq,
+            role: r.type === 'user' ? 'user' : 'bot',
+            text: r.text,
+            ts: r.timestamp || '',
+          }
+        }
+        return null
+      })
+      .filter(Boolean)
   }
 
   app.get('/api/v1/session/current', auth, (req, res) => {
@@ -896,6 +955,16 @@ async function sendFileLike(externalUserId, filePath, opts = {}) {
     : (/\.(mp4|webm|mov|m4v)$/i.test(fileName) ? 'video'
       : (/\.(mp3|wav|m4a|ogg|aac)$/i.test(fileName) ? 'audio' : 'file'))
   const size = fs.statSync(filePath).size
+  const timestamp = new Date().toISOString()
+  const info = {
+    fileId: staged.id,
+    fileName: staged.name,
+    kind,
+    isImage,
+    size,
+    timestamp,
+  }
+  if (opts.principalId) persistFileMessage(opts.principalId, info)
   pushToTarget(target, {
     type: 'file',
     id: staged.id,
@@ -904,7 +973,7 @@ async function sendFileLike(externalUserId, filePath, opts = {}) {
     isImage,
     size,
     url: `/api/file/${staged.id}?token=${encodeURIComponent(accessToken)}`,
-    timestamp: new Date().toISOString(),
+    timestamp,
   })
   logInfo('app.file.sent', fileName, { target, bytes: size })
 }
