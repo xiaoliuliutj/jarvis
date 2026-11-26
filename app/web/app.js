@@ -121,6 +121,9 @@
     personaModal: $('personaModal'),
     personaCancel: $('personaCancel'),
     personaPresets: $('personaPresets'),
+    personaPresetsWrap: $('personaPresetsWrap'),
+    personaPresetsSettings: $('personaPresetsSettings'),
+    personaPresetsSettingsWrap: $('personaPresetsSettingsWrap'),
     personaContent: $('personaContent'),
     personaStatusStyle: $('personaStatusStyle'),
     personaSuffixRow: $('personaSuffixRow'),
@@ -2134,6 +2137,7 @@
         presets: Array.isArray(data.presets) ? data.presets : [],
       }
       renderPersonaSummary()
+      renderPersonaPresets()
       applyPersonaChrome()
       refreshRunStatusTone()
       return true
@@ -2166,22 +2170,52 @@
   }
 
   function renderPersonaPresets() {
-    if (!el.personaPresets) return
-    el.personaPresets.textContent = ''
     const presets = Array.isArray(state.persona?.presets) ? state.persona.presets : []
-    for (const preset of presets) {
-      const btn = document.createElement('button')
-      btn.type = 'button'
-      btn.className = 'persona-preset'
-      btn.textContent = preset.label || preset.id || '预设'
-      btn.title = preset.summary || ''
-      btn.addEventListener('click', () => {
-        el.personaContent.value = preset.content || ''
-        el.personaContent.focus()
-      })
-      el.personaPresets.appendChild(btn)
+
+    if (el.personaPresets) {
+      el.personaPresets.textContent = ''
+      for (const preset of presets) {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'persona-preset'
+        btn.textContent = preset.label || preset.id || '预设'
+        btn.title = preset.summary || ''
+        btn.addEventListener('click', () => {
+          el.personaContent.value = preset.content || ''
+          el.personaContent.focus()
+        })
+        el.personaPresets.appendChild(btn)
+      }
+      if (el.personaPresetsWrap) el.personaPresetsWrap.classList.toggle('hidden', !presets.length)
     }
-    el.personaPresets.classList.toggle('hidden', !presets.length)
+
+    // 设置页也把预定义人设放在人设摘要后面，点一下带着内容打开编辑器。
+    if (el.personaPresetsSettings) {
+      el.personaPresetsSettings.textContent = ''
+      for (const preset of presets) {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'persona-preset'
+        btn.textContent = preset.label || preset.id || '预设'
+        btn.title = preset.summary || ''
+        btn.addEventListener('click', () => {
+          openPersonaModalWithPreset(preset).catch(() => {})
+        })
+        el.personaPresetsSettings.appendChild(btn)
+      }
+      if (el.personaPresetsSettingsWrap) {
+        el.personaPresetsSettingsWrap.classList.toggle('hidden', !presets.length)
+      }
+    }
+  }
+
+  async function openPersonaModalWithPreset(preset) {
+    const ok = await openPersonaModal()
+    if (!ok) return
+    el.personaContent.value = preset?.content || ''
+    el.personaStatusStyle.value = 'auto'
+    togglePersonaSuffixRow()
+    el.personaContent.focus()
   }
 
   function togglePersonaSuffixRow() {
@@ -2190,12 +2224,12 @@
   }
 
   async function openPersonaModal() {
-    if (!state.token) { showLogin(''); return }
+    if (!state.token) { showLogin(''); return false }
     // 打开时重新拉取，避免聊天里刚改过人设却被旧文案覆盖。
     const ok = await loadPersona()
     if (!ok) {
       toast('人设加载失败，请检查连接后重试')
-      return
+      return false
     }
     el.personaContent.value = state.persona?.content || ''
     el.personaStatusStyle.value = state.persona?.statusStyle || 'auto'
@@ -2204,6 +2238,7 @@
     renderPersonaPresets()
     el.personaModal.classList.remove('hidden')
     setTimeout(() => el.personaContent.focus(), 60)
+    return true
   }
 
   function closePersonaModal() {
