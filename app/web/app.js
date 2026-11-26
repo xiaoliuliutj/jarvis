@@ -890,7 +890,11 @@
   }
 
   function buildAttachmentEl(att) {
-    const url = absUrl(att.url)
+    const url = att.url
+      ? absUrl(att.url)
+      : (att.mediaId
+        ? `${state.url}/api/v1/media/${encodeURIComponent(att.mediaId)}?token=${encodeURIComponent(state.token)}&device=${encodeURIComponent(state.device)}`
+        : '')
     const kind = att.kind || (String(att.mime || '').startsWith('image/') ? 'image' : 'file')
     return buildMediaEl({ name: att.fileName || att.name, url, kind, size: att.size })
   }
@@ -1271,8 +1275,21 @@
     state.attachments.forEach((att, index) => {
       const chip = document.createElement('span')
       chip.className = 'attach-chip'
+      if (att.kind === 'image' && att.url) {
+        const img = document.createElement('img')
+        img.src = absUrl(att.url)
+        img.alt = att.fileName || '图片'
+        chip.appendChild(img)
+      } else {
+        const icon = document.createElement('span')
+        icon.className = 'attach-file-icon'
+        icon.textContent = fileVisual(att.fileName).label
+        chip.appendChild(icon)
+      }
       const name = document.createElement('span')
-      name.textContent = att.fileName.length > 14 ? att.fileName.slice(0, 12) + '…' : att.fileName
+      name.className = 'attach-name'
+      name.textContent = att.fileName || '文件'
+      chip.appendChild(name)
       const removeBtn = document.createElement('button')
       removeBtn.type = 'button'
       removeBtn.textContent = '×'
@@ -1280,7 +1297,6 @@
         state.attachments.splice(index, 1)
         renderAttachments()
       })
-      chip.appendChild(name)
       chip.appendChild(removeBtn)
       el.attachPreview.appendChild(chip)
     })
@@ -1297,7 +1313,7 @@
       role: 'user',
       id: clientMessageId,
       text,
-      attachments: attachments.map(a => ({ ...a, url: absUrl(a.url) })),
+      attachments: attachments.map(a => ({ ...a, mediaId: a.id, url: absUrl(a.url) })),
       ts: new Date().toISOString(),
     })
     el.input.value = ''

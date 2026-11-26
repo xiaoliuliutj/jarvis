@@ -54,7 +54,7 @@ function sanitizeForUser(principal, text) {
  * @param {(event: object) => void} opts.emit
  * @returns {Promise<{text, cost, turns, isError, sessionId}>}
  */
-export async function runTurn({ principalId, prompt, sessionId = null, forceNew = false, source = 'chat', emit = () => {}, roleOverride = null }) {
+export async function runTurn({ principalId, prompt, displayText = null, userAttachments = [], sessionId = null, forceNew = false, source = 'chat', emit = () => {}, roleOverride = null }) {
   const basePrincipal = getPrincipal(principalId)
   const principal = roleOverride
     ? {
@@ -149,7 +149,12 @@ export async function runTurn({ principalId, prompt, sessionId = null, forceNew 
     let toolsPersisted = 0
 
     const userRecord = includeUser
-      ? { type: 'user', text: prompt, timestamp: new Date().toISOString() }
+      ? {
+          type: 'user',
+          text: displayText !== null ? displayText : prompt,
+          ...(userAttachments.length ? { attachments: userAttachments } : {}),
+          timestamp: new Date().toISOString(),
+        }
       : null
 
     if (includeUser && persistSessionId) {

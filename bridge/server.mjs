@@ -207,6 +207,7 @@ export function routeIncoming({
   replyTo = null,
   text,
   attachments = [],
+  media = [],
   timestamp = new Date().toISOString(),
   owner = false,
 }) {
@@ -295,6 +296,8 @@ export function routeIncoming({
         result = await runTurn({
           principalId: principal.id,
           prompt,
+          displayText: text,
+          userAttachments: media,
           roleOverride: owner ? 'owner' : null,
           emit: (event) => broadcast({
             ...event,
@@ -441,6 +444,7 @@ for (const [adapterId, adapterConf] of Object.entries(config.adapters ?? {})) {
       replyTo: payload.replyTo || null,
       text: payload.text,
       attachments: payload.attachments,
+      media: payload.media || [],
       timestamp: payload.timestamp,
       owner: payload.owner === true,
     }), { accountId }).catch(err => {

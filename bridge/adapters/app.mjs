@@ -333,6 +333,7 @@ async function handleIncomingMessage(req, res) {
 
   const text = String(req.body?.text || '').slice(0, MAX_TEXT_CHARS)
   const attachments = []
+  const media = []
   const rawAttachments = Array.isArray(req.body?.attachments) ? req.body.attachments.slice(0, MAX_ATTACHMENTS) : []
   for (const item of rawAttachments) {
     const buffer = Buffer.from(String(item?.dataBase64 || ''), 'base64')
@@ -340,11 +341,13 @@ async function handleIncomingMessage(req, res) {
     if (buffer.length > MAX_ATTACHMENT_BYTES) {
       return res.status(413).json({ ok: false, error: '单个附件不能超过 20MB' })
     }
-    attachments.push({
-      kind: item?.kind === 'image' ? 'image' : 'file',
-      fileName: sanitizeFileName(item?.fileName),
-      buffer,
-    })
+    const fileName = sanitizeFileName(item?.fileName)
+    const mime = String(item?.mime || 'application/octet-stream')
+    const kind = item?.kind === 'image' ? 'image'
+      : (mime.startsWith('video/') ? 'video' : (mime.startsWith('audio/') ? 'audio' : 'file'))
+    attachments.push({ kind, fileName, buffer })
+    const saved = appStore.saveMedia(principal.id, { fileName, mime, buffer })
+    media.push({ id: saved.id, fileName: saved.fileName, kind, mime: saved.mime, size: saved.size })
   }
 
   const attachmentIds = Array.isArray(req.body?.attachmentIds) ? req.body.attachmentIds.slice(0, MAX_ATTACHMENTS) : []
@@ -355,11 +358,11 @@ async function handleIncomingMessage(req, res) {
     if (buffer.length > MAX_ATTACHMENT_BYTES) {
       return res.status(413).json({ ok: false, error: '单个附件不能超过 20MB' })
     }
-    attachments.push({
-      kind: String(item.mime || '').startsWith('image/') ? 'image' : 'file',
-      fileName: sanitizeFileName(item.fileName),
-      buffer,
-    })
+    const mime = String(item.mime || '')
+    const kind = mime.startsWith('image/') ? 'image'
+      : (mime.startsWith('video/') ? 'video' : (mime.startsWith('audio/') ? 'audio' : 'file'))
+    attachments.push({ kind, fileName: sanitizeFileName(item.fileName), buffer })
+    media.push({ id: item.id, fileName: item.fileName, kind, mime: item.mime, size: item.size })
   }
 
   if (!text && !attachments.length) {
@@ -373,6 +376,7 @@ async function handleIncomingMessage(req, res) {
       principalId: principal.id,
       text,
       attachments,
+      media,
       replyTo,
       timestamp: new Date().toISOString(),
       owner,
@@ -560,11 +564,28 @@ function buildServer() {
             ts: r.timestamp || '',
           }
         }
-        if ((r.type === 'user' || r.type === 'assistant') && typeof r.text === 'string' && r.text.trim()) {
+        if (r.type === 'user' && (typeof r.text === 'string' && r.text.trim() || Array.isArray(r.attachments) && r.attachments.length)) {
           return {
             id: r.id,
             seq: r.seq,
-            role: r.type === 'user' ? 'user' : 'bot',
+            role: 'user',
+            text: typeof r.text === 'string' ? r.text : '',
+            attachments: (r.attachments || []).map(a => ({
+              mediaId: a.id,
+              fileName: a.fileName,
+              name: a.fileName,
+              kind: a.kind || 'file',
+              mime: a.mime || '',
+              size: a.size,
+            })),
+            ts: r.timestamp || '',
+          }
+        }
+        if (r.type === 'assistant' && typeof r.text === 'string' && r.text.trim()) {
+          return {
+            id: r.id,
+            seq: r.seq,
+            role: 'bot',
             text: r.text,
             ts: r.timestamp || '',
           }

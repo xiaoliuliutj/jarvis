@@ -357,12 +357,14 @@ body.viewer-open { overflow: hidden; }
 #composer {
   flex: 0 0 auto;
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 8px;
   padding: 9px 12px calc(9px + env(safe-area-inset-bottom));
   background: var(--canvas);
   border-top: 2px solid var(--line);
 }
+#composer .send-btn { align-self: flex-end; }
+#attachBtn { margin-top: 4px; }
 #input {
   flex: 1 1 auto;
   min-height: 42px;
@@ -405,13 +407,72 @@ body.viewer-open { overflow: hidden; }
 }
 .send-btn:disabled { opacity: 0.4; cursor: default; }
 
-.attach-preview { display: flex; gap: 6px; flex-wrap: wrap; max-width: 46%; }
-.attach-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  background: var(--card); border: 1px solid var(--line);
-  border-radius: 8px; padding: 4px 8px; font-size: 12px; max-width: 190px;
+.attach-preview {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 8px 12px 0;
+  background: var(--canvas);
 }
-.attach-chip button { border: none; background: none; color: var(--danger); font-size: 14px; cursor: pointer; padding: 0; }
+.attach-preview:empty { display: none; }
+.attach-chip {
+  position: relative;
+  flex: 0 0 auto;
+  width: 76px;
+  height: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.attach-chip img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.attach-file-icon {
+  padding: 6px;
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: center;
+  word-break: break-all;
+}
+.attach-name {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 3px 4px;
+  background: rgba(7, 12, 10, 0.62);
+  color: #fff;
+  font-size: 9px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.attach-chip button {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(7, 12, 10, 0.62);
+  color: #fff;
+  font-size: 12px;
+  line-height: 18px;
+  padding: 0;
+  cursor: pointer;
+}
 
 /* ── nav ──────────────────────────────────────────────────────────────── */
 
