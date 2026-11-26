@@ -30,6 +30,7 @@ import { formatScheduleReminder } from '../core/schedule-store.mjs'
 import { orderDeliveryAccounts } from '../core/delivery.mjs'
 import { handleIncomingOnboarding } from '../core/onboarding.mjs'
 import { loadAdapters } from '../core/adapters.mjs'
+import { sanitizeOutgoingText } from '../core/text-filter.mjs'
 import { ensureFileDirs, prepareInbound, listOutboxFiles, takeOutboxBatch, markOutboxSent, isImageFile } from '../core/files.mjs'
 import { logInfo, logWarn, logError } from '../core/logger.mjs'
 
@@ -83,6 +84,23 @@ wss.on('connection', (ws) => {
 
 const adapters = await loadAdapters()
 
+// 每个 principal 正在处理/排队的回合数：用于 App 的持续运行状态。
+const pendingTurns = new Map()
+
+function changePendingTurns(principalId, delta) {
+  const next = Math.max(0, (pendingTurns.get(principalId) || 0) + delta)
+  if (next) pendingTurns.set(principalId, next)
+  else pendingTurns.delete(principalId)
+  return next
+}
+
+/** 把回合状态推给该用户已连接的 App；App 离线时由 /session/current 兜底。 */
+function notifyAppStatus(principalId, patch) {
+  try {
+    adapters.app?.setTurnStatus?.(principalId, patch)
+  } catch {}
+}
+
 // ── 调度器 ────────────────────────────────────────────────────────────────────
 
 const scheduler = new Scheduler({
@@ -92,10 +110,10 @@ const scheduler = new Scheduler({
 
 // ── 入站消息 ──────────────────────────────────────────────────────────────────
 
-async function sendText(principalId, sourceType, accountId, externalUserId, text, replyTo = null) {
+async function sendText(principalId, sourceType, accountId, externalUserId, text, replyTo = null, opts = {}) {
   const adapter = adapters[sourceType]
   if (!adapter) throw new Error(`未知 adapter: ${sourceType}`)
-  await adapter.send(replyTo || externalUserId, text, { accountId })
+  await adapter.send(replyTo || externalUserId, text, { accountId, ...opts })
 }
 
 async function sendReply(principalId, sourceType, accountId, externalUserId, result, replyTo = null) {
@@ -260,10 +278,14 @@ export function routeIncoming({
     return { ok: true, principalId: principal.id, onboarding: true }
   }
 
+  const pending = changePendingTurns(principal.id, 1)
+  notifyAppStatus(principal.id, { state: 'queued', pending })
+
   scheduler.enqueue(principal.id, async () => {
     let result
     let replyDone = false
     let interimTimer = null
+    notifyAppStatus(principal.id, { state: 'started', pending: pendingTurns.get(principal.id) || pending })
 
     // 非主会话：10 秒内没有最终回复时，先发一句符合人设的「正在处理」
     if (principal.id !== PC_MAIN_ID) {
@@ -271,9 +293,13 @@ export function routeIncoming({
         if (replyDone) return
         try {
           const persona = readPersona(principal.id)
-          const notice = await generateInterimNotice({ persona, displayName: principal.displayName })
+          const rawNotice = await generateInterimNotice({ persona, displayName: principal.displayName })
           if (replyDone) return
-          await sendText(principal.id, sourceType, accountId, externalUserId, notice, replyTo)
+          const notice = sanitizeOutgoingText(rawNotice).text
+          if (!notice) return
+          // App 里用持续状态条展示，不额外插入一条临时消息。
+          notifyAppStatus(principal.id, { state: 'interim', text: notice })
+          await sendText(principal.id, sourceType, accountId, externalUserId, notice, replyTo, { interim: true })
           console.log(`[bridge] 已发送「正在处理」提示 (${principal.id}): ${notice}`)
         } catch (err) {
           console.warn(`[bridge] 「正在处理」提示发送失败 (${principal.id}):`, err.message)
@@ -299,12 +325,20 @@ export function routeIncoming({
           displayText: text,
           userAttachments: media,
           roleOverride: owner ? 'owner' : null,
-          emit: (event) => broadcast({
-            ...event,
-            sourceType,
-            accountId,
-            displayName: principal.displayName,
-          }),
+          emit: (event) => {
+            broadcast({
+              ...event,
+              sourceType,
+              accountId,
+              displayName: principal.displayName,
+            })
+            // App 的持续运行状态：不混入消息时间线。
+            if (event.type === 'tool') {
+              notifyAppStatus(principal.id, { state: 'tool', tool: event.name })
+            } else if (event.type === 'text') {
+              notifyAppStatus(principal.id, { state: 'writing' })
+            }
+          },
         })
       }
     } catch (err) {
@@ -340,6 +374,11 @@ export function routeIncoming({
 
     // 回合结束后投递发件箱
     await deliverOutbox(principal.id, sourceType, accountId, externalUserId, replyTo)
+  }).finally(() => {
+    const left = changePendingTurns(principal.id, -1)
+    notifyAppStatus(principal.id, left ? { state: 'queued', pending: left } : { state: 'done' })
+  }).catch(err => {
+    logError('turn.queue.fail', err?.message || String(err), { principalId: principal.id })
   })
 
   return { ok: true, principalId: principal.id }
@@ -365,8 +404,8 @@ const cron = startCronManager({
   }),
   deliver: async (principal, task, result) => {
     if (result.isError) return
-    // [SILENT]：夜间等场景下不打扰用户（结果一般已写入报告文件）
-    if (!result.text || result.text.includes('[SILENT]')) {
+    // [SILENT]：夜间等场景下不打扰用户（runTurn 已统一清理，silent 回合 text 为空）
+    if (!result.text) {
       logInfo('cron.silent', '', { principalId: principal.id, taskId: task.id })
       return
     }

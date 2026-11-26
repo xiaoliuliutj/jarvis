@@ -35,6 +35,7 @@ import {
 } from './app-store.mjs'
 import { readTranscriptUsage } from './usage-transcript.mjs'
 import { compactSessionContext } from './context-compactor.mjs'
+import { sanitizeOutgoingText } from './text-filter.mjs'
 
 const locks = new Map()
 
@@ -318,7 +319,18 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
     let text = result.isError
       ? sanitizeForUser(principal, result.text)
       : result.text
-    if (!text && !result.isError) {
+    let silentTurn = false
+    if (!result.isError) {
+      // 所有面向用户的回复统一清理控制标记；cron 的 silent 表示本次不打扰。
+      const clean = sanitizeOutgoingText(text)
+      if (source === 'cron' && clean.silent) {
+        text = ''
+        silentTurn = true
+      } else {
+        text = clean.text
+      }
+    }
+    if (!text && !result.isError && !silentTurn) {
       logWarn('turn.empty', '', { principalId, source, turns: result.turns ?? 0 })
       text = '刚才那条没处理成功，再说一遍喵～'
     }
@@ -337,12 +349,16 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
         store.appendMessage(principalId, finalSessionId, rec)
       }
     }
-    store.appendMessage(principalId, finalSessionId, {
-      type: 'assistant',
-      text,
-      isError: !!result.isError,
-      timestamp: new Date().toISOString(),
-    })
+    // cron 的 silent 回合没有正文，不写入会话，避免之后在 App/通知里露出来。
+    if (text) {
+      store.appendMessage(principalId, finalSessionId, {
+        type: 'assistant',
+        text,
+        source,
+        isError: !!result.isError,
+        timestamp: new Date().toISOString(),
+      })
+    }
     store.touchSession(principalId, finalSessionId)
 
     try {

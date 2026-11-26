@@ -35,6 +35,7 @@ import * as appStore from '../../core/app-store.mjs'
 import * as authStore from '../../core/auth-store.mjs'
 import { listCatalog, getTool as getCatalogTool } from '../../core/tool-catalog.mjs'
 import { resolveAnthropicCredentials } from '../../core/config.mjs'
+import { isSilentText } from '../../core/text-filter.mjs'
 
 export const id = 'app'
 
@@ -62,6 +63,8 @@ const clientDeviceHistory = new Map() // clientId -> { deviceId, at }（连接�
 const pending = new Map()      // target key (clientId/device) -> payload[]
 const fileRegistry = new Map() // fileId -> { filePath, fileName }
 const rateBuckets = new Map()  // deviceId -> number[]
+const principalClients = new Map() // principalId -> Set<WebSocket>
+const runningTurns = new Map()     // principalId -> { state, tool, text, since, pending }
 const CLIENT_HISTORY_TTL = 24 * 3600_000
 let keepAliveTimer = null
 
@@ -582,6 +585,10 @@ function buildServer() {
           }
         }
         if (r.type === 'assistant' && typeof r.text === 'string' && r.text.trim()) {
+          const trimmed = r.text.trim()
+          // 历史 silent 控制标记不要当正文展示；正常聊天里提到 silent 不受影响。
+          if (r.source === 'cron' && isSilentText(trimmed)) return null
+          if (/^[\[【(（]\s*silent\b[^\]】)）]*[\]】)）]$/i.test(trimmed)) return null
           return {
             id: r.id,
             seq: r.seq,
@@ -608,6 +615,7 @@ function buildServer() {
         unread: 0,
         readCursor: 0,
         context: null,
+        running: getTurnStatus(principal.id),
       })
     }
     const all = uiMessages(principal.id, session.sessionId)
@@ -624,6 +632,7 @@ function buildServer() {
       readCursor,
       unread: all.filter(m => m.seq >= readCursor).length,
       context: appStore.getSessionContext(principal.id, session.sessionId),
+      running: getTurnStatus(principal.id),
     })
   })
 
@@ -931,9 +940,18 @@ function setupWs(httpServer) {
         ? getPrincipal(user.principalId)
         : resolvePrincipal({ sourceType: 'app', accountId: 'default', externalUserId: deviceId })
       appStore.recordDevice(principal.id, { clientId, deviceId })
+      ws.principalId = principal.id
+      let pset = principalClients.get(principal.id)
+      if (!pset) { pset = new Set(); principalClients.set(principal.id, pset) }
+      pset.add(ws)
     } catch {}
 
     ws.send(JSON.stringify({ type: 'hello', clientId, deviceId, owner, username: user?.username || null }))
+    if (principal && runningTurns.has(principal.id)) {
+      try {
+        ws.send(JSON.stringify({ type: 'turn_status', ...runningTurns.get(principal.id) }))
+      } catch {}
+    }
     for (const key of [clientId, deviceId]) {
       const queue = pending.get(key)
       if (!queue?.length) continue
@@ -951,6 +969,13 @@ function setupWs(httpServer) {
     })
 
     ws.on('close', () => {
+      if (ws.principalId) {
+        const pset = principalClients.get(ws.principalId)
+        if (pset) {
+          pset.delete(ws)
+          if (!pset.size) principalClients.delete(ws.principalId)
+        }
+      }
       const bucket = clients.get(clientId)
       if (bucket) {
         bucket.delete(ws)
@@ -1028,8 +1053,46 @@ export function isOnline(externalUserId) {
   })
 }
 
+/**
+ * 更新某个用户的回合运行状态，并实时推给该用户连接的 App。
+ * patch.state: queued | started | tool | writing | interim | done
+ */
+export function setTurnStatus(principalId, patch = {}) {
+  if (!principalId) return
+  if (patch.state === 'done') {
+    runningTurns.delete(principalId)
+    pushTurnStatus(principalId, { state: 'done' })
+    return
+  }
+  const prev = runningTurns.get(principalId) || null
+  const next = {
+    ...(prev || { since: Date.now() }),
+    ...patch,
+  }
+  if (!next.since) next.since = Date.now()
+  runningTurns.set(principalId, next)
+  pushTurnStatus(principalId, next)
+}
+
+export function getTurnStatus(principalId) {
+  return runningTurns.get(principalId) || null
+}
+
+function pushTurnStatus(principalId, status) {
+  const set = principalClients.get(principalId)
+  if (!set || !set.size) return
+  const payload = JSON.stringify({ type: 'turn_status', ...status })
+  for (const ws of set) {
+    if (ws.readyState === 1) {
+      try { ws.send(payload) } catch {}
+    }
+  }
+}
+
 export async function send(externalUserId, text, opts = {}) {
   if (!text) return
+  // 「正在处理」安抚语已经在 App 状态条里展示，不再额外插入临时消息。
+  if (opts.interim) return
   pushToTarget(externalUserId, {
     type: 'assistant',
     text: String(text),
@@ -1092,6 +1155,8 @@ export function stop() {
   clientDevices.clear()
   clientDeviceHistory.clear()
   pending.clear()
+  principalClients.clear()
+  runningTurns.clear()
   try { wss?.close() } catch {}
   wss = null
   try { server?.close() } catch {}

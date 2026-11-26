@@ -34,8 +34,7 @@
     connectionStatus: '',
     attachments: [],
     messages: [],
-    typingEl: null,
-    typingTimer: null,
+    runStatus: { timer: null, since: 0, text: '' },
     tab: 'chat',
     tools: [],
     toolQuery: '',
@@ -75,6 +74,9 @@
     },
     navButtons: Array.from(document.querySelectorAll('.nav-btn')),
     messages: $('messages'),
+    runStatus: $('runStatus'),
+    runStatusText: $('runStatusText'),
+    runStatusElapsed: $('runStatusElapsed'),
     chatUnread: $('chatUnread'),
     chatScrollbar: $('chatScrollbar'),
     chatScrollbarThumb: $('chatScrollbarThumb'),
@@ -973,6 +975,10 @@
       renderContext(msg.context)
       return
     }
+    if (msg.type === 'turn_status' && msg.state) {
+      setRunStatus(msg)
+      return
+    }
     if (msg.type === 'assistant' && msg.text) {
       clearTyping()
       appendMessage({ role: 'bot', text: msg.text, ts: msg.timestamp || new Date().toISOString() })
@@ -982,7 +988,7 @@
       return
     }
     if (msg.type === 'file') {
-      clearTyping()
+      // 回合进行中也可能发文件，不能因此清掉运行状态。
       const file = {
         id: msg.id,
         name: msg.fileName,
@@ -1680,21 +1686,97 @@
     })
   }
 
-  function showTyping() {
-    if (state.typingEl) return
-    const div = document.createElement('div')
-    div.className = 'typing'
-    for (let i = 0; i < 3; i++) div.appendChild(document.createElement('i'))
-    state.typingEl = div
-    el.messages.appendChild(div)
-    scrollToBottom()
-    clearTimeout(state.typingTimer)
-    state.typingTimer = setTimeout(clearTyping, 120000)
+  const TOOL_TIPS = new Map([
+    ['Bash', '正在执行命令'],
+    ['Read', '正在读取文件'],
+    ['Glob', '正在搜索文件'],
+    ['Grep', '正在搜索内容'],
+    ['Edit', '正在修改代码'],
+    ['Write', '正在写入文件'],
+    ['NotebookEdit', '正在修改笔记本'],
+    ['WebSearch', '正在查找资料'],
+    ['WebFetch', '正在读取网页'],
+    ['Task', '正在调度子任务'],
+    ['Agent', '正在调度子任务'],
+  ])
+  const TOOL_PREFIX_TIPS = [
+    ['mcp__image_gen', '正在生成图片'],
+    ['mcp__screenshot', '正在截屏'],
+    ['mcp__file_builder', '正在生成文件'],
+    ['mcp__notes', '正在整理笔记'],
+    ['mcp__schedule', '正在处理日程'],
+    ['mcp__cron', '正在处理定时任务'],
+    ['mcp__weather', '正在查天气'],
+    ['mcp__my_location', '正在定位'],
+    ['mcp__restart', '正在重启服务'],
+  ]
+
+  function toolTip(name) {
+    const raw = String(name || '').trim()
+    if (!raw) return '正在调用工具'
+    if (TOOL_TIPS.has(raw)) return TOOL_TIPS.get(raw)
+    for (const [prefix, tip] of TOOL_PREFIX_TIPS) {
+      if (raw.startsWith(prefix)) return tip
+    }
+    const short = raw.replace(/^mcp__/, '').replace(/__/g, ' · ')
+    return `正在调用：${short}`
   }
+
+  function runStatusLabel(status) {
+    switch (status?.state) {
+      case 'queued': return '排队中…'
+      case 'tool': return toolTip(status.tool)
+      case 'writing': return '正在整理回复…'
+      case 'interim': return String(status.text || '').trim() || '正在处理…'
+      case 'started':
+      case 'thinking':
+      default: return '思考中…'
+    }
+  }
+
+  // 运行状态独立于消息时间线：刷新/重连/插入消息都不会把它冲掉。
+  function setRunStatus(status) {
+    if (!el.runStatus) return
+    if (!status || status.state === 'done') { clearRunStatus(); return }
+    const label = runStatusLabel(status)
+    state.runStatus.since = Number(status.since) || state.runStatus.since || Date.now()
+    state.runStatus.text = label
+    el.runStatusText.textContent = label
+    el.runStatus.classList.remove('hidden')
+    renderRunElapsed()
+    if (!state.runStatus.timer) {
+      state.runStatus.timer = setInterval(renderRunElapsed, 1000)
+    }
+    // 兜底：断线丢失 done 事件时，45 分钟后自动收起。
+    clearTimeout(state.runStatus.staleTimer)
+    state.runStatus.staleTimer = setTimeout(clearRunStatus, 45 * 60 * 1000)
+  }
+
+  function renderRunElapsed() {
+    if (!el.runStatusElapsed) return
+    const seconds = Math.max(0, Math.floor((Date.now() - (state.runStatus.since || Date.now())) / 1000))
+    el.runStatusElapsed.textContent = seconds >= 1 ? `${seconds}s` : ''
+  }
+
+  function clearRunStatus() {
+    if (state.runStatus.timer) {
+      clearInterval(state.runStatus.timer)
+      state.runStatus.timer = null
+    }
+    clearTimeout(state.runStatus.staleTimer)
+    state.runStatus.staleTimer = null
+    state.runStatus.since = 0
+    state.runStatus.text = ''
+    if (el.runStatus) el.runStatus.classList.add('hidden')
+    if (el.runStatusElapsed) el.runStatusElapsed.textContent = ''
+  }
+
+  function showTyping() {
+    setRunStatus({ state: 'thinking', since: Date.now() })
+  }
+
   function clearTyping() {
-    clearTimeout(state.typingTimer)
-    state.typingTimer = null
-    if (state.typingEl) { state.typingEl.remove(); state.typingEl = null }
+    clearRunStatus()
   }
 
   async function refreshContext() {
@@ -1742,6 +1824,9 @@
       renderMessages(state.messages)
       setOwnerChip(!!data.owner)
       setUnread(data.unread || 0)
+      // 刷新/重连后恢复服务端的真实运行状态，而不是把状态当成消息重建。
+      if (data.running) setRunStatus(data.running)
+      else clearRunStatus()
       markReadSoon()
     } catch (err) {
       try {
