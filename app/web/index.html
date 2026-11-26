@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=55" />
+  <link rel="stylesheet" href="/style.css?v=56" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -119,14 +119,10 @@
           <div class="settings-card">
             <div class="settings-row">
               <span>昵称</span>
-              <span class="settings-edit">
+              <span class="settings-value-edit">
                 <span id="settingsNickname">—</span>
-                <button id="editNickname" class="link-btn">修改</button>
-                <span id="nicknameEditor" class="hidden">
-                  <input id="nicknameInput" class="inline-input" maxlength="64" placeholder="新昵称" />
-                  <button id="saveNickname" class="link-btn">保存</button>
-                  <button id="cancelNickname" class="link-btn">取消</button>
-                </span>
+                <input id="nicknameInput" class="inline-input hidden" maxlength="64" placeholder="新昵称" />
+                <button id="editNickname" class="pencil-btn" aria-label="修改昵称" title="修改昵称">✎</button>
               </span>
             </div>
             <div class="settings-row"><span>账号</span><span id="settingsAccount">—</span></div>
@@ -353,6 +349,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=55"></script>
+  <script src="/app.js?v=56"></script>
 </body>
 </html>

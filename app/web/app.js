@@ -121,10 +121,7 @@
     settingsAccountId: $('settingsAccountId'),
     settingsOwnerStatus: $('settingsOwnerStatus'),
     editNickname: $('editNickname'),
-    nicknameEditor: $('nicknameEditor'),
     nicknameInput: $('nicknameInput'),
-    saveNickname: $('saveNickname'),
-    cancelNickname: $('cancelNickname'),
     editConnection: $('editConnection'),
     reconnectBtn: $('reconnectBtn'),
     addModel: $('addModel'),
@@ -897,20 +894,25 @@
   el.reconnectBtn.addEventListener('click', reconnect)
 
   function openNicknameEditor() {
-    if (!el.nicknameEditor) return
+    if (!el.nicknameInput || !el.settingsNickname) return
     el.nicknameInput.value = state.me?.nickname || ''
-    el.nicknameEditor.classList.remove('hidden')
+    el.nicknameInput.classList.remove('hidden')
+    el.settingsNickname.classList.add('hidden')
     if (el.editNickname) el.editNickname.classList.add('hidden')
     el.nicknameInput.focus()
     try { el.nicknameInput.select() } catch {}
   }
   function closeNicknameEditor() {
-    if (el.nicknameEditor) el.nicknameEditor.classList.add('hidden')
+    if (el.nicknameInput) el.nicknameInput.classList.add('hidden')
+    if (el.settingsNickname) el.settingsNickname.classList.remove('hidden')
     if (el.editNickname) el.editNickname.classList.remove('hidden')
   }
   async function saveNickname() {
+    if (!el.nicknameInput || el.nicknameInput.classList.contains('hidden')) return
     const nickname = (el.nicknameInput.value || '').trim()
-    if (!nickname) { toast('昵称不能为空'); return }
+    if (!nickname) { toast('昵称不能为空'); el.nicknameInput.focus(); return }
+    const current = state.me?.nickname || ''
+    if (nickname === current) { closeNicknameEditor(); return }
     try {
       const data = await api('/api/v1/me', { method: 'PUT', body: { nickname } })
       if (state.me) state.me.nickname = data.nickname || nickname
@@ -922,11 +924,11 @@
     }
   }
   el.editNickname?.addEventListener('click', openNicknameEditor)
-  el.cancelNickname?.addEventListener('click', closeNicknameEditor)
-  el.saveNickname?.addEventListener('click', saveNickname)
   el.nicknameInput?.addEventListener('keydown', event => {
-    if (event.key === 'Enter') { event.preventDefault(); saveNickname() }
+    if (event.key === 'Enter') { event.preventDefault(); el.nicknameInput.blur() }
+    else if (event.key === 'Escape') { event.preventDefault(); closeNicknameEditor() }
   })
+  el.nicknameInput?.addEventListener('blur', () => { saveNickname() })
 
   // ── API ─────────────────────────────────────────────────────────────────
 
