@@ -324,7 +324,9 @@ export function routeIncoming({
           prompt,
           displayText: text,
           userAttachments: media,
-          roleOverride: owner ? 'owner' : null,
+          // App：owner 只由 owner token 决定；没有 token 就按普通用户执行。
+          // 微信端暂保持原有兜底行为，不接入 App 的 owner 判定。
+          roleOverride: sourceType === 'app' ? (owner ? 'owner' : 'user') : null,
           emit: (event) => {
             broadcast({
               ...event,

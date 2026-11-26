@@ -142,13 +142,13 @@
     installPermissionBtn: $('installPermissionBtn'),
     setup: $('setup'),
     setupUrl: $('setupUrl'),
-    setupToken: $('setupToken'),
     setupOwnerToken: $('setupOwnerToken'),
     setupDevice: $('setupDevice'),
     setupSave: $('setupSave'),
     setupBack: $('setupBack'),
     setupError: $('setupError'),
     login: $('login'),
+    loginNickname: $('loginNickname'),
     loginUsername: $('loginUsername'),
     loginPassword: $('loginPassword'),
     loginError: $('loginError'),
@@ -265,9 +265,22 @@
   }
   function absUrl(url) {
     if (!url) return ''
-    if (/^(https?:|blob:|data:)/i.test(url)) return url
-    if (url.startsWith('/')) return state.url + url
-    return `${state.url}/${url}`
+    if (/^(blob:|data:)/i.test(url)) return url
+    const absolute = /^https?:/i.test(url)
+      ? url
+      : (url.startsWith('/') ? state.url + url : `${state.url}/${url}`)
+    // 文件/媒体 URL 统一附加登录用户 token；旧访问令牌不再用于身份。
+    try {
+      const parsed = new URL(absolute)
+      const sameOrigin = parsed.origin === new URL(state.url).origin
+      const isAsset = parsed.pathname.startsWith('/api/file/') || parsed.pathname.startsWith('/api/v1/media/')
+      if (state.token && sameOrigin && (isAsset || parsed.searchParams.has('token'))) {
+        parsed.searchParams.set('token', state.token)
+      }
+      return parsed.toString()
+    } catch {
+      return absolute
+    }
   }
   /**
    * APK/文件在 WebView 里直接点击只会被当成页面加载。把裸 IP 换成 nip.io
@@ -719,18 +732,14 @@
 
   function initConfig() {
     const params = new URLSearchParams(location.search)
-    const qToken = params.get('token')
     const qOwner = params.get('ownerToken')
     const qDevice = params.get('device')
     const reset = params.get('reset') === '1'
-    const savedToken = read(KEYS.token, '')
     const savedOwner = read(KEYS.ownerToken, '')
-    // 登录 token 优先；只有首次配置或显式 reset 时才使用 URL 里的引导 token，
-    // 避免每次启动都被旧访问令牌覆盖登录身份。
-    if (qToken && (!savedToken || reset)) write(KEYS.token, qToken)
+    // 登录 token 只来自登录接口；共享访问令牌不再作为身份引导。
     if (qOwner && (!savedOwner || reset)) write(KEYS.ownerToken, qOwner)
     if (qDevice) write(KEYS.device, qDevice)
-    if (qToken || qOwner || qDevice) {
+    if (qOwner || qDevice) {
       try { history.replaceState(null, '', location.pathname) } catch {}
     }
     state.url = (read(KEYS.url, '') || location.origin).replace(/\/+$/, '')
@@ -743,13 +752,11 @@
 
   function openSetup(error) {
     el.setupUrl.value = state.url || location.origin
-    el.setupToken.value = state.token || ''
     el.setupOwnerToken.value = state.ownerToken || ''
     el.setupDevice.value = state.device || 'app-test'
     el.setupError.textContent = error || ''
-    el.setupBack.classList.toggle('hidden', !!state.token)
     el.setup.classList.remove('hidden')
-    setTimeout(() => el.setupToken.focus(), 50)
+    setTimeout(() => el.setupUrl.focus(), 50)
   }
   function closeSetup() { el.setup.classList.add('hidden') }
 
@@ -761,18 +768,23 @@
   function hideLogin() { el.login.classList.add('hidden') }
 
   async function doAuth(mode) {
-    const username = (el.loginUsername.value || '').trim()
+    const nickname = (el.loginNickname.value || '').trim()
+    const account = (el.loginUsername.value || '').trim()
     const password = el.loginPassword.value || ''
-    if (!username) { el.loginError.textContent = '请填写用户名'; return }
+    if (mode === 'register' && !nickname) { el.loginError.textContent = '请填写昵称'; return }
+    if (!account) { el.loginError.textContent = '请填写账号'; return }
     if (!password) { el.loginError.textContent = '请填写密码'; return }
     el.loginError.textContent = ''
     el.loginBtn.disabled = true
     el.registerBtn.disabled = true
     try {
+      const body = mode === 'register'
+        ? { nickname, account, password }
+        : { account, password }
       const res = await fetch(`${state.url}/api/v1/auth/${mode}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify(body),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
@@ -790,7 +802,7 @@
       showTab('chat')
       appendMessage({
         role: 'system',
-        text: mode === 'register' ? '注册成功，已自动分配访问令牌' : '登录成功',
+        text: mode === 'register' ? '注册成功，已登录' : '登录成功',
         ts: new Date().toISOString(),
       })
     } catch (err) {
@@ -832,37 +844,37 @@
     openSetup('')
   })
   el.setupBack.addEventListener('click', () => {
-    if (state.token) return
     el.setup.classList.add('hidden')
-    showLogin('')
+    if (!state.token) showLogin('')
   })
   el.logoutBtn.addEventListener('click', logout)
 
   el.setupSave.addEventListener('click', () => {
     const url = (el.setupUrl.value || '').trim().replace(/\/+$/, '')
-    const token = (el.setupToken.value || '').trim()
     const ownerToken = (el.setupOwnerToken.value || '').trim()
     const device = (el.setupDevice.value || 'app-test').trim()
     if (!/^https?:\/\//i.test(url)) { el.setupError.textContent = '地址要以 http:// 或 https:// 开头'; return }
-    if (!token) { el.setupError.textContent = '请填写访问令牌'; return }
     state.url = url
-    state.token = token
     state.ownerToken = ownerToken
     state.device = device || 'app-test'
     state.clientId = ''
     state.authFailed = false
     write(KEYS.url, state.url)
-    write(KEYS.token, state.token)
     write(KEYS.ownerToken, state.ownerToken)
     write(KEYS.device, state.device)
     syncNativeNotify()
     closeSetup()
-    hideLogin()
     renderConnection()
-    connect()
-    loadMe()
-    loadSession()
-    showTab('chat')
+    if (state.token) {
+      hideLogin()
+      setStatus('连接中…', '')
+      connect()
+      loadMe()
+      loadSession()
+      showTab('chat')
+    } else {
+      showLogin('')
+    }
   })
 
   el.editConnection.addEventListener('click', () => openSetup(''))
@@ -871,7 +883,7 @@
   // ── API ─────────────────────────────────────────────────────────────────
 
   async function api(path, opts = {}) {
-    if (!state.token) throw new Error('未配置访问令牌')
+    if (!state.token) throw new Error('请先登录')
     const headers = {
       'Authorization': `Bearer ${state.token}`,
       'X-Device-Id': state.device,
@@ -1916,7 +1928,7 @@
       state.me = data
       setOwnerChip(!!data.owner)
       if (el.settingsUsername) {
-        el.settingsUsername.textContent = data.username || data.displayName || '—'
+        el.settingsUsername.textContent = data.nickname || data.account || data.displayName || '—'
       }
       renderConnection()
       if (el.testChip) el.testChip.textContent = data.testMode ? '测试' : 'App'
@@ -3032,7 +3044,7 @@
 
   function renderConnection() {
     if (!el.settingsStatus) return
-    el.settingsUsername.textContent = state.me?.username || state.me?.displayName || '—'
+    el.settingsUsername.textContent = state.me?.nickname || state.me?.account || state.me?.displayName || '—'
     el.settingsStatus.textContent = state.connectionStatus || '—'
     el.settingsUrl.textContent = state.url || '—'
     el.settingsDevice.textContent = state.device || '—'

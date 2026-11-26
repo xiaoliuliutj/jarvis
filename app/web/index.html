@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=52" />
+  <link rel="stylesheet" href="/style.css?v=53" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -230,37 +230,38 @@
   <div id="login" class="setup hidden">
     <div class="setup-card">
       <h1>登录 Jarvis</h1>
-      <p class="hint">用户名 + 密码；用户名唯一，新用户注册后会自动分配访问令牌。</p>
-      <label>用户名
-        <input id="loginUsername" type="text" autocomplete="username" placeholder="给你的账号起个名字" />
+      <p class="hint">账号 + 密码登录。注册需要填写昵称，账号唯一；昵称和密码不做唯一性限制。</p>
+      <p class="hint">已有账号请直接登录；注册新账号会创建独立数据，不会继承原会话。</p>
+      <label>昵称（注册时填写）
+        <input id="loginNickname" type="text" placeholder="例如：大耳朵芙芙" />
+      </label>
+      <label>账号
+        <input id="loginUsername" type="text" autocomplete="username" placeholder="账号唯一" />
       </label>
       <label>密码
-        <input id="loginPassword" type="password" autocomplete="current-password" placeholder="至少 6 位" />
+        <input id="loginPassword" type="password" autocomplete="current-password" placeholder="密码" />
       </label>
       <p class="hint error-text" id="loginError"></p>
       <button id="loginBtn" class="primary-btn">登录</button>
       <button id="registerBtn" class="ghost-btn wide">注册新账号</button>
-      <button id="advancedSetup" class="link-btn">高级：使用访问令牌连接</button>
+      <button id="advancedSetup" class="link-btn">高级：连接设置</button>
     </div>
   </div>
 
   <div id="setup" class="setup hidden">
     <div class="setup-card">
       <h1>连接 Jarvis</h1>
-      <p class="hint">手机先连上 Tailscale，再填入电脑端 Bridge 的 App 地址和访问令牌。Owner 令牌仅测试用。</p>
+      <p class="hint">手机先连上 Tailscale，再填入电脑端 Bridge 的地址。登录后会自动保存用户 token。</p>
       <label>服务器地址
         <input id="setupUrl" type="url" placeholder="http://100.100.142.113:17779" />
       </label>
-      <label>访问令牌
-        <input id="setupToken" type="password" placeholder="登录后自动填入；也可用旧访问令牌" />
-      </label>
       <label>Owner 令牌（可选）
-        <input id="setupOwnerToken" type="password" placeholder="测试用，填 owner-token.txt" />
+        <input id="setupOwnerToken" type="password" placeholder="填 owner-token.txt，用于 owner 权限" />
       </label>
-      <label>设备标识
+      <label>设备标识（仅路由）
         <input id="setupDevice" type="text" placeholder="app-test" />
       </label>
-      <button id="setupSave" class="primary-btn">保存并连接</button>
+      <button id="setupSave" class="primary-btn">保存连接设置</button>
       <button id="setupBack" class="link-btn">返回登录</button>
       <p class="hint error-text" id="setupError"></p>
     </div>
@@ -343,6 +344,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=52"></script>
+  <script src="/app.js?v=53"></script>
 </body>
 </html>

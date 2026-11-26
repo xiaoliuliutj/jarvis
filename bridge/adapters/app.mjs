@@ -90,13 +90,7 @@ function loadOrCreateToken(config) {
   return token
 }
 
-function tokenOk(input) {
-  const provided = Buffer.from(String(input || ''))
-  const expected = Buffer.from(accessToken)
-  return provided.length === expected.length && crypto.timingSafeEqual(provided, expected)
-}
-
-/** owner-token.txt：管理员令牌，匹配时把当前用户按 owner 角色处理；明文不打印。 */
+/** owner-token.txt：owner 权限的唯一凭证；明文不打印、不写日志。 */
 function readOwnerToken() {
   try {
     if (!fs.existsSync(OWNER_TOKEN_FILE)) return ''
@@ -145,7 +139,6 @@ function authenticate(req) {
   const header = req.get('Authorization') || ''
   const bearer = header.startsWith('Bearer ') ? header.slice(7) : ''
   const provided = bearer || req.query.token || ''
-  if (tokenOk(provided)) return { legacy: true }
   const user = authStore.findByToken(provided)
   return user ? { user } : null
 }
@@ -153,9 +146,13 @@ function authenticate(req) {
 function auth(req, res, next) {
   const result = authenticate(req)
   if (!result) {
-    return res.status(401).json({ ok: false, error: 'unauthorized' })
+    return res.status(401).json({ ok: false, error: '请先登录' })
   }
-  req.auth = result
+  const principal = getPrincipal(result.user.principalId)
+  if (!principal) {
+    return res.status(403).json({ ok: false, error: '账号未绑定用户主体' })
+  }
+  req.auth = { ...result, principal }
   next()
 }
 
@@ -334,24 +331,32 @@ function persistFileMessage(principalId, info) {
 }
 
 function appPrincipalFor(req) {
-  const deviceId = getDevice(req)
-  const user = req.auth?.user || null
-  const principal = user
-    ? getPrincipal(user.principalId)
-    : resolvePrincipal({
-        sourceType: 'app',
-        accountId: 'default',
-        externalUserId: deviceId,
-      })
-  return { deviceId, principal, user }
+  // 身份只来自登录用户；device 只用于消息路由，不参与 principal 解析。
+  return { deviceId: getDevice(req), principal: req.auth?.principal || null, user: req.auth?.user || null }
 }
 
 function effectiveAppPrincipal(principal, owner) {
-  if (!owner) return principal
+  if (!principal) return principal
+  if (owner) {
+    return {
+      ...principal,
+      role: 'owner',
+      capabilities: {
+        ...(principal.capabilities || {}),
+        editJarvisCode: true,
+        useGlobalModel: true,
+      },
+    }
+  }
+  // 没有 owner token：即使是 owner 账号也按普通用户处理。
   return {
     ...principal,
-    role: 'owner',
-    capabilities: { ...principal.capabilities, editJarvisCode: true },
+    role: 'user',
+    capabilities: {
+      ...(principal.capabilities || {}),
+      editJarvisCode: false,
+      useGlobalModel: false,
+    },
   }
 }
 
@@ -490,12 +495,39 @@ function buildServer() {
       return res.status(429).json({ ok: false, error: '操作太频繁，稍后再试' })
     }
     try {
-      const user = authStore.register(req.body?.username, req.body?.password)
+      const user = authStore.register({
+        nickname: req.body?.nickname,
+        account: req.body?.account || req.body?.username,
+        password: req.body?.password,
+      })
       res.json({
         ok: true,
         tokenId: user.tokenId,
-        user: { username: user.username, principalId: user.principalId, role: user.role },
+        user: {
+          account: user.account,
+          nickname: user.nickname,
+          accountId: user.accountId,
+          ownerId: user.ownerId,
+          principalId: user.principalId,
+          role: user.role,
+        },
       })
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message })
+    }
+  })
+
+  /** 忘记密码时的恢复入口：只认 owner token，不需要登录。 */
+  app.post('/api/v1/auth/owner-reset', (req, res) => {
+    if (!checkRate(`auth:${req.ip || 'local'}`)) {
+      return res.status(429).json({ ok: false, error: '操作太频繁，稍后再试' })
+    }
+    if (!ownerTokenOk(req)) {
+      return res.status(403).json({ ok: false, error: '需要 owner token' })
+    }
+    try {
+      const user = authStore.setPassword(req.body?.account || req.body?.accountId, req.body?.password)
+      res.json({ ok: true, user })
     } catch (err) {
       res.status(400).json({ ok: false, error: err.message })
     }
@@ -506,12 +538,38 @@ function buildServer() {
       return res.status(429).json({ ok: false, error: '操作太频繁，稍后再试' })
     }
     try {
-      const user = authStore.login(req.body?.username, req.body?.password)
+      const user = authStore.login(req.body?.account || req.body?.username, req.body?.password)
       res.json({
         ok: true,
         tokenId: user.tokenId,
-        user: { username: user.username, principalId: user.principalId, role: user.role },
+        user: {
+          account: user.account,
+          nickname: user.nickname,
+          accountId: user.accountId,
+          ownerId: user.ownerId,
+          principalId: user.principalId,
+          role: user.role,
+        },
       })
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message })
+    }
+  })
+
+  /**
+   * 单独配置账号的 ownerId（默认空）。
+   * 只由 owner token 授权；ownerId 不参与 owner 权限判定，只决定数据归属。
+   */
+  app.post('/api/v1/admin/owner-id', auth, (req, res) => {
+    if (!ownerTokenOk(req)) {
+      return res.status(403).json({ ok: false, error: '需要 owner token' })
+    }
+    try {
+      const user = authStore.setOwnerId(
+        req.body?.account || req.body?.accountId,
+        req.body?.ownerId || '',
+      )
+      res.json({ ok: true, user })
     } catch (err) {
       res.status(400).json({ ok: false, error: err.message })
     }
@@ -563,9 +621,13 @@ function buildServer() {
     res.json({
       ok: true,
       principalId: principal.id,
-      username: user?.username || null,
-      displayName: principal.displayName,
-      role: owner ? 'owner' : principal.role,
+      account: user?.account || null,
+      nickname: user?.nickname || principal.displayName,
+      accountId: user?.accountId || null,
+      ownerId: user?.ownerId || '',
+      username: user?.account || null,
+      displayName: user?.nickname || principal.displayName,
+      role: owner ? 'owner' : 'user',
       owner,
       testMode: settings.testMode !== false,
       device: deviceId,
@@ -754,7 +816,7 @@ function buildServer() {
         fileName: item.fileName,
         mime: item.mime,
         size: item.size,
-        url: `/api/v1/media/${item.id}?token=${encodeURIComponent(accessToken)}&device=${encodeURIComponent(deviceId)}`,
+        url: `/api/v1/media/${item.id}`,
       })
     } catch (err) {
       logError('app.upload.fail', err.message, { principalId: principal.id })
@@ -946,10 +1008,9 @@ function setupWs(httpServer) {
     let url
     try { url = new URL(req.url, 'http://localhost') } catch { ws.close(4400, 'bad request'); return }
     const provided = url.searchParams.get('token') || ''
-    const legacy = tokenOk(provided)
-    const user = legacy ? null : authStore.findByToken(provided)
-    if (!legacy && !user) {
-      ws.close(4401, 'unauthorized')
+    const user = authStore.findByToken(provided)
+    if (!user) {
+      ws.close(4401, '请先登录')
       return
     }
     const deviceId = sanitizeDevice(url.searchParams.get('device') || 'owner')
@@ -971,11 +1032,12 @@ function setupWs(httpServer) {
     clientDeviceHistory.set(clientId, { deviceId, at: Date.now() })
     pruneClientHistory()
 
-    let principal = null
+    const principal = getPrincipal(user.principalId)
+    if (!principal) {
+      ws.close(4403, '账号未绑定用户主体')
+      return
+    }
     try {
-      principal = user
-        ? getPrincipal(user.principalId)
-        : resolvePrincipal({ sourceType: 'app', accountId: 'default', externalUserId: deviceId })
       appStore.recordDevice(principal.id, { clientId, deviceId })
       ws.principalId = principal.id
       let pset = principalClients.get(principal.id)
@@ -983,7 +1045,16 @@ function setupWs(httpServer) {
       pset.add(ws)
     } catch {}
 
-    ws.send(JSON.stringify({ type: 'hello', clientId, deviceId, owner, username: user?.username || null }))
+    ws.send(JSON.stringify({
+      type: 'hello',
+      clientId,
+      deviceId,
+      owner,
+      account: user.account,
+      nickname: user.nickname,
+      accountId: user.accountId,
+      principalId: user.principalId,
+    }))
     if (principal && runningTurns.has(principal.id)) {
       try {
         ws.send(JSON.stringify({ type: 'turn_status', ...runningTurns.get(principal.id) }))
@@ -1032,7 +1103,15 @@ function setupWs(httpServer) {
       logInfo('app.ws.close', '', { deviceId, clientId, ua: userAgent })
     })
 
-    logInfo('app.ws.connect', '', { deviceId, clientId, owner, username: user?.username || null, ua: userAgent })
+    logInfo('app.ws.connect', '', {
+      deviceId,
+      clientId,
+      owner,
+      account: user.account,
+      nickname: user.nickname,
+      accountId: user.accountId,
+      ua: userAgent,
+    })
   })
 
   keepAliveTimer = setInterval(() => {
@@ -1166,7 +1245,7 @@ async function sendFileLike(externalUserId, filePath, opts = {}) {
     kind,
     isImage,
     size,
-    url: `/api/file/${staged.id}?token=${encodeURIComponent(accessToken)}`,
+    url: `/api/file/${staged.id}`,
     timestamp,
   })
   logInfo('app.file.sent', fileName, { target, bytes: size })
