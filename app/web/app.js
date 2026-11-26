@@ -35,6 +35,7 @@
     attachments: [],
     messages: [],
     runStatus: { timer: null, since: 0, text: '' },
+    wsSeen: new Set(),
     tab: 'chat',
     tools: [],
     toolQuery: '',
@@ -919,11 +920,15 @@
       setStatus('在线', 'online')
     }
     ws.onmessage = event => {
+      // 旧连接被替换后，迟到的事件不能再处理，否则同一条回复会重复入列表。
+      if (state.ws !== ws) return
       let msg
       try { msg = JSON.parse(event.data) } catch { return }
       handleEvent(msg)
     }
     ws.onclose = event => {
+      // 已经切换到新连接时，旧连接的 onclose 不能把 state.ws 清空。
+      if (state.ws !== ws) return
       state.ws = null
       state.clientId = ''
       if (event && event.code === 4401) {
@@ -961,6 +966,18 @@
     }
   }, 25000)
 
+  // 同一条 WS 事件可能从多条残留连接重复到达；以 id / 时间戳+正文去重。
+  function isDuplicateWsEvent(key) {
+    if (!key) return false
+    if (state.wsSeen.has(key)) return true
+    state.wsSeen.add(key)
+    if (state.wsSeen.size > 300) {
+      const oldest = state.wsSeen.values().next().value
+      state.wsSeen.delete(oldest)
+    }
+    return false
+  }
+
   function handleEvent(msg) {
     if (!msg || !msg.type) return
     if (msg.type === 'hello') {
@@ -980,6 +997,10 @@
       return
     }
     if (msg.type === 'assistant' && msg.text) {
+      const key = msg.id
+        ? `assistant:${msg.id}`
+        : (msg.timestamp ? `assistant:${msg.timestamp}|${msg.text}` : '')
+      if (isDuplicateWsEvent(key)) return
       clearTyping()
       appendMessage({ role: 'bot', text: msg.text, ts: msg.timestamp || new Date().toISOString() })
       refreshContext()
@@ -989,6 +1010,10 @@
     }
     if (msg.type === 'file') {
       // 回合进行中也可能发文件，不能因此清掉运行状态。
+      const key = msg.id
+        ? `file:${msg.id}`
+        : (msg.timestamp ? `file:${msg.timestamp}|${msg.url || msg.fileName || ''}` : '')
+      if (isDuplicateWsEvent(key)) return
       const file = {
         id: msg.id,
         name: msg.fileName,

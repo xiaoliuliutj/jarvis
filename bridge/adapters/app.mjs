@@ -184,12 +184,44 @@ function sendToClient(clientId, payload) {
 function sendToDevice(deviceId, payload) {
   const set = deviceClientSets.get(deviceId)
   if (!set || !set.size) return false
+  const interactive = !!(payload && ['assistant', 'file', 'notice', 'error'].includes(payload.type))
   let delivered = false
+  let latestWeb = null
+  let latestNative = null
+
   for (const clientId of [...set]) {
-    if (sendToClient(clientId, payload)) delivered = true
+    const bucket = clients.get(clientId)
+    if (!bucket) continue
+    for (const ws of bucket) {
+      if (ws.readyState !== 1) continue
+      if (!interactive) {
+        // 非消息类事件保持广播（例如状态/调试事件）。
+        try { ws.send(JSON.stringify(payload)); delivered = true } catch {}
+        continue
+      }
+      // 聊天消息只发一份给「最新的网页连接」和「最新的原生服务连接」，
+      // 避免同一设备的历史残留连接各收一份，导致同一条回复显示多次。
+      const target = ws.isNative ? latestNative : latestWeb
+      if (!target || (ws.connectedAt || 0) > (target.connectedAt || 0)) {
+        if (ws.isNative) latestNative = ws
+        else latestWeb = ws
+      }
+    }
   }
-  if (delivered && payload && ['assistant', 'file', 'notice', 'error'].includes(payload.type)) {
-    logInfo('app.ws.deliver', '', { deviceId, clients: set.size, type: payload.type })
+
+  for (const ws of [latestWeb, latestNative]) {
+    if (!ws) continue
+    try { ws.send(JSON.stringify(payload)); delivered = true } catch {}
+  }
+
+  if (delivered && interactive) {
+    logInfo('app.ws.deliver', '', {
+      deviceId,
+      connections: set.size,
+      web: !!latestWeb,
+      native: !!latestNative,
+      type: payload.type,
+    })
   }
   return delivered
 }
@@ -929,6 +961,8 @@ function setupWs(httpServer) {
     set.add(ws)
     ws.deviceId = deviceId
     ws.clientId = clientId
+    ws.isNative = /JarvisAndroid/i.test(userAgent)
+    ws.connectedAt = Date.now()
     let deviceSet = deviceClientSets.get(deviceId)
     if (!deviceSet) { deviceSet = new Set(); deviceClientSets.set(deviceId, deviceSet) }
     deviceSet.add(clientId)
