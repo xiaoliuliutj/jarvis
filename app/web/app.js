@@ -417,7 +417,7 @@
       segment.className = 'context-segment'
       segment.style.background = group.color
       segment.style.width = `${Math.max(0.4, percent)}%`
-      segment.title = `${group.label} · ${formatTokens(group.tokens)} tokens · ${percent.toFixed(1)}%`
+      segment.title = `${group.label} · ${formatTokens(group.tokens)} tokens`
       segment.setAttribute('aria-label', segment.title)
       el.contextSegments.appendChild(segment)
     }
@@ -452,7 +452,7 @@
       name.textContent = row.label
       const value = document.createElement('span')
       value.className = 'context-popover-value'
-      value.textContent = `${formatTokens(row.tokens)} · ${(row.tokens / denominator * 100).toFixed(1)}%`
+      value.textContent = formatTokens(row.tokens)
       rowEl.appendChild(dot)
       rowEl.appendChild(name)
       rowEl.appendChild(value)
