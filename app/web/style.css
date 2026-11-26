@@ -108,6 +108,25 @@ body { overflow: hidden; }
   gap: 10px;
   -webkit-overflow-scrolling: touch;
 }
+.older-loading {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 30px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.older-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(18, 59, 47, 0.16);
+  border-top-color: var(--green);
+  border-radius: 50%;
+  animation: older-spin 0.8s linear infinite;
+}
+@keyframes older-spin { to { transform: rotate(360deg); } }
 .empty-state { color: var(--muted); font-size: 14px; text-align: center; padding: 40px 12px; }
 
 .msg {

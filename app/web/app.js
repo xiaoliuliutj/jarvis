@@ -65,6 +65,8 @@
     navButtons: Array.from(document.querySelectorAll('.nav-btn')),
     messages: $('messages'),
     chatUnread: $('chatUnread'),
+    olderLoading: $('olderLoading'),
+    olderLoadingText: $('olderLoadingText'),
     input: $('input'),
     send: $('sendBtn'),
     attach: $('attachBtn'),
@@ -325,6 +327,19 @@
     const items = readOutbox()
     items.push({ ...item, clientMessageId: item.clientMessageId || newClientMessageId() })
     writeOutbox(items)
+  }
+
+  let olderLoadingTimer = null
+  function showOlderLoading(text = '正在加载更早消息…') {
+    if (!el.olderLoading) return
+    clearTimeout(olderLoadingTimer)
+    if (el.olderLoadingText) el.olderLoadingText.textContent = text
+    el.olderLoading.classList.remove('hidden')
+  }
+  function hideOlderLoading(delay = 0) {
+    if (!el.olderLoading) return
+    clearTimeout(olderLoadingTimer)
+    olderLoadingTimer = setTimeout(() => el.olderLoading.classList.add('hidden'), delay)
   }
 
   let sessionRefreshTimer = null
@@ -1077,6 +1092,8 @@
   async function loadOlder() {
     if (!state.token || !state.hasMore || state.loadingOlder) return
     state.loadingOlder = true
+    showOlderLoading()
+    let keepHint = false
     const container = el.messages
     const previousHeight = container.scrollHeight
     const previousTop = container.scrollTop
@@ -1089,6 +1106,8 @@
       const older = Array.isArray(data.messages) ? data.messages : []
       if (!older.length) {
         state.hasMore = false
+        showOlderLoading('已经到最上面了')
+        keepHint = true
         return
       }
       const known = new Set(state.messages.map(m => m.id).filter(Boolean))
@@ -1103,6 +1122,7 @@
     } catch {}
     finally {
       state.loadingOlder = false
+      hideOlderLoading(keepHint ? 700 : 220)
     }
   }
 
