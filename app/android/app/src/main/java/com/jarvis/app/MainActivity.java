@@ -64,7 +64,6 @@ public class MainActivity extends Activity {
     private LinearLayout setupPanel;
     private WebView webView;
     private EditText urlInput;
-    private EditText deviceInput;
     private ValueCallback<Uri[]> fileCallback;
     private FrameLayout splashView;
     private ObjectAnimator splashPulse;
@@ -291,7 +290,6 @@ public class MainActivity extends Activity {
         panel.addView(hint);
 
         urlInput = addInput(panel, "服务器地址", "http://100.100.142.113:17779", InputType.TYPE_TEXT_VARIATION_URI);
-        deviceInput = addInput(panel, "设备标识", "owner", InputType.TYPE_CLASS_TEXT);
 
         Button save = new Button(this);
         save.setText("保存并连接");
@@ -441,7 +439,6 @@ public class MainActivity extends Activity {
     private void showSetup(String error) {
         hideSplash();
         urlInput.setText(prefs.getString("url", "http://100.100.142.113:17779"));
-        deviceInput.setText(prefs.getString("device", "owner"));
         setupPanel.setVisibility(View.VISIBLE);
         if (error != null && !error.isEmpty()) {
             Toast.makeText(this, error, Toast.LENGTH_SHORT).show();
@@ -450,17 +447,12 @@ public class MainActivity extends Activity {
 
     private void saveConfig() {
         String url = urlInput.getText().toString().trim().replaceAll("/+$", "");
-        String device = deviceInput.getText().toString().trim();
-        if (device.isEmpty()) {
-            device = "owner";
-        }
         if (!url.startsWith("http://") && !url.startsWith("https://")) {
             Toast.makeText(this, "地址要以 http:// 或 https:// 开头", Toast.LENGTH_SHORT).show();
             return;
         }
         prefs.edit()
                 .putString("url", url)
-                .putString("device", device)
                 .apply();
         setupPanel.setVisibility(View.GONE);
         loadWeb(true);
@@ -468,13 +460,11 @@ public class MainActivity extends Activity {
 
     private void loadWeb(boolean reset) {
         String base = prefs.getString("url", "").replaceAll("/+$", "");
-        String device = prefs.getString("device", "owner");
         if (base.isEmpty()) {
             showSetup("");
             return;
         }
-        String target = base + "/?device=" + Uri.encode(device)
-                + (reset ? "&reset=1" : "");
+        String target = base + "/" + (reset ? "?reset=1" : "");
         uiHandler.postDelayed(this::hideSplash, 4000);
         webView.loadUrl(target);
     }

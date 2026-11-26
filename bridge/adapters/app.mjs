@@ -151,20 +151,19 @@ function checkRate(deviceId) {
   return true
 }
 
-function sendToClient(clientId, payload) {
+function sendToClient(clientId, payload, principalId = '') {
   const set = clients.get(clientId)
   if (!set) return false
   let delivered = false
   for (const ws of set) {
-    if (ws.readyState === 1) {
-      ws.send(JSON.stringify(payload))
-      delivered = true
-    }
+    if (ws.readyState !== 1) continue
+    if (principalId && ws.principalId !== principalId) continue
+    try { ws.send(JSON.stringify(payload)); delivered = true } catch {}
   }
   return delivered
 }
 
-function sendToDevice(deviceId, payload) {
+function sendToDevice(deviceId, payload, principalId = '') {
   const set = deviceClientSets.get(deviceId)
   if (!set || !set.size) return false
   const interactive = !!(payload && ['assistant', 'file', 'notice', 'error'].includes(payload.type))
@@ -177,6 +176,8 @@ function sendToDevice(deviceId, payload) {
     if (!bucket) continue
     for (const ws of bucket) {
       if (ws.readyState !== 1) continue
+      // 设备 ID 只用于路由；跨账号即使伪造了同一个 deviceId 也收不到别人的消息。
+      if (principalId && ws.principalId !== principalId) continue
       if (!interactive) {
         // 非消息类事件保持广播（例如状态/调试事件）。
         try { ws.send(JSON.stringify(payload)); delivered = true } catch {}
@@ -200,6 +201,7 @@ function sendToDevice(deviceId, payload) {
   if (delivered && interactive) {
     logInfo('app.ws.deliver', '', {
       deviceId,
+      principalId: principalId || null,
       connections: set.size,
       web: !!latestWeb,
       native: !!latestNative,
@@ -217,9 +219,10 @@ function pruneClientHistory() {
   }
 }
 
-function pushToTarget(target, payload) {
+function pushToTarget(target, payload, principalId = '') {
   const key = String(target || '')
   if (!key) return
+  const pid = String(principalId || payload?.principalId || '')
   const history = clientDeviceHistory.get(key)
   const deviceId = clientDevices.get(key)
     || (history && history.deviceId)
@@ -227,10 +230,11 @@ function pushToTarget(target, payload) {
 
   // 同一个设备可能有多个连接：网页前台 + 原生后台通知服务。
   // 回复只发一份给该设备的所有连接，网页负责展示，后台服务按前后台状态决定是否通知。
-  if (deviceId && sendToDevice(deviceId, payload)) return
-  if (!deviceId && sendToClient(key, payload)) return
+  if (deviceId && sendToDevice(deviceId, payload, pid)) return
+  if (!deviceId && sendToClient(key, payload, pid)) return
 
-  const queueKey = deviceId || key
+  // 队列按 principal 隔离，避免不同账号共用/伪造设备 ID 时串消息。
+  const queueKey = pid ? `${pid}:${deviceId || key}` : (deviceId || key)
   const queue = pending.get(queueKey) || []
   queue.push(payload)
   while (queue.length > QUEUE_LIMIT) queue.shift()
@@ -1056,7 +1060,7 @@ function setupWs(httpServer) {
         ws.send(JSON.stringify({ type: 'turn_status', ...runningTurns.get(principal.id) }))
       } catch {}
     }
-    for (const key of [clientId, deviceId]) {
+    for (const key of [`${principal.id}:${clientId}`, `${principal.id}:${deviceId}`]) {
       const queue = pending.get(key)
       if (!queue?.length) continue
       for (const payload of queue) {
@@ -1203,12 +1207,14 @@ export async function send(externalUserId, text, opts = {}) {
   if (!text) return
   // 「正在处理」安抚语已经在 App 状态条里展示，不再额外插入临时消息。
   if (opts.interim) return
+  const principalId = opts.principalId || ''
   pushToTarget(externalUserId, {
     type: 'assistant',
     text: String(text),
     accountId: opts.accountId || 'default',
+    principalId,
     timestamp: new Date().toISOString(),
-  })
+  }, principalId)
 }
 
 async function sendFileLike(externalUserId, filePath, opts = {}) {
@@ -1231,7 +1237,8 @@ async function sendFileLike(externalUserId, filePath, opts = {}) {
     size,
     timestamp,
   }
-  if (opts.principalId) persistFileMessage(opts.principalId, info)
+  const principalId = opts.principalId || ''
+  if (principalId) persistFileMessage(principalId, info)
   pushToTarget(target, {
     type: 'file',
     id: staged.id,
@@ -1240,9 +1247,10 @@ async function sendFileLike(externalUserId, filePath, opts = {}) {
     isImage,
     size,
     url: `/api/file/${staged.id}`,
+    principalId,
     timestamp,
-  })
-  logInfo('app.file.sent', fileName, { target, bytes: size })
+  }, principalId)
+  logInfo('app.file.sent', fileName, { target, principalId: principalId || null, bytes: size })
 }
 
 export async function sendFile(externalUserId, filePath, opts = {}) {

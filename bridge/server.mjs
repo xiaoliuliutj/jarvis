@@ -28,6 +28,7 @@ import { startCronManager } from '../core/cron.mjs'
 import { startScheduleManager } from '../core/schedule.mjs'
 import { formatScheduleReminder } from '../core/schedule-store.mjs'
 import { orderDeliveryAccounts } from '../core/delivery.mjs'
+import { listDevices } from '../core/app-store.mjs'
 import { handleIncomingOnboarding } from '../core/onboarding.mjs'
 import { loadAdapters } from '../core/adapters.mjs'
 import { sanitizeOutgoingText } from '../core/text-filter.mjs'
@@ -113,7 +114,7 @@ const scheduler = new Scheduler({
 async function sendText(principalId, sourceType, accountId, externalUserId, text, replyTo = null, opts = {}) {
   const adapter = adapters[sourceType]
   if (!adapter) throw new Error(`未知 adapter: ${sourceType}`)
-  await adapter.send(replyTo || externalUserId, text, { accountId, ...opts })
+  await adapter.send(replyTo || externalUserId, text, { accountId, principalId, ...opts })
 }
 
 async function sendReply(principalId, sourceType, accountId, externalUserId, result, replyTo = null) {
@@ -173,7 +174,21 @@ async function deliverOutbox(principalId, sourceType, accountId, externalUserId,
  * 选择一个投递账号：主动消息 App 优先；App 离线也选 App，
  * 由 app adapter 排队，等 App 后台服务重连后补发。
  */
+/** 取该 principal 最近活跃的 App 设备（只用于路由，不代表身份）。 */
+function pickAppDevice(principal) {
+  try {
+    const devices = listDevices(principal.id)
+    return devices.find(device => device?.deviceId) || null
+  } catch {
+    return null
+  }
+}
+
 function pickDeliveryAccount(principal) {
+  const appDevice = pickAppDevice(principal)
+  if (appDevice && adapters.app?.send) {
+    return { sourceType: 'app', accountId: 'default', externalUserId: appDevice.deviceId }
+  }
   const accounts = orderDeliveryAccounts(principal)
   const appAccount = accounts.find(a => a.sourceType === 'app' && adapters.app?.send
     && a.externalUserId === 'owner')
@@ -191,13 +206,28 @@ function pickDeliveryAccount(principal) {
  * 微信回复仍由 sendReply 按原消息来源发送，不受这里影响。
  */
 async function sendToPrincipal(principal, text) {
+  const appDevice = pickAppDevice(principal)
+  if (appDevice && adapters.app?.send) {
+    try {
+      await adapters.app.send(appDevice.deviceId, text, {
+        accountId: 'default',
+        principalId: principal.id,
+      })
+      return { sourceType: 'app', accountId: 'default', externalUserId: appDevice.deviceId }
+    } catch (err) {
+      logWarn('deliver.fail', err.message, { principalId: principal.id, sourceType: 'app' })
+    }
+  }
   const accounts = orderDeliveryAccounts(principal)
   const appAccount = accounts.find(a => a.sourceType === 'app' && adapters.app?.send
     && a.externalUserId === 'owner')
     || accounts.find(a => a.sourceType === 'app' && adapters.app?.send)
   if (appAccount) {
     try {
-      await adapters.app.send(appAccount.externalUserId, text, { accountId: appAccount.accountId })
+      await adapters.app.send(appAccount.externalUserId, text, {
+        accountId: appAccount.accountId,
+        principalId: principal.id,
+      })
       return appAccount
     } catch (err) {
       logWarn('deliver.fail', err.message, { principalId: principal.id, sourceType: 'app' })

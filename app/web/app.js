@@ -20,7 +20,7 @@
     url: '',
     token: '',
     ownerToken: '',
-    device: 'app-test',
+    device: '',
     clientId: '',
     sessionId: '',
     syncCursor: 0,
@@ -116,7 +116,6 @@
     usageMessages: $('usageMessages'),
     settingsStatus: $('settingsStatus'),
     settingsUrl: $('settingsUrl'),
-    settingsDevice: $('settingsDevice'),
     settingsNickname: $('settingsNickname'),
     settingsAccount: $('settingsAccount'),
     settingsAccountId: $('settingsAccountId'),
@@ -150,7 +149,6 @@
     setup: $('setup'),
     setupUrl: $('setupUrl'),
     setupOwnerToken: $('setupOwnerToken'),
-    setupDevice: $('setupDevice'),
     setupSave: $('setupSave'),
     setupBack: $('setupBack'),
     setupError: $('setupError'),
@@ -736,22 +734,38 @@
 
   // ── config / setup ──────────────────────────────────────────────────────
 
+  // 设备 ID 只用于消息路由：客户端生成并持久化，不提供给用户编辑。
+  function newDeviceId() {
+    try {
+      const bytes = new Uint8Array(16)
+      crypto.getRandomValues(bytes)
+      return 'dev_' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
+    } catch {
+      return 'dev_' + Math.random().toString(16).slice(2) + Date.now().toString(16)
+    }
+  }
+
   function initConfig() {
     const params = new URLSearchParams(location.search)
     const qOwner = params.get('ownerToken')
-    const qDevice = params.get('device')
     const reset = params.get('reset') === '1'
     const savedOwner = read(KEYS.ownerToken, '')
     // 登录 token 只来自登录接口；共享访问令牌不再作为身份引导。
     if (qOwner && (!savedOwner || reset)) write(KEYS.ownerToken, qOwner)
-    if (qDevice) write(KEYS.device, qDevice)
-    if (qOwner || qDevice) {
+    if (qOwner) {
       try { history.replaceState(null, '', location.pathname) } catch {}
     }
     state.url = (read(KEYS.url, '') || location.origin).replace(/\/+$/, '')
     state.token = read(KEYS.token, '')
     state.ownerToken = read(KEYS.ownerToken, '')
-    state.device = read(KEYS.device, 'app-test') || 'app-test'
+    // 旧设备名（owner/app-test）一律换成本机随机 ID；不再从 URL/用户输入读取。
+    const savedDevice = read(KEYS.device, '')
+    const invalidDevice = !savedDevice
+      || savedDevice === 'owner'
+      || savedDevice === 'app-test'
+      || savedDevice.length < 8
+    state.device = invalidDevice ? newDeviceId() : savedDevice
+    write(KEYS.device, state.device)
     write(KEYS.url, state.url)
     syncNativeNotify()
   }
@@ -759,7 +773,6 @@
   function openSetup(error) {
     el.setupUrl.value = state.url || location.origin
     el.setupOwnerToken.value = state.ownerToken || ''
-    el.setupDevice.value = state.device || 'app-test'
     el.setupError.textContent = error || ''
     el.setup.classList.remove('hidden')
     setTimeout(() => el.setupUrl.focus(), 50)
@@ -858,16 +871,13 @@
   el.setupSave.addEventListener('click', () => {
     const url = (el.setupUrl.value || '').trim().replace(/\/+$/, '')
     const ownerToken = (el.setupOwnerToken.value || '').trim()
-    const device = (el.setupDevice.value || 'app-test').trim()
     if (!/^https?:\/\//i.test(url)) { el.setupError.textContent = '地址要以 http:// 或 https:// 开头'; return }
     state.url = url
     state.ownerToken = ownerToken
-    state.device = device || 'app-test'
     state.clientId = ''
     state.authFailed = false
     write(KEYS.url, state.url)
     write(KEYS.ownerToken, state.ownerToken)
-    write(KEYS.device, state.device)
     syncNativeNotify()
     closeSetup()
     renderConnection()
@@ -3093,7 +3103,6 @@
     el.settingsOwnerStatus.textContent = me.owner ? '已开启' : '未开启'
     el.settingsStatus.textContent = state.connectionStatus || '—'
     el.settingsUrl.textContent = state.url || '—'
-    el.settingsDevice.textContent = state.device || '—'
   }
 
   function renderModels() {
@@ -3362,10 +3371,9 @@
         const item = document.createElement('div')
         item.className = 'device-item'
         const name = document.createElement('span')
-        const deviceName = device.name || device.deviceId || 'App'
-        name.textContent = device.deviceId && deviceName !== device.deviceId
-          ? `${deviceName} · ${device.deviceId}`
-          : deviceName
+        const rawId = device.deviceId || ''
+        const deviceName = device.name || 'App'
+        name.textContent = rawId ? `${deviceName} · ${maskId(rawId)}` : deviceName
         const last = document.createElement('span')
         last.textContent = formatTime(device.lastSeen)
         item.appendChild(name)

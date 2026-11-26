@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=54" />
+  <link rel="stylesheet" href="/style.css?v=55" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -133,7 +133,6 @@
             <div class="settings-row"><span>ID</span><span id="settingsAccountId">—</span></div>
             <div class="settings-row"><span>状态</span><span id="settingsStatus">—</span></div>
             <div class="settings-row"><span>服务器</span><span id="settingsUrl">—</span></div>
-            <div class="settings-row"><span>设备</span><span id="settingsDevice">—</span></div>
             <div class="settings-row"><span>Owner 权限</span><span id="settingsOwnerStatus">—</span></div>
           </div>
           <button id="reconnectBtn" class="ghost-btn wide">重新连接</button>
@@ -151,8 +150,9 @@
 
         <div class="settings-section">
           <div class="section-head">
-            <h3>设备</h3>
+            <h3>登录设备</h3>
           </div>
+          <p class="hint">设备 ID 由客户端自动生成，仅用于消息路由，不参与身份/权限。</p>
           <div id="deviceList" class="device-list"></div>
         </div>
 
@@ -270,9 +270,6 @@
       <label>Owner 令牌（可选）
         <input id="setupOwnerToken" type="password" placeholder="填 owner-token.txt，用于 owner 权限" />
       </label>
-      <label>设备标识（仅路由）
-        <input id="setupDevice" type="text" placeholder="app-test" />
-      </label>
       <button id="setupSave" class="primary-btn">保存连接设置</button>
       <button id="setupBack" class="link-btn">返回登录</button>
       <p class="hint error-text" id="setupError"></p>
@@ -356,6 +353,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=54"></script>
+  <script src="/app.js?v=55"></script>
 </body>
 </html>
