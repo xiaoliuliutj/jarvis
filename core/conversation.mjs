@@ -27,6 +27,7 @@ import {
 } from './config.mjs'
 import { logInfo, logWarn, logError } from './logger.mjs'
 import { getChatRuntime, listModels, appendUsage } from './app-store.mjs'
+import { readTranscriptUsage } from './usage-transcript.mjs'
 
 const locks = new Map()
 
@@ -70,6 +71,10 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
 
   return withPrincipalLock(principalId, async () => {
     const turnStartedAt = Date.now()
+    const turnId = `t_${turnStartedAt.toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+    const messagePreview = source === 'cron'
+      ? '定时任务'
+      : (String(displayText ?? prompt ?? '').replace(/\s+/g, ' ').trim().slice(0, 80) || '（媒体消息）')
     store.ensureUser(principalId)
 
     const workspace = store.workspaceDir(principalId)
@@ -165,10 +170,12 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
 
     let result = null
     const toolRecords = []
+    const llmUsageRecords = []
     const { run } = await import('../agents/agent.mjs')
 
     const runOnce = async () => {
       result = null
+      llmUsageRecords.length = 0
       for await (const event of run(prompt, {
         model: activeModel,
         apiKey,
@@ -207,6 +214,8 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
           emit({ ...event, principalId, sessionId: persistSessionId })
         } else if (event.type === 'text') {
           emit({ ...event, principalId, sessionId: persistSessionId })
+        } else if (event.type === 'llm_usage') {
+          llmUsageRecords.push(event)
         } else if (event.type === 'memory') {
           emit({ ...event, principalId, sessionId: persistSessionId })
         } else if (event.type === 'result') {
@@ -268,20 +277,120 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
     store.touchSession(principalId, finalSessionId)
 
     try {
-      appendUsage(principalId, {
-        sessionId: finalSessionId,
-        source,
-        capability: 'chat',
-        model: userModel?.model || activeModel,
-        provider: userModel?.provider || '',
-        inputTokens: result.usage?.input_tokens ?? result.usage?.prompt_tokens ?? 0,
-        outputTokens: result.usage?.output_tokens ?? result.usage?.completion_tokens ?? 0,
-        cost: result.cost ?? 0,
-        turns: result.turns ?? 0,
-        latencyMs: Date.now() - turnStartedAt,
-        status: result.isError ? 'error' : 'ok',
-        tools: toolRecords.map(r => r.name),
-      })
+      let transcriptEvents = []
+      try {
+        transcriptEvents = readTranscriptUsage(finalSessionId, { sinceMs: turnStartedAt - 100 })
+      } catch (err) {
+        logWarn('usage.transcript.fail', err.message, { principalId })
+      }
+
+      // transcript 有本次回合的完整逐次 usage（含 output），优先使用；
+      // 只有 transcript 不可用时，才退回流事件并按 messageId 去重。
+      let callEvents = []
+      if (transcriptEvents.length) {
+        callEvents = transcriptEvents.filter(event => {
+          const usage = event.usage || {}
+          return (Number(usage.input_tokens) || 0)
+            + (Number(usage.output_tokens) || 0)
+            + (Number(usage.cache_read_input_tokens) || 0)
+            + (Number(usage.cache_creation_input_tokens) || 0) > 0
+        })
+      } else {
+        const callMap = new Map()
+        for (const event of llmUsageRecords) {
+          const usage = event.usage || {}
+          const key = event.messageId
+            || `${event.ts || ''}|${event.model || ''}|${usage.input_tokens || 0}|${usage.cache_read_input_tokens || 0}`
+          if (!callMap.has(key)) {
+            callMap.set(key, {
+              ...event,
+              messageId: key,
+              usage: {
+                input_tokens: Number(usage.input_tokens) || 0,
+                output_tokens: Number(usage.output_tokens) || 0,
+                cache_creation_input_tokens: Number(usage.cache_creation_input_tokens) || 0,
+                cache_read_input_tokens: Number(usage.cache_read_input_tokens) || 0,
+              },
+              tools: Array.isArray(event.tools) ? [...event.tools] : [],
+            })
+            continue
+          }
+          const existing = callMap.get(key)
+          for (const field of ['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens']) {
+            existing.usage[field] = Math.max(
+              existing.usage[field] || 0,
+              Number(usage[field]) || 0,
+            )
+          }
+          for (const tool of (event.tools || [])) {
+            if (tool && !existing.tools.includes(tool)) existing.tools.push(tool)
+          }
+          existing.subagent = !!(existing.subagent || event.subagent)
+          if (!existing.model && event.model) existing.model = event.model
+        }
+        callEvents = [...callMap.values()].filter(event => {
+          const usage = event.usage || {}
+          return (Number(usage.input_tokens) || 0)
+            + (Number(usage.output_tokens) || 0)
+            + (Number(usage.cache_read_input_tokens) || 0)
+            + (Number(usage.cache_creation_input_tokens) || 0) > 0
+        }).sort((a, b) => (Date.parse(a.ts) || 0) - (Date.parse(b.ts) || 0))
+      }
+
+      if (callEvents.length) {
+        for (const [callIndex, event] of callEvents.entries()) {
+          const usage = event.usage || {}
+          appendUsage(principalId, {
+            sessionId: finalSessionId,
+            turnId,
+            level: 'call',
+            messagePreview: callIndex === 0 ? messagePreview : '',
+            source,
+            capability: 'chat',
+            model: event.model || userModel?.model || activeModel,
+            provider: userModel?.provider || '',
+            inputTokens: usage.input_tokens ?? usage.prompt_tokens ?? 0,
+            outputTokens: usage.output_tokens ?? usage.completion_tokens ?? 0,
+            cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+            cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+            turns: 1,
+            latencyMs: 0,
+            status: 'ok',
+            tools: event.tools || [],
+            subagent: !!event.subagent,
+            ts: event.ts,
+          })
+        }
+        logInfo('usage.calls', '', {
+          principalId,
+          sessionId: finalSessionId,
+          count: callEvents.length,
+          inputTokens: callEvents.reduce((sum, e) => sum + (Number(e.usage?.input_tokens) || 0), 0),
+          outputTokens: callEvents.reduce((sum, e) => sum + (Number(e.usage?.output_tokens) || 0), 0),
+          aggInputTokens: result.usage?.input_tokens ?? 0,
+          aggOutputTokens: result.usage?.output_tokens ?? 0,
+        })
+      } else {
+        // 没拿到逐次 usage 时退回整轮汇总记录，保证用量不丢
+        appendUsage(principalId, {
+          sessionId: finalSessionId,
+          turnId,
+          level: 'turn',
+          messagePreview,
+          source,
+          capability: 'chat',
+          model: userModel?.model || activeModel,
+          provider: userModel?.provider || '',
+          inputTokens: result.usage?.input_tokens ?? result.usage?.prompt_tokens ?? 0,
+          outputTokens: result.usage?.output_tokens ?? result.usage?.completion_tokens ?? 0,
+          cacheReadTokens: result.usage?.cache_read_input_tokens ?? 0,
+          cacheWriteTokens: result.usage?.cache_creation_input_tokens ?? 0,
+          turns: result.turns ?? 0,
+          latencyMs: Date.now() - turnStartedAt,
+          status: result.isError ? 'error' : 'ok',
+          tools: toolRecords.map(r => r.name),
+        })
+      }
     } catch (err) {
       logWarn('usage.append.fail', err.message, { principalId })
     }

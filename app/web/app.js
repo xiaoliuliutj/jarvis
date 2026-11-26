@@ -44,9 +44,14 @@
     models: [],
     settings: null,
     me: null,
-    usageMonth: currentMonth(),
+    usageGranularity: 'day',
+    usageAnchor: todayKey(),
     usageSummary: null,
-    usageRecords: [],
+    usageError: '',
+    usageDetailsOpen: false,
+    usageMessageOpen: {},
+    usageMessageCalls: {},
+    usageRequestKey: '',
     editingModelId: null,
     updateInfo: null,
   }
@@ -88,10 +93,18 @@
     toolSearch: $('toolSearch'),
     toolScope: $('toolScope'),
     toolList: $('toolList'),
-    usageMonth: $('usageMonth'),
+    usageGranularity: $('usageGranularity'),
+    usageDate: $('usageDate'),
+    usagePrev: $('usagePrev'),
+    usageNext: $('usageNext'),
+    usageToday: $('usageToday'),
+    usagePeriodLabel: $('usagePeriodLabel'),
     usageCards: $('usageCards'),
+    usageMeta: $('usageMeta'),
     usageChart: $('usageChart'),
-    usageRecords: $('usageRecords'),
+    usageDetailsToggle: $('usageDetailsToggle'),
+    usageMessageCount: $('usageMessageCount'),
+    usageMessages: $('usageMessages'),
     settingsStatus: $('settingsStatus'),
     settingsUrl: $('settingsUrl'),
     settingsDevice: $('settingsDevice'),
@@ -161,9 +174,70 @@
 
   // ── utilities ───────────────────────────────────────────────────────────
 
-  function currentMonth() {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  function pad2(n) {
+    return String(n).padStart(2, '0')
+  }
+  function localDateKey(date = new Date()) {
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+  }
+  function todayKey() {
+    return localDateKey(new Date())
+  }
+  function parseLocalDateKey(key) {
+    const [year, month, day] = String(key || '').split('-').map(Number)
+    return new Date(year || new Date().getFullYear(), (month || 1) - 1, day || 1)
+  }
+  function addDays(date, days) {
+    const next = new Date(date)
+    next.setDate(next.getDate() + days)
+    return next
+  }
+  function startOfWeek(date) {
+    const next = new Date(date)
+    const offset = (next.getDay() + 6) % 7
+    next.setDate(next.getDate() - offset)
+    next.setHours(0, 0, 0, 0)
+    return next
+  }
+  function usagePeriodRange(granularity, anchorKey) {
+    const anchor = parseLocalDateKey(anchorKey)
+    if (granularity === 'day') {
+      const from = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate())
+      return { from, to: addDays(from, 1) }
+    }
+    if (granularity === 'week') {
+      const from = startOfWeek(anchor)
+      return { from, to: addDays(from, 7) }
+    }
+    const from = new Date(anchor.getFullYear(), anchor.getMonth(), 1)
+    return { from, to: new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1) }
+  }
+  function usageSnapAnchor(granularity, anchorKey) {
+    const { from } = usagePeriodRange(granularity, anchorKey)
+    return localDateKey(from)
+  }
+  function usageShiftAnchor(granularity, anchorKey, delta) {
+    const date = parseLocalDateKey(anchorKey)
+    if (granularity === 'day') {
+      date.setDate(date.getDate() + delta)
+    } else if (granularity === 'week') {
+      date.setDate(date.getDate() + delta * 7)
+    } else {
+      date.setDate(1)
+      date.setMonth(date.getMonth() + delta)
+    }
+    return localDateKey(date)
+  }
+  function usagePeriodLabel(granularity, from, to) {
+    const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+    if (granularity === 'day') {
+      return `${from.getFullYear()}年${from.getMonth() + 1}月${from.getDate()}日 ${weekdays[from.getDay()]}`
+    }
+    if (granularity === 'week') {
+      const last = addDays(to, -1)
+      return `${from.getFullYear()}年${from.getMonth() + 1}月${from.getDate()}日 - ${last.getMonth() + 1}月${last.getDate()}日`
+    }
+    return `${from.getFullYear()}年${from.getMonth() + 1}月`
   }
 
   function read(key, fallback) {
@@ -182,7 +256,7 @@
   }
   function absUrl(url) {
     if (!url) return ''
-    if (/^https?:\/\//i.test(url)) return url
+    if (/^(https?:|blob:|data:)/i.test(url)) return url
     if (url.startsWith('/')) return state.url + url
     return `${state.url}/${url}`
   }
@@ -209,6 +283,22 @@
         month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
       })
     } catch { return '' }
+  }
+  function formatTokens(n) {
+    const value = Number(n) || 0
+    if (value >= 1e9) return `${(value / 1e9).toFixed(2)}B`
+    if (value >= 1e6) return `${(value / 1e6).toFixed(2)}M`
+    if (value >= 1e3) return `${(value / 1e3).toFixed(1)}k`
+    return String(Math.round(value))
+  }
+  function formatTokenExact(n) {
+    return Math.round(Number(n) || 0).toLocaleString('zh-CN')
+  }
+  function formatDuration(ms) {
+    const value = Number(ms) || 0
+    if (value >= 60000) return `${(value / 60000).toFixed(1)} 分钟`
+    if (value >= 1000) return `${(value / 1000).toFixed(1)} 秒`
+    return `${Math.round(value)} ms`
   }
   function setStatus(text, mode) {
     el.status.textContent = text
@@ -1151,7 +1241,13 @@
       state.messages = [...prepend, ...state.messages]
       state.oldestSeq = Number(data.oldestSeq ?? state.oldestSeq)
       state.hasMore = !!data.hasMore
-      renderMessages(state.messages)
+      // 只增量插入旧消息，避免每次翻页重建整个消息列表
+      if (prepend.length) {
+        if (el.messages.querySelector('.empty-state')) el.messages.textContent = ''
+        const fragment = document.createDocumentFragment()
+        for (const item of prepend) fragment.appendChild(buildMessageEl(item))
+        el.messages.insertBefore(fragment, el.messages.firstChild)
+      }
       requestAnimationFrame(() => {
         container.scrollTop = previousTop + (container.scrollHeight - previousHeight)
         updateChatScrollbar()
@@ -1229,16 +1325,48 @@
   el.fileInput.addEventListener('change', async () => {
     const files = Array.from(el.fileInput.files || [])
     el.fileInput.value = ''
+    const pending = []
     for (const file of files) {
       if (state.attachments.length >= MAX_ATTACHMENTS) { toast(`最多 ${MAX_ATTACHMENTS} 个附件`); break }
       if (file.size > MAX_ATTACHMENT_BYTES) { toast(`「${file.name}」超过 20MB，已跳过`); continue }
-      try {
-        const uploaded = await uploadFile(file)
-        state.attachments.push(uploaded)
-        renderAttachments()
-      } catch (err) {
-        toast(`「${file.name}」上传失败：${err.message}`)
+      const mime = String(file.type || '')
+      const isImage = mime.startsWith('image/')
+      const kind = isImage
+        ? 'image'
+        : (mime.startsWith('video/') ? 'video' : (mime.startsWith('audio/') ? 'audio' : 'file'))
+      const localUrl = isImage ? URL.createObjectURL(file) : ''
+      const placeholder = {
+        id: `local_${Date.now()}_${pending.length}`,
+        fileName: file.name,
+        mime: file.type,
+        size: file.size,
+        kind,
+        url: localUrl,
+        previewUrl: localUrl,
+        uploading: true,
+        file,
       }
+      state.attachments.push(placeholder)
+      pending.push(placeholder)
+    }
+    renderAttachments()
+    for (const placeholder of pending) {
+      placeholder.uploadPromise = uploadFile(placeholder.file)
+        .then(uploaded => {
+          uploaded.previewUrl = placeholder.previewUrl
+          uploaded.uploading = false
+          const index = state.attachments.indexOf(placeholder)
+          if (index >= 0) state.attachments[index] = uploaded
+          renderAttachments()
+          return uploaded
+        })
+        .catch(err => {
+          const index = state.attachments.indexOf(placeholder)
+          if (index >= 0) state.attachments.splice(index, 1)
+          renderAttachments()
+          toast(`「${placeholder.fileName}」上传失败：${err.message}`)
+          return null
+        })
     }
   })
 
@@ -1274,10 +1402,10 @@
     el.attachPreview.textContent = ''
     state.attachments.forEach((att, index) => {
       const chip = document.createElement('span')
-      chip.className = 'attach-chip'
-      if (att.kind === 'image' && att.url) {
+      chip.className = 'attach-chip' + (att.uploading ? ' uploading' : '')
+      if (att.kind === 'image' && (att.previewUrl || att.url)) {
         const img = document.createElement('img')
-        img.src = absUrl(att.url)
+        img.src = att.previewUrl || absUrl(att.url)
         img.alt = att.fileName || '图片'
         chip.appendChild(img)
       } else {
@@ -1294,7 +1422,8 @@
       removeBtn.type = 'button'
       removeBtn.textContent = '×'
       removeBtn.addEventListener('click', () => {
-        state.attachments.splice(index, 1)
+        const removed = state.attachments.splice(index, 1)[0]
+        if (removed?.previewUrl?.startsWith('blob:')) URL.revokeObjectURL(removed.previewUrl)
         renderAttachments()
       })
       chip.appendChild(removeBtn)
@@ -1308,12 +1437,20 @@
     if (!text && !attachments.length) return
     if (!state.token) { openSetup(''); return }
     const clientMessageId = newClientMessageId()
-    const attachmentIds = attachments.map(a => a.id)
     appendMessage({
       role: 'user',
       id: clientMessageId,
       text,
-      attachments: attachments.map(a => ({ ...a, mediaId: a.id, url: absUrl(a.url) })),
+      attachments: attachments.map(a => ({
+        id: a.id,
+        fileName: a.fileName,
+        mime: a.mime,
+        size: a.size,
+        kind: a.kind,
+        mediaId: a.id,
+        // 乐观消息先用本地预览，避免等服务器图片加载；刷新后改用服务器 URL
+        url: a.previewUrl || absUrl(a.url),
+      })),
       ts: new Date().toISOString(),
     })
     el.input.value = ''
@@ -1321,6 +1458,33 @@
     renderAttachments()
     autoGrow()
     showTyping()
+
+    const uploadTasks = attachments.map(att => (
+      att.uploading && att.uploadPromise ? att.uploadPromise : Promise.resolve(att)
+    ))
+    let resolved
+    try {
+      resolved = await Promise.all(uploadTasks)
+    } catch (err) {
+      clearTyping()
+      appendMessage({
+        role: 'system',
+        text: `附件上传失败：${err.message}`,
+        ts: new Date().toISOString(),
+      })
+      return
+    }
+    if (resolved.some(att => !att)) {
+      clearTyping()
+      appendMessage({
+        role: 'system',
+        text: '附件上传失败，请重新选择图片/文件后再发。',
+        ts: new Date().toISOString(),
+      })
+      return
+    }
+
+    const attachmentIds = resolved.map(att => att.id)
     try {
       await api('/api/v1/session/message', {
         method: 'POST',
@@ -1406,7 +1570,8 @@
 
   function autoGrow() {
     el.input.style.height = 'auto'
-    el.input.style.height = Math.min(el.input.scrollHeight, 132) + 'px'
+    // 4 行 * 21px 行高 + 20px 内边距
+    el.input.style.height = Math.min(el.input.scrollHeight, 104) + 'px'
   }
 
   // ── tools ───────────────────────────────────────────────────────────────
@@ -1784,41 +1949,112 @@
 
   // ── usage ───────────────────────────────────────────────────────────────
 
-  el.usageMonth.value = state.usageMonth
-  el.usageMonth.addEventListener('change', () => {
-    state.usageMonth = el.usageMonth.value || currentMonth()
-    loadUsage()
+  state.usageAnchor = usageSnapAnchor(state.usageGranularity, state.usageAnchor)
+  el.usageDate.value = state.usageAnchor
+  for (const button of el.usageGranularity.querySelectorAll('button')) {
+    button.classList.toggle('active', button.dataset.granularity === state.usageGranularity)
+  }
+
+  el.usageGranularity.addEventListener('click', event => {
+    const button = event.target.closest('button[data-granularity]')
+    if (!button) return
+    state.usageGranularity = button.dataset.granularity
+    state.usageAnchor = usageSnapAnchor(state.usageGranularity, state.usageAnchor)
+    el.usageDate.value = state.usageAnchor
+    for (const item of el.usageGranularity.querySelectorAll('button')) {
+      item.classList.toggle('active', item === button)
+    }
+    resetUsagePeriod()
   })
+
+  el.usageDate.addEventListener('change', () => {
+    state.usageAnchor = el.usageDate.value || todayKey()
+    resetUsagePeriod()
+  })
+
+  el.usagePrev.addEventListener('click', () => shiftUsagePeriod(-1))
+  el.usageNext.addEventListener('click', () => shiftUsagePeriod(1))
+  el.usageToday.addEventListener('click', () => {
+    state.usageAnchor = todayKey()
+    el.usageDate.value = state.usageAnchor
+    resetUsagePeriod()
+  })
+  el.usageDetailsToggle.addEventListener('click', () => {
+    state.usageDetailsOpen = !state.usageDetailsOpen
+    renderUsage()
+  })
+
+  function resetUsagePeriod() {
+    state.usageSummary = null
+    state.usageError = ''
+    state.usageDetailsOpen = false
+    state.usageMessageOpen = {}
+    state.usageMessageCalls = {}
+    renderUsage()
+    loadUsage()
+  }
+
+  function shiftUsagePeriod(delta) {
+    state.usageAnchor = usageShiftAnchor(state.usageGranularity, state.usageAnchor, delta)
+    el.usageDate.value = state.usageAnchor
+    resetUsagePeriod()
+  }
+
+  function usageEmpty(target, text) {
+    target.textContent = ''
+    const empty = document.createElement('div')
+    empty.className = 'empty-state'
+    empty.textContent = text
+    target.appendChild(empty)
+  }
+
+  function usageTokenTotal(record) {
+    return (record.inputTokens || 0)
+      + (record.outputTokens || 0)
+      + (record.cacheReadTokens || 0)
+      + (record.cacheWriteTokens || 0)
+  }
 
   async function loadUsage() {
     if (!state.token) return
+    if (!state.usageSummary) renderUsage()
+    const { from, to } = usagePeriodRange(state.usageGranularity, state.usageAnchor)
+    const query = new URLSearchParams({
+      from: from.toISOString(),
+      to: to.toISOString(),
+      messageLimit: '200',
+    })
+    const requestKey = query.toString()
+    state.usageRequestKey = requestKey
     try {
-      const [summary, records] = await Promise.all([
-        api(`/api/v1/usage/summary?month=${encodeURIComponent(state.usageMonth)}`),
-        api(`/api/v1/usage/records?month=${encodeURIComponent(state.usageMonth)}&limit=80`),
-      ])
-      state.usageSummary = summary.summary
-      state.usageRecords = Array.isArray(records.records) ? records.records : []
+      const data = await api(`/api/v1/usage/summary?${requestKey}`)
+      if (state.usageRequestKey !== requestKey) return
+      state.usageSummary = data.summary
+      state.usageError = ''
       renderUsage()
     } catch (err) {
-      el.usageCards.textContent = ''
-      el.usageChart.textContent = ''
-      el.usageRecords.textContent = ''
-      const empty = document.createElement('div')
-      empty.className = 'empty-state'
-      empty.textContent = `用量加载失败：${err.message}`
-      el.usageRecords.appendChild(empty)
+      if (state.usageRequestKey !== requestKey) return
+      state.usageSummary = null
+      state.usageError = err.message
+      renderUsage()
     }
   }
 
   function renderUsage() {
-    const s = state.usageSummary || {}
+    const s = state.usageSummary
+    const data = s || {}
+    const { from, to } = usagePeriodRange(state.usageGranularity, state.usageAnchor)
+    el.usagePeriodLabel.textContent = usagePeriodLabel(state.usageGranularity, from, to)
+
     el.usageCards.textContent = ''
+    const totalTokens = usageTokenTotal(data)
     const cards = [
-      ['调用次数', String(s.calls || 0)],
-      ['Token', String((s.inputTokens || 0) + (s.outputTokens || 0))],
-      ['费用', `$${Number(s.cost || 0).toFixed(4)}`],
-      ['平均延迟', `${s.avgLatencyMs || 0} ms`],
+      ['对话轮数', s ? formatTokenExact(data.messageTotal) : '—'],
+      ['LLM 调用', s ? formatTokenExact(data.llmCalls) : '—'],
+      ['输入 Token', s ? formatTokenExact(data.inputTokens) : '—'],
+      ['输出 Token', s ? formatTokenExact(data.outputTokens) : '—'],
+      ['缓存读 Token', s ? formatTokenExact(data.cacheReadTokens) : '—'],
+      ['总 Token', s ? formatTokenExact(totalTokens) : '—'],
     ]
     for (const [label, value] of cards) {
       const card = document.createElement('div')
@@ -1834,32 +2070,53 @@
       el.usageCards.appendChild(card)
     }
 
-    const byModel = Object.entries(s.byModel || {})
-      .sort((a, b) => (b[1].cost || 0) - (a[1].cost || 0))
-      .slice(0, 8)
-    const max = Math.max(1, ...byModel.map(([, v]) => Number(v.cost) || 0))
-    el.usageChart.textContent = ''
-    if (!byModel.length) {
-      const empty = document.createElement('div')
-      empty.className = 'empty-state'
-      empty.textContent = '本月还没有调用记录'
-      el.usageChart.appendChild(empty)
+    if (s) {
+      const parts = [
+        `活跃 ${data.activeDays || 0} 天`,
+        `平均耗时 ${formatDuration(data.avgLatencyMs)}`,
+      ]
+      if (data.legacyTurns) parts.push(`历史部分按 ${formatTokenExact(data.legacyTurns)} 轮整轮汇总`)
+      if (data.cacheWriteTokens) parts.push(`缓存写 ${formatTokens(data.cacheWriteTokens)}`)
+      if (data.errors) parts.push(`失败 ${data.errors} 次`)
+      el.usageMeta.textContent = parts.join(' · ')
     } else {
-      for (const [name, v] of byModel) {
+      el.usageMeta.textContent = ''
+    }
+
+    const byModel = Object.entries(data.byModel || {})
+      .map(([name, value]) => ({
+        name,
+        ...value,
+        tokens: (value.inputTokens || 0)
+          + (value.outputTokens || 0)
+          + (value.cacheReadTokens || 0)
+          + (value.cacheWriteTokens || 0),
+      }))
+      .sort((a, b) => b.tokens - a.tokens)
+      .slice(0, 8)
+    const max = Math.max(1, ...byModel.map(item => item.tokens))
+    el.usageChart.textContent = ''
+    if (!s) {
+      usageEmpty(el.usageChart, state.usageError ? `加载失败：${state.usageError}` : '正在加载用量…')
+    } else if (!byModel.length) {
+      usageEmpty(el.usageChart, '这个时间段还没有调用记录')
+    } else {
+      for (const item of byModel) {
         const row = document.createElement('div')
         row.className = 'bar-row'
         const nameEl = document.createElement('div')
         nameEl.className = 'bar-name'
-        nameEl.textContent = name
+        nameEl.textContent = item.name
+        nameEl.title = `${formatTokenExact(item.tokens)} tokens · ${item.calls || 0} 次/轮`
         const track = document.createElement('div')
         track.className = 'bar-track'
         const fill = document.createElement('div')
         fill.className = 'bar-fill'
-        fill.style.width = `${Math.max(4, (Number(v.cost) || 0) / max * 100)}%`
+        fill.style.width = `${Math.max(4, item.tokens / max * 100)}%`
         track.appendChild(fill)
         const value = document.createElement('div')
         value.className = 'bar-value'
-        value.textContent = `${v.calls || 0} 次 · $${Number(v.cost || 0).toFixed(3)}`
+        value.textContent = `${formatTokens(item.tokens)} tok`
         row.appendChild(nameEl)
         row.appendChild(track)
         row.appendChild(value)
@@ -1867,39 +2124,235 @@
       }
     }
 
-    el.usageRecords.textContent = ''
-    if (!state.usageRecords.length) {
-      const empty = document.createElement('div')
-      empty.className = 'empty-state'
-      empty.textContent = '还没有调用记录'
-      el.usageRecords.appendChild(empty)
+    const messageList = Array.isArray(data.messages) ? data.messages : []
+    const messageNote = s && (data.messageTotal || 0) > messageList.length
+      ? ` · 最近 ${messageList.length} 轮`
+      : ''
+    el.usageMessageCount.textContent = s ? `共 ${data.messageTotal || 0} 轮${messageNote}` : ''
+    el.usageDetailsToggle.textContent = state.usageDetailsOpen ? '收起' : '查看详情'
+    el.usageDetailsToggle.disabled = !s || !(data.messageTotal)
+    el.usageMessages.classList.toggle('hidden', !state.usageDetailsOpen)
+    renderUsageMessages()
+  }
+
+  function renderUsageMessages() {
+    const data = state.usageSummary
+    el.usageMessages.textContent = ''
+    if (!state.usageDetailsOpen) return
+    if (!data) {
+      usageEmpty(el.usageMessages, state.usageError
+        ? `消息明细加载失败：${state.usageError}`
+        : '正在加载消息明细…')
       return
     }
-    for (const record of state.usageRecords) {
+    const messages = Array.isArray(data.messages) ? data.messages : []
+    if (!messages.length) {
+      usageEmpty(el.usageMessages, '这个时间段还没有消息')
+      return
+    }
+    for (const message of messages) {
+      const card = document.createElement('div')
+      card.className = 'usage-message'
+      const head = document.createElement('button')
+      head.type = 'button'
+      head.className = 'usage-message-head'
+
+      const main = document.createElement('div')
+      main.className = 'usage-message-main'
+      const preview = document.createElement('div')
+      preview.className = 'usage-message-preview'
+      preview.textContent = message.preview
+        || (message.level === 'turn'
+          ? `历史对话 · ${formatTime(message.firstTs)}`
+          : '对话（无预览）')
+      const sub = document.createElement('div')
+      sub.className = 'usage-message-sub'
+      const parts = [formatTime(message.firstTs)]
+      if (message.sessionName) parts.push(message.sessionName)
+      if (message.calls) parts.push(`${formatTokenExact(message.calls)} 次 LLM 调用`)
+      else parts.push(`${formatTokenExact(message.legacyTurns || message.turnRecords)} 轮整轮汇总`)
+      if (message.models?.length === 1) parts.push(message.models[0])
+      else if (message.models?.length > 1) parts.push(`${message.models.length} 个模型`)
+      if (message.tools?.length) {
+        parts.push(`工具 ${message.tools.slice(0, 2).join('、')}${message.tools.length > 2 ? '…' : ''}`)
+      }
+      sub.textContent = parts.join(' · ')
+      main.appendChild(preview)
+      main.appendChild(sub)
+
+      const right = document.createElement('div')
+      right.className = 'usage-message-right'
+      const total = document.createElement('div')
+      total.className = 'usage-message-total'
+      total.textContent = `${formatTokenExact(message.totalTokens || 0)} tok`
+      const breakdown = document.createElement('div')
+      breakdown.className = 'usage-message-sub'
+      const breakdownParts = [
+        `入 ${formatTokens(message.inputTokens)}`,
+        `出 ${formatTokens(message.outputTokens)}`,
+      ]
+      const cache = (message.cacheReadTokens || 0) + (message.cacheWriteTokens || 0)
+      if (cache) breakdownParts.push(`缓存 ${formatTokens(cache)}`)
+      breakdown.textContent = breakdownParts.join(' · ')
+      right.appendChild(total)
+      right.appendChild(breakdown)
+
+      const chevron = document.createElement('span')
+      chevron.className = 'usage-message-chevron'
+      chevron.textContent = state.usageMessageOpen[message.turnId] ? '▾' : '▸'
+
+      head.appendChild(main)
+      head.appendChild(right)
+      head.appendChild(chevron)
+      head.addEventListener('click', () => toggleUsageMessage(message))
+      card.appendChild(head)
+
+      if (state.usageMessageOpen[message.turnId]) {
+        const detail = document.createElement('div')
+        detail.className = 'usage-message-detail'
+        if (message.level === 'turn' || !message.calls) {
+          renderUsageTurnSummary(detail, message)
+        } else {
+          const entry = state.usageMessageCalls[message.turnId]
+          if (!entry || entry.loading) {
+            usageEmpty(detail, '正在加载本次消息的 LLM 调用…')
+          } else if (entry.error) {
+            usageEmpty(detail, `加载失败：${entry.error}`)
+          } else if (!entry.loaded) {
+            usageEmpty(detail, '正在加载…')
+          } else if (!entry.records.length) {
+            usageEmpty(detail, '没有 LLM 调用记录')
+          } else {
+            renderUsageCalls(detail, entry.records)
+          }
+        }
+        card.appendChild(detail)
+      }
+      el.usageMessages.appendChild(card)
+    }
+  }
+
+  function renderUsageCalls(target, records) {
+    target.textContent = ''
+    const heading = document.createElement('div')
+    heading.className = 'usage-call-heading'
+    heading.textContent = `本轮 LLM 调用（${records.length} 次）`
+    target.appendChild(heading)
+    for (const [index, record] of records.entries()) {
       const item = document.createElement('div')
       item.className = 'record-item'
       const main = document.createElement('div')
       main.className = 'record-main'
       const title = document.createElement('div')
       title.className = 'record-title'
-      title.textContent = record.model || record.capability || '调用'
+      const titleParts = [`#${index + 1}`, record.model || 'LLM 调用']
+      if (record.subagent) titleParts.push('子任务')
+      if (record.level === 'turn') titleParts.push(`整轮汇总 · ${record.turns || 0} 轮`)
+      title.textContent = titleParts.join(' · ')
       const sub = document.createElement('div')
       sub.className = 'record-sub'
-      sub.textContent = `${formatTime(record.ts)} · ${record.inputTokens || 0}+${record.outputTokens || 0} tokens · ${record.latencyMs || 0}ms`
+      const parts = [
+        formatTime(record.ts),
+        `入 ${formatTokenExact(record.inputTokens)} / 出 ${formatTokenExact(record.outputTokens)}`,
+      ]
+      if (record.cacheReadTokens) parts.push(`缓存读 ${formatTokenExact(record.cacheReadTokens)}`)
+      if (record.cacheWriteTokens) parts.push(`缓存写 ${formatTokenExact(record.cacheWriteTokens)}`)
+      if (record.tools?.length) parts.push(`${record.tools.length} 工具`)
+      sub.textContent = parts.join(' · ')
       main.appendChild(title)
       main.appendChild(sub)
+
       const right = document.createElement('div')
       right.className = 'record-right'
-      const cost = document.createElement('div')
-      cost.textContent = `$${Number(record.cost || 0).toFixed(4)}`
+      const tokens = document.createElement('div')
+      tokens.textContent = `${formatTokenExact(usageTokenTotal(record))} tok`
       const status = document.createElement('div')
       status.className = record.status === 'error' ? 'record-error' : 'record-ok'
       status.textContent = record.status === 'error' ? '失败' : '成功'
-      right.appendChild(cost)
+      right.appendChild(tokens)
       right.appendChild(status)
       item.appendChild(main)
       item.appendChild(right)
-      el.usageRecords.appendChild(item)
+      target.appendChild(item)
+    }
+  }
+
+  function renderUsageTurnSummary(target, message) {
+    target.textContent = ''
+    const item = document.createElement('div')
+    item.className = 'record-item'
+    const main = document.createElement('div')
+    main.className = 'record-main'
+    const title = document.createElement('div')
+    title.className = 'record-title'
+    title.textContent = `整轮汇总 · ${message.legacyTurns || message.turnRecords || 0} 轮`
+    const sub = document.createElement('div')
+    sub.className = 'record-sub'
+    const parts = [
+      formatTime(message.firstTs),
+      `入 ${formatTokenExact(message.inputTokens)} / 出 ${formatTokenExact(message.outputTokens)}`,
+    ]
+    if (message.cacheReadTokens) parts.push(`缓存读 ${formatTokenExact(message.cacheReadTokens)}`)
+    if (message.cacheWriteTokens) parts.push(`缓存写 ${formatTokenExact(message.cacheWriteTokens)}`)
+    if (message.tools?.length) parts.push(`${message.tools.length} 工具`)
+    sub.textContent = parts.join(' · ')
+    main.appendChild(title)
+    main.appendChild(sub)
+    const right = document.createElement('div')
+    right.className = 'record-right'
+    const tokens = document.createElement('div')
+    tokens.textContent = `${formatTokenExact(message.totalTokens || 0)} tok`
+    const status = document.createElement('div')
+    status.className = message.status === 'error' ? 'record-error' : 'record-ok'
+    status.textContent = message.status === 'error' ? '失败' : '成功'
+    right.appendChild(tokens)
+    right.appendChild(status)
+    item.appendChild(main)
+    item.appendChild(right)
+    target.appendChild(item)
+  }
+
+  function toggleUsageMessage(message) {
+    const turnId = message.turnId
+    const open = !state.usageMessageOpen[turnId]
+    state.usageMessageOpen[turnId] = open
+    if (open && message.calls > 0) {
+      const entry = state.usageMessageCalls[turnId]
+      if (!entry || (!entry.loaded && !entry.loading)) loadUsageMessageCalls(message)
+    }
+    renderUsageMessages()
+  }
+
+  async function loadUsageMessageCalls(message) {
+    const turnId = message.turnId
+    if (!turnId || state.usageMessageCalls[turnId]?.loading) return
+    const requestKey = state.usageRequestKey
+    state.usageMessageCalls[turnId] = {
+      loading: true,
+      loaded: false,
+      error: '',
+      records: [],
+    }
+    renderUsageMessages()
+    try {
+      const data = await api(`/api/v1/usage/message?turnId=${encodeURIComponent(turnId)}`)
+      if (state.usageRequestKey !== requestKey) return
+      state.usageMessageCalls[turnId] = {
+        loading: false,
+        loaded: true,
+        error: '',
+        records: Array.isArray(data.records) ? data.records : [],
+      }
+    } catch (err) {
+      if (state.usageRequestKey !== requestKey) return
+      state.usageMessageCalls[turnId] = {
+        loading: false,
+        loaded: false,
+        error: err.message,
+        records: [],
+      }
+    } finally {
+      if (state.usageRequestKey === requestKey) renderUsageMessages()
     }
   }
 

@@ -393,8 +393,26 @@ function monthKey(date = new Date()) {
   return `${date.getFullYear()}-${p(date.getMonth() + 1)}`
 }
 
+function usageDir(principalId) {
+  return path.join(appDir(principalId), 'usage')
+}
+
+function normalizeMonth(month) {
+  const value = String(month || '')
+  return /^\d{4}-\d{2}$/.test(value) ? value : monthKey()
+}
+
 function usageFile(principalId, month = monthKey()) {
-  return path.join(appDir(principalId), 'usage', `${month}.jsonl`)
+  return path.join(usageDir(principalId), `${normalizeMonth(month)}.jsonl`)
+}
+
+function readUsageRows(file) {
+  if (!fs.existsSync(file)) return []
+  return fs.readFileSync(file, 'utf-8')
+    .split('\n')
+    .filter(Boolean)
+    .map(line => { try { return JSON.parse(line) } catch { return null } })
+    .filter(Boolean)
 }
 
 export function appendUsage(principalId, record = {}) {
@@ -404,66 +422,285 @@ export function appendUsage(principalId, record = {}) {
     ts: record.ts || nowIso(),
     principalId,
     sessionId: record.sessionId || null,
+    turnId: record.turnId || null,
+    level: record.level === 'call' ? 'call' : 'turn',
+    messagePreview: record.messagePreview
+      ? String(record.messagePreview).replace(/\s+/g, ' ').trim().slice(0, 80)
+      : '',
     source: record.source || 'chat',
     capability: record.capability || 'chat',
     model: record.model || '',
     provider: record.provider || '',
     inputTokens: Number(record.inputTokens) || 0,
     outputTokens: Number(record.outputTokens) || 0,
-    cost: Number(record.cost) || 0,
+    cacheReadTokens: Number(record.cacheReadTokens) || 0,
+    cacheWriteTokens: Number(record.cacheWriteTokens) || 0,
     turns: Number(record.turns) || 0,
     latencyMs: Number(record.latencyMs) || 0,
     status: record.status || 'ok',
     tools: Array.isArray(record.tools) ? record.tools.slice(0, 20) : [],
+    ...(record.subagent ? { subagent: true } : {}),
   }
   fs.appendFileSync(usageFile(principalId, monthKey(new Date(entry.ts))), JSON.stringify(entry) + '\n', 'utf-8')
   return entry
 }
 
-export function listUsage(principalId, { month = monthKey(), limit = 100 } = {}) {
-  const file = usageFile(principalId, month)
-  if (!fs.existsSync(file)) return []
-  const rows = fs.readFileSync(file, 'utf-8')
-    .split('\n')
-    .filter(Boolean)
-    .map(line => { try { return JSON.parse(line) } catch { return null } })
-    .filter(Boolean)
+export function listUsage(principalId, { month = monthKey(), limit = 100, sessionId = '', level = '' } = {}) {
+  let rows = readUsageRows(usageFile(principalId, month))
+  if (sessionId) rows = rows.filter(row => (row.sessionId || 'unknown') === sessionId)
+  rows = rows.map(row => ({ ...row, level: row.level === 'call' ? 'call' : 'turn' }))
+  if (level === 'call' || level === 'turn') rows = rows.filter(row => row.level === level)
   return rows.slice(-Math.max(1, Number(limit) || 100)).reverse()
 }
 
-export function usageSummary(principalId, { month = monthKey() } = {}) {
-  const rows = listUsage(principalId, { month, limit: 100000 })
+function monthBounds(month) {
+  const safeMonth = normalizeMonth(month)
+  const [year, m] = safeMonth.split('-').map(Number)
+  return {
+    from: new Date(year, m - 1, 1, 0, 0, 0, 0),
+    to: new Date(year, m, 1, 0, 0, 0, 0),
+  }
+}
+
+function monthKeysBetween(from, to) {
+  const keys = []
+  const cursor = new Date(from.getFullYear(), from.getMonth(), 1)
+  const end = new Date(to.getTime() - 1)
+  const last = new Date(end.getFullYear(), end.getMonth(), 1)
+  while (cursor <= last) {
+    keys.push(monthKey(cursor))
+    cursor.setMonth(cursor.getMonth() + 1)
+  }
+  return keys
+}
+
+function readUsageRowsInRange(principalId, { from, to }) {
+  const fromMs = from.getTime()
+  const toMs = to.getTime()
+  if (!(fromMs < toMs)) return []
+  const rows = []
+  for (const key of monthKeysBetween(from, to)) {
+    for (const row of readUsageRows(usageFile(principalId, key))) {
+      const ts = Date.parse(row.ts)
+      if (!Number.isFinite(ts) || ts < fromMs || ts >= toMs) continue
+      rows.push({ ...row, level: row.level === 'call' ? 'call' : 'turn' })
+    }
+  }
+  rows.sort((a, b) => (Date.parse(a.ts) || 0) - (Date.parse(b.ts) || 0))
+  return rows
+}
+
+export function listUsageByTurn(principalId, turnId) {
+  if (!turnId) return []
+  const dir = usageDir(principalId)
+  if (!fs.existsSync(dir)) return []
+  const files = fs.readdirSync(dir)
+    .filter(name => /^\d{4}-\d{2}\.jsonl$/.test(name))
+    .sort()
+  const rows = []
+  for (const name of files) {
+    for (const row of readUsageRows(path.join(dir, name))) {
+      if (row.turnId !== turnId) continue
+      rows.push({ ...row, level: row.level === 'call' ? 'call' : 'turn' })
+    }
+  }
+  rows.sort((a, b) => (Date.parse(a.ts) || 0) - (Date.parse(b.ts) || 0))
+  return rows
+}
+
+function summarizeRows(rows, { from = null, to = null, messageLimit = 200 } = {}) {
+  // 旧中间版本写出的逐次记录没有 turnId，无法归到具体对话轮，且是重复计费；
+  // 读取时直接忽略，只保留有 turnId 的新逐次记录和旧整轮汇总。
+  const validRows = rows.filter(row => !(row.level === 'call' && !row.turnId))
   const summary = {
-    month,
-    calls: rows.length,
+    from: from ? new Date(from).toISOString() : null,
+    to: to ? new Date(to).toISOString() : null,
+    calls: validRows.length,
+    sessionCount: 0,
+    messageTotal: 0,
+    llmCalls: 0,
+    callRecords: 0,
+    legacyTurns: 0,
     inputTokens: 0,
     outputTokens: 0,
-    cost: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
     errors: 0,
+    activeDays: 0,
     avgLatencyMs: 0,
     byModel: {},
     byCapability: {},
+    bySource: {},
+    bySession: {},
+    messages: [],
   }
   let latencySum = 0
   let latencyCount = 0
-  for (const row of rows) {
+  const days = new Set()
+  const messageMap = new Map()
+
+  for (const row of validRows) {
+    const units = row.level === 'call' ? 1 : Math.max(1, Number(row.turns) || 1)
     summary.inputTokens += row.inputTokens || 0
     summary.outputTokens += row.outputTokens || 0
-    summary.cost += row.cost || 0
+    summary.cacheReadTokens += row.cacheReadTokens || 0
+    summary.cacheWriteTokens += row.cacheWriteTokens || 0
     if (row.status === 'error') summary.errors += 1
+    if (row.ts) {
+      const date = new Date(row.ts)
+      if (Number.isFinite(date.getTime())) {
+        days.add(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`)
+      }
+    }
     if (row.latencyMs) { latencySum += row.latencyMs; latencyCount += 1 }
+
     const modelKey = row.model || 'unknown'
-    if (!summary.byModel[modelKey]) summary.byModel[modelKey] = { calls: 0, cost: 0, inputTokens: 0, outputTokens: 0 }
-    summary.byModel[modelKey].calls += 1
-    summary.byModel[modelKey].cost += row.cost || 0
-    summary.byModel[modelKey].inputTokens += row.inputTokens || 0
-    summary.byModel[modelKey].outputTokens += row.outputTokens || 0
+    if (!summary.byModel[modelKey]) {
+      summary.byModel[modelKey] = {
+        calls: 0,
+        inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
+      }
+    }
+    const model = summary.byModel[modelKey]
+    model.calls += units
+    model.inputTokens += row.inputTokens || 0
+    model.outputTokens += row.outputTokens || 0
+    model.cacheReadTokens += row.cacheReadTokens || 0
+    model.cacheWriteTokens += row.cacheWriteTokens || 0
+
     const cap = row.capability || 'chat'
-    if (!summary.byCapability[cap]) summary.byCapability[cap] = { calls: 0, cost: 0 }
-    summary.byCapability[cap].calls += 1
-    summary.byCapability[cap].cost += row.cost || 0
+    if (!summary.byCapability[cap]) summary.byCapability[cap] = { calls: 0 }
+    summary.byCapability[cap].calls += units
+
+    const source = row.source || 'chat'
+    if (!summary.bySource[source]) summary.bySource[source] = { calls: 0, inputTokens: 0, outputTokens: 0 }
+    summary.bySource[source].calls += units
+    summary.bySource[source].inputTokens += row.inputTokens || 0
+    summary.bySource[source].outputTokens += row.outputTokens || 0
+
+    const sid = row.sessionId || 'unknown'
+    if (!summary.bySession[sid]) {
+      summary.bySession[sid] = {
+        sessionId: sid,
+        calls: 0,
+        turnRecords: 0,
+        legacyTurns: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        firstTs: null,
+        lastTs: null,
+      }
+    }
+    const sess = summary.bySession[sid]
+    if (row.level === 'call') {
+      sess.calls += 1
+    } else {
+      sess.turnRecords += 1
+      sess.legacyTurns += Number(row.turns) || 0
+    }
+    sess.inputTokens += row.inputTokens || 0
+    sess.outputTokens += row.outputTokens || 0
+    sess.cacheReadTokens += row.cacheReadTokens || 0
+    sess.cacheWriteTokens += row.cacheWriteTokens || 0
+    if (row.ts) {
+      if (!sess.firstTs || row.ts < sess.firstTs) sess.firstTs = row.ts
+      if (!sess.lastTs || row.ts > sess.lastTs) sess.lastTs = row.ts
+    }
+
+    const turnId = row.turnId || `legacy:${row.id}`
+    if (!messageMap.has(turnId)) {
+      messageMap.set(turnId, {
+        turnId,
+        sessionId: row.sessionId || '',
+        preview: '',
+        calls: 0,
+        turnRecords: 0,
+        legacyTurns: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        firstTs: row.ts || null,
+        lastTs: row.ts || null,
+        models: [],
+        tools: [],
+        status: 'ok',
+      })
+    }
+    const message = messageMap.get(turnId)
+    if (!message.sessionId && row.sessionId) message.sessionId = row.sessionId
+    if (!message.preview && row.messagePreview) message.preview = row.messagePreview
+    if (row.level === 'call') {
+      message.calls += 1
+    } else {
+      message.turnRecords += 1
+      message.legacyTurns += Number(row.turns) || 0
+    }
+    message.inputTokens += row.inputTokens || 0
+    message.outputTokens += row.outputTokens || 0
+    message.cacheReadTokens += row.cacheReadTokens || 0
+    message.cacheWriteTokens += row.cacheWriteTokens || 0
+    if (row.ts) {
+      if (!message.firstTs || row.ts < message.firstTs) message.firstTs = row.ts
+      if (!message.lastTs || row.ts > message.lastTs) message.lastTs = row.ts
+    }
+    if (row.model && !message.models.includes(row.model)) message.models.push(row.model)
+    if (Array.isArray(row.tools)) {
+      for (const tool of row.tools) {
+        if (tool && !message.tools.includes(tool)) message.tools.push(tool)
+      }
+    }
+    if (row.status === 'error') message.status = 'error'
   }
+
   summary.avgLatencyMs = latencyCount ? Math.round(latencySum / latencyCount) : 0
+  summary.activeDays = days.size
+  for (const sess of Object.values(summary.bySession)) {
+    sess.totalTokens = sess.inputTokens + sess.outputTokens + sess.cacheReadTokens + sess.cacheWriteTokens
+    sess.llmCalls = sess.calls + (sess.legacyTurns || sess.turnRecords)
+    summary.llmCalls += sess.llmCalls
+    summary.callRecords += sess.calls
+    summary.legacyTurns += sess.legacyTurns
+  }
+  summary.sessionCount = Object.keys(summary.bySession).length
+
+  const messages = [...messageMap.values()].map(message => ({
+    ...message,
+    level: message.calls > 0 ? 'calls' : 'turn',
+    llmCalls: message.calls + (message.legacyTurns || message.turnRecords),
+    totalTokens: message.inputTokens
+      + message.outputTokens
+      + message.cacheReadTokens
+      + message.cacheWriteTokens,
+  })).sort((a, b) => String(b.firstTs || '').localeCompare(String(a.firstTs || '')))
+  summary.messageTotal = messages.length
+  const limit = Math.max(1, Math.min(500, Number(messageLimit) || 200))
+  summary.messages = messages.slice(0, limit)
+  return summary
+}
+
+export function usageSummaryRange(principalId, { from, to, messageLimit = 200 } = {}) {
+  const now = new Date()
+  const fallback = monthBounds(monthKey(now))
+  let fromDate = from instanceof Date ? from : new Date(from)
+  let toDate = to instanceof Date ? to : new Date(to)
+  if (!Number.isFinite(fromDate.getTime())) fromDate = fallback.from
+  if (!Number.isFinite(toDate.getTime())) toDate = fallback.to
+  if (!(fromDate.getTime() < toDate.getTime())) {
+    fromDate = fallback.from
+    toDate = fallback.to
+  }
+  const rows = readUsageRowsInRange(principalId, { from: fromDate, to: toDate })
+  return summarizeRows(rows, { from: fromDate, to: toDate, messageLimit })
+}
+
+export function usageSummary(principalId, { month = monthKey() } = {}) {
+  const safeMonth = normalizeMonth(month)
+  const { from, to } = monthBounds(safeMonth)
+  const summary = usageSummaryRange(principalId, { from, to, messageLimit: 500 })
+  summary.month = safeMonth
   return summary
 }
 

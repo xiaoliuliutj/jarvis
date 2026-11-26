@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=36" />
+  <link rel="stylesheet" href="/style.css?v=49" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -65,13 +65,30 @@
       <section id="view-usage" class="view hidden">
         <div class="page-head">
           <h2>用量</h2>
-          <input id="usageMonth" class="month-input" type="month" />
         </div>
+        <div class="usage-controls">
+          <div class="segmented" id="usageGranularity">
+            <button type="button" data-granularity="day" class="active">日</button>
+            <button type="button" data-granularity="week">周</button>
+            <button type="button" data-granularity="month">月</button>
+          </div>
+          <div class="usage-period-nav">
+            <button id="usagePrev" class="ghost-btn compact usage-nav-btn" type="button" aria-label="上一期">‹</button>
+            <input id="usageDate" class="month-input" type="date" />
+            <button id="usageNext" class="ghost-btn compact usage-nav-btn" type="button" aria-label="下一期">›</button>
+            <button id="usageToday" class="ghost-btn compact" type="button">今天</button>
+          </div>
+        </div>
+        <div id="usagePeriodLabel" class="usage-period-label"></div>
         <div id="usageCards" class="stat-grid"></div>
+        <div id="usageMeta" class="usage-meta"></div>
         <div class="section-title">按模型</div>
         <div id="usageChart" class="usage-chart"></div>
-        <div class="section-title">调用记录</div>
-        <div id="usageRecords" class="record-list"></div>
+        <div class="section-title usage-details-head">
+          <span>对话明细 <span id="usageMessageCount" class="muted"></span></span>
+          <button id="usageDetailsToggle" class="ghost-btn compact" type="button">查看详情</button>
+        </div>
+        <div id="usageMessages" class="usage-message-list hidden"></div>
       </section>
 
       <section id="view-settings" class="view hidden">
@@ -311,6 +328,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=36"></script>
+  <script src="/app.js?v=49"></script>
 </body>
 </html>
