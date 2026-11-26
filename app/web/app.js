@@ -2162,11 +2162,8 @@
     }
     const tone = PERSONA_STATUS_LABELS[meta.statusStyle] || '跟随人设'
     const suffix = meta.statusStyle === 'custom' && meta.statusSuffix ? `「${meta.statusSuffix}」` : ''
-    const lines = String(meta.content || '').trim().split(/\n+/).filter(Boolean)
-    const first = (lines.find(line => !line.startsWith('#')) || lines[0] || '未设置')
-      .replace(/^[-*]\s*/, '')
-      .slice(0, 60)
-    el.personaSummary.textContent = `运行状态：${tone}${suffix} · ${first}`
+    const hasPersona = String(meta.content || '').trim().length > 0
+    el.personaSummary.textContent = `运行状态：${tone}${suffix} · ${hasPersona ? '已设置人设（只编辑语言风格、人设和特点）' : '未设置'}`
   }
 
   function renderPersonaPresets() {
