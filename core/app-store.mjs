@@ -99,6 +99,7 @@ export function setSessionContext(principalId, sessionId, context) {
     maxTokens: Number(context.maxTokens) || 0,
     rawMaxTokens: Number(context.rawMaxTokens) || 0,
     percentage: Number(context.percentage) || 0,
+    estimated: !!context.estimated,
     categories: Array.isArray(context.categories)
       ? context.categories.map(item => ({
           id: item?.id || '',
