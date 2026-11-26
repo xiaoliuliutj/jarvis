@@ -1774,39 +1774,60 @@
   }
 
   const TOOL_TIPS = new Map([
-    ['Bash', '正在执行命令'],
-    ['Read', '正在读取文件'],
-    ['Glob', '正在搜索文件'],
-    ['Grep', '正在搜索内容'],
-    ['Edit', '正在修改代码'],
-    ['Write', '正在写入文件'],
-    ['NotebookEdit', '正在修改笔记本'],
-    ['WebSearch', '正在查找资料'],
-    ['WebFetch', '正在读取网页'],
-    ['Task', '正在调度子任务'],
-    ['Agent', '正在调度子任务'],
+    ['Bash', '执行命令中'],
+    ['Read', '读取文件中'],
+    ['Write', '写入文件中'],
+    ['Edit', '修改文件中'],
+    ['MultiEdit', '修改文件中'],
+    ['NotebookEdit', '修改笔记中'],
+    ['Glob', '查找文件中'],
+    ['Grep', '搜索内容中'],
+    ['WebSearch', '搜索资料中'],
+    ['WebFetch', '读取网页中'],
+    ['Task', '处理子任务中'],
+    ['Agent', '处理子任务中'],
+    ['TodoWrite', '整理任务中'],
+    ['cn_calendar', '查询日历中'],
+    ['weather_query', '查询天气中'],
+    ['festival_query', '查询节日中'],
+    ['my_location', '定位中'],
+    ['file_builder', '生成文件中'],
+    ['read_word', '读取 Word 文档中'],
+    ['unzip_file', '解压文件中'],
+    ['screenshot', '截屏中'],
+    ['image_gen', '生成图片中'],
+    ['abstract_image', '生成表情图中'],
+    ['mouse_control', '操作鼠标中'],
+    ['keyboard_control', '操作键盘中'],
+    ['input_session', '控制键鼠中'],
+    ['restart', '重启服务中'],
+    ['persona', '处理人设中'],
   ])
-  const TOOL_PREFIX_TIPS = [
-    ['mcp__image_gen', '正在生成图片'],
-    ['mcp__screenshot', '正在截屏'],
-    ['mcp__file_builder', '正在生成文件'],
-    ['mcp__notes', '正在整理笔记'],
-    ['mcp__schedule', '正在处理日程'],
-    ['mcp__cron', '正在处理定时任务'],
-    ['mcp__weather', '正在查天气'],
-    ['mcp__my_location', '正在定位'],
-    ['mcp__restart', '正在重启服务'],
-  ]
+
+  // MCP 名称格式：mcp__<服务>__<工具>...；按服务+动作给出自然描述。
+  const TOOL_SERVICE_ACTIONS = new Map([
+    ['cron', { default: '处理定时任务中', add: '创建定时任务中', list: '查看定时任务中', update: '修改定时任务中', delete: '删除定时任务中' }],
+    ['schedule', { default: '处理日程中', add: '添加日程中', list: '查看日程中', update: '修改日程中', delete: '删除日程中' }],
+    ['notes', { default: '整理笔记中', add: '记录笔记中', read: '查看笔记中', task_done: '更新任务中' }],
+    ['persona', { default: '处理人设中', get_persona: '查看人设中', update_persona: '修改人设中' }],
+    ['restart', { default: '重启服务中' }],
+    ['_meta', { default: '管理工具中', create_tool: '创建工具中', update_tool: '修改工具中', delete_tool: '删除工具中', list_tools: '查看工具中', toggle_tool: '开关工具中', get_tool_template: '查看工具模板中' }],
+  ])
 
   function toolTip(name) {
     const raw = String(name || '').trim()
-    if (!raw) return '正在调用工具'
-    if (TOOL_TIPS.has(raw)) return TOOL_TIPS.get(raw)
-    for (const [prefix, tip] of TOOL_PREFIX_TIPS) {
-      if (raw.startsWith(prefix)) return tip
-    }
-    const short = raw.replace(/^mcp__/, '').replace(/__/g, ' · ')
-    return `正在调用：${short}`
+    if (!raw) return '执行操作中…'
+    const direct = TOOL_TIPS.get(raw) || TOOL_TIPS.get(raw.replace(/^mcp__/, ''))
+    if (direct) return direct
+
+    const parts = raw.replace(/^mcp__/, '').split('__').filter(Boolean)
+    const service = parts[0] || ''
+    const action = parts[1] || ''
+    if (TOOL_TIPS.has(service)) return TOOL_TIPS.get(service)
+    const actions = TOOL_SERVICE_ACTIONS.get(service)
+    if (actions) return actions[action] || actions.default
+    // 不认识的自定义工具：给通用描述，绝不展示代码方法名。
+    return '执行操作中…'
   }
 
   function runStatusLabel(status) {
