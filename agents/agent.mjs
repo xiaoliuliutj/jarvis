@@ -21,7 +21,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk'
 import path from 'path'
 import fs from 'fs'
 
-export const AUTO_COMPACT_WINDOW = 200000
+export const AUTO_COMPACT_WINDOW = 1000000
 
 export const name = 'Claude Code'
 export const description = '基于 Claude Agent SDK，内置完整 Claude Code 工具集（Read/Bash/Edit/Grep/Glob…）'
@@ -65,8 +65,8 @@ export function buildInjectedEnv({
   }
   delete injectedEnv.CLAUDECODE
 
-  // 主会话上下文过长会拖慢每一次工具调用；把自动压缩窗口从模型默认的 1M
-  // 降到 200k，让 CLI 更早压缩历史，后续回合的 cache/延迟都会明显下降。
+  // 自动压缩窗口使用模型默认的 1M；不再提前压到 200k，避免过早丢历史。
+  // 如果以后又要降低延迟，再单独把 AUTO_COMPACT_WINDOW 调小。
   if (!injectedEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW) {
     injectedEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(AUTO_COMPACT_WINDOW)
   }
