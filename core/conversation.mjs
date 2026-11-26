@@ -87,6 +87,13 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
     const systemPrompt = buildSystemPrompt({ principal, rules, persona, memory })
     const mcpServers = buildMcpServers(principal)
     const canUseTool = buildCanUseTool({ principal, workspace })
+    let toolChars = 0
+    try { toolChars = JSON.stringify(mcpServers || {}).length } catch {}
+    const contextHints = {
+      systemChars: Math.max(0, systemPrompt.length - persona.length - memory.length),
+      memoryChars: (persona?.length || 0) + (memory?.length || 0),
+      toolChars,
+    }
 
     const userModel = getChatRuntime(principalId)
     const canUseGlobal = !!principal.capabilities?.useGlobalModel
@@ -187,6 +194,7 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
         systemPrompt,
         mcpServers,
         canUseTool,
+        contextHints,
         reloadMcpServers: () => buildMcpServers(principal),
         memory: { append: (entry) => store.appendMemory(principalId, entry) },
       })) {

@@ -114,6 +114,7 @@ export async function* run(prompt, options = {}) {
     canUseTool,
     memory,
     reloadMcpServers,
+    contextHints = {},
   } = options
 
   if (!apiKey) {
@@ -148,6 +149,7 @@ export async function* run(prompt, options = {}) {
   let collectedText = ''
   const fileOpsThisTurn = []
   const seenAssistantUsage = new Set()
+  let lastAssistantUsage = null
   let signalWatcher = null
   let activeSessionId = resumeSessionId || null
 
@@ -185,6 +187,7 @@ export async function* run(prompt, options = {}) {
           || Number(usage.cache_read_input_tokens)
           || Number(usage.cache_creation_input_tokens)
         )
+        if (hasUsage) lastAssistantUsage = usage
         if (hasUsage && (!usageKey || !seenAssistantUsage.has(usageKey))) {
           if (usageKey) seenAssistantUsage.add(usageKey)
           yield {
@@ -254,6 +257,62 @@ export async function* run(prompt, options = {}) {
         } catch (err) {
           // 上下文统计不可用时不影响正常回复
           console.warn('[agent] context usage failed:', err.message)
+        }
+        if (!contextUsage) {
+          console.warn('[agent] context usage returned empty')
+        }
+
+        const hasUsedContext = !!(contextUsage?.categories || []).some(category => (
+          category
+          && category.kind !== 'free'
+          && category.kind !== 'deferred'
+          && Number(category.tokens) > 0
+        ))
+        if ((!contextUsage || !hasUsedContext) && lastAssistantUsage) {
+          const usage = lastAssistantUsage
+          const contextTokens = (Number(usage.input_tokens) || 0)
+            + (Number(usage.cache_read_input_tokens) || 0)
+            + (Number(usage.cache_creation_input_tokens) || 0)
+          let maxTokens = Math.max(
+            0,
+            ...Object.values(msg.modelUsage || {}).map(item => Number(item?.contextWindow) || 0),
+          )
+          if (!maxTokens) maxTokens = 1000000
+          const hints = contextHints || {}
+          let systemTokens = Math.max(0, Math.round((Number(hints.systemChars) || 0) / 3))
+          let memoryTokens = Math.max(0, Math.round((Number(hints.memoryChars) || 0) / 3))
+          let toolTokens = Math.max(0, Math.round((Number(hints.toolChars) || 0) / 4))
+          const overhead = systemTokens + memoryTokens + toolTokens
+          if (overhead > contextTokens && overhead > 0) {
+            const scale = contextTokens / overhead
+            systemTokens = Math.round(systemTokens * scale)
+            memoryTokens = Math.round(memoryTokens * scale)
+            toolTokens = Math.round(toolTokens * scale)
+          }
+          const messageTokens = Math.max(
+            0,
+            contextTokens - systemTokens - memoryTokens - toolTokens,
+          )
+          contextUsage = {
+            estimated: true,
+            totalTokens: contextTokens,
+            maxTokens,
+            rawMaxTokens: maxTokens,
+            percentage: maxTokens ? contextTokens / maxTokens * 100 : 0,
+            categories: [
+              { id: 'system_prompt', name: 'System prompt', tokens: systemTokens, kind: 'used' },
+              { id: 'messages', name: 'Messages', tokens: messageTokens, kind: 'used' },
+              { id: 'mcp_tools', name: 'MCP tools', tokens: toolTokens, kind: 'used' },
+              { id: 'memory_files', name: 'Memory files', tokens: memoryTokens, kind: 'used' },
+              {
+                id: 'free_space',
+                name: 'Free space',
+                tokens: Math.max(0, maxTokens - contextTokens),
+                kind: 'free',
+              },
+            ],
+          }
+          console.log('[agent] context usage fallback', contextTokens, maxTokens)
         }
 
         yield {

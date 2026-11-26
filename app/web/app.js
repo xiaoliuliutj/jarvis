@@ -324,7 +324,7 @@
 
   const CONTEXT_GROUPS = [
     { id: 'system', label: '系统', color: '#3987e5', ids: ['system_prompt'] },
-    { id: 'messages', label: '消息', color: '#d95926', ids: ['messages'] },
+    { id: 'messages', label: '历史', color: '#d95926', ids: ['messages'] },
     { id: 'tools', label: '工具', color: '#199e70', ids: ['system_tools', 'mcp_tools', 'mcp_instructions', 'custom_agents'] },
     { id: 'memory', label: '记忆', color: '#9085e9', ids: ['memory_files', 'skills'] },
     { id: 'buffer', label: '预留', color: '#c98500', ids: ['autocompact_buffer', 'compact_buffer'] },
@@ -390,7 +390,7 @@
       el.contextSegments.appendChild(segment)
     }
     el.contextBar.classList.toggle('empty', !visible.length)
-    el.contextLabel.textContent = `上下文 ${formatTokens(total)} / ${formatTokens(max)}`
+    el.contextLabel.textContent = `上下文 ${formatTokens(total)} / ${formatTokens(max)}${context.estimated ? ' · 估算' : ''}`
     const percentage = Number(context.percentage) || (max ? total / max * 100 : 0)
     el.contextPercent.textContent = max ? `${Math.round(percentage)}%` : ''
 
