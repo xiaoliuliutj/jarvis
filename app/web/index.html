@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=53" />
+  <link rel="stylesheet" href="/style.css?v=54" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -117,12 +117,24 @@
             <button id="editConnection" class="ghost-btn">修改</button>
           </div>
           <div class="settings-card">
-            <div class="settings-row"><span>账号</span><span id="settingsUsername">—</span></div>
+            <div class="settings-row">
+              <span>昵称</span>
+              <span class="settings-edit">
+                <span id="settingsNickname">—</span>
+                <button id="editNickname" class="link-btn">修改</button>
+                <span id="nicknameEditor" class="hidden">
+                  <input id="nicknameInput" class="inline-input" maxlength="64" placeholder="新昵称" />
+                  <button id="saveNickname" class="link-btn">保存</button>
+                  <button id="cancelNickname" class="link-btn">取消</button>
+                </span>
+              </span>
+            </div>
+            <div class="settings-row"><span>账号</span><span id="settingsAccount">—</span></div>
+            <div class="settings-row"><span>ID</span><span id="settingsAccountId">—</span></div>
             <div class="settings-row"><span>状态</span><span id="settingsStatus">—</span></div>
             <div class="settings-row"><span>服务器</span><span id="settingsUrl">—</span></div>
             <div class="settings-row"><span>设备</span><span id="settingsDevice">—</span></div>
-            <div class="settings-row"><span>访问令牌</span><span id="settingsToken">—</span></div>
-            <div class="settings-row"><span>Owner 令牌</span><span id="settingsOwnerToken">—</span></div>
+            <div class="settings-row"><span>Owner 权限</span><span id="settingsOwnerStatus">—</span></div>
           </div>
           <button id="reconnectBtn" class="ghost-btn wide">重新连接</button>
           <button id="logoutBtn" class="danger-btn" style="margin-top:8px;">退出登录</button>
@@ -344,6 +356,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=53"></script>
+  <script src="/app.js?v=54"></script>
 </body>
 </html>

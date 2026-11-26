@@ -13,12 +13,14 @@
  *   GET  /api/file/:id       下载 Jarvis 发出的文件（token 走 query）
  *   WS   /ws?token=&device=  接收回复 / 文件 / 通知
  *
- * 鉴权：Authorization: Bearer <token> 或 ?token=<token>
- * Token 首次启动自动生成到 userdata/app-adapter/token.txt。
+ * 鉴权：
+ *   - 身份：账号登录后的 user token（Authorization: Bearer 或 ?token=）
+ *   - owner 权限：额外的 owner token（X-Owner-Token 或 ?ownerToken=）
+ *   - device 只用于消息路由，不参与身份/权限
  *
  * 配置（config/bridge.json → adapters.app）：
  *   { "enabled": true, "accounts": ["default"], "port": 17779,
- *     "host": "0.0.0.0", "token": "可选，覆盖自动生成", "maxBodyMb": 25 }
+ *     "host": "0.0.0.0", "maxBodyMb": 25 }
  */
 
 import fs from 'fs'
@@ -29,7 +31,7 @@ import express from 'express'
 import { WebSocketServer } from 'ws'
 import { ROOT } from '../../core/paths.mjs'
 import { logInfo, logWarn, logError } from '../../core/logger.mjs'
-import { resolvePrincipal, getPrincipal } from '../../core/principals.mjs'
+import { getPrincipal } from '../../core/principals.mjs'
 import { getCurrentSession, readMessages, appendMessage, touchSession, listSessions } from '../../core/user-store.mjs'
 import * as appStore from '../../core/app-store.mjs'
 import * as authStore from '../../core/auth-store.mjs'
@@ -40,7 +42,6 @@ import { isSilentText } from '../../core/text-filter.mjs'
 export const id = 'app'
 
 const APP_WEB_DIR = path.join(ROOT, 'app', 'web')
-const TOKEN_FILE = path.join(ROOT, 'userdata', 'app-adapter', 'token.txt')
 const OWNER_TOKEN_FILE = path.join(ROOT, 'userdata', 'app-adapter', 'owner-token.txt')
 const FILES_DIR = path.join(ROOT, 'userdata', 'app-adapter', 'files')
 const DEFAULT_PORT = 17779
@@ -53,7 +54,6 @@ const QUEUE_LIMIT = 50
 let server = null
 let wss = null
 let onMessageCb = null
-let accessToken = ''
 let cfg = {}
 const clients = new Map()      // clientId -> Set<WebSocket>
 const deviceClients = new Map() // deviceId -> 最近一个 clientId
@@ -74,20 +74,6 @@ function readBridgeConfig() {
   } catch {
     return {}
   }
-}
-
-function loadOrCreateToken(config) {
-  if (config.token) return String(config.token).trim()
-  try {
-    if (fs.existsSync(TOKEN_FILE)) {
-      const saved = fs.readFileSync(TOKEN_FILE, 'utf-8').trim()
-      if (saved) return saved
-    }
-  } catch {}
-  const token = crypto.randomBytes(24).toString('hex')
-  fs.mkdirSync(path.dirname(TOKEN_FILE), { recursive: true })
-  fs.writeFileSync(TOKEN_FILE, token + '\n', { encoding: 'utf-8', mode: 0o600 })
-  return token
 }
 
 /** owner-token.txt：owner 权限的唯一凭证；明文不打印、不写日志。 */
@@ -634,6 +620,16 @@ function buildServer() {
     })
   })
 
+  app.put('/api/v1/me', auth, (req, res) => {
+    const { user } = appPrincipalFor(req)
+    try {
+      const updated = authStore.updateNickname(user.accountId, req.body?.nickname)
+      res.json({ ok: true, nickname: updated.nickname, user: updated })
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message })
+    }
+  })
+
   app.get('/api/v1/app/version', auth, (_req, res) => {
     try {
       const latest = JSON.parse(fs.readFileSync(path.join(APP_WEB_DIR, 'dl', 'latest.json'), 'utf-8'))
@@ -1129,7 +1125,6 @@ export async function start(onMessage) {
   if (server) return
 
   cfg = readBridgeConfig().adapters?.app || {}
-  accessToken = loadOrCreateToken(cfg)
   const port = Number(process.env.JARVIS_APP_PORT || cfg.port || DEFAULT_PORT)
   const host = process.env.JARVIS_APP_HOST || cfg.host || '0.0.0.0'
 
@@ -1145,7 +1140,6 @@ export async function start(onMessage) {
   })
 
   console.log(`[app] adapter listening on ${host}:${port}`)
-  console.log(`[app] 访问令牌文件: ${TOKEN_FILE}`)
   logInfo('app.adapter.start', '', { host, port })
 }
 
@@ -1278,9 +1272,4 @@ export function stop() {
   try { server?.close() } catch {}
   server = null
   onMessageCb = null
-}
-
-// 供测试脚本直接读取当前 token（不对外暴露为 HTTP）
-export function _getAccessToken() {
-  return accessToken
 }

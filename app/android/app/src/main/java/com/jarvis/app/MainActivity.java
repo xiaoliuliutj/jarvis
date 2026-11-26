@@ -64,7 +64,6 @@ public class MainActivity extends Activity {
     private LinearLayout setupPanel;
     private WebView webView;
     private EditText urlInput;
-    private EditText tokenInput;
     private EditText deviceInput;
     private ValueCallback<Uri[]> fileCallback;
     private FrameLayout splashView;
@@ -286,13 +285,12 @@ public class MainActivity extends Activity {
         panel.setPadding(dp(18), dp(14), dp(18), dp(16));
 
         TextView hint = new TextView(this);
-        hint.setText("手机先连上 Tailscale，再填入电脑端 Bridge 的 App 地址和访问令牌（token.txt）");
+        hint.setText("手机先连上 Tailscale，再填入电脑端 Bridge 的 App 地址；登录在网页里完成。");
         hint.setTextSize(13);
         hint.setTextColor(Color.parseColor("#6f7a73"));
         panel.addView(hint);
 
         urlInput = addInput(panel, "服务器地址", "http://100.100.142.113:17779", InputType.TYPE_TEXT_VARIATION_URI);
-        tokenInput = addInput(panel, "访问令牌", "userdata/app-adapter/token.txt", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         deviceInput = addInput(panel, "设备标识", "owner", InputType.TYPE_CLASS_TEXT);
 
         Button save = new Button(this);
@@ -437,13 +435,12 @@ public class MainActivity extends Activity {
     }
 
     private boolean hasConfig() {
-        return !prefs.getString("url", "").isEmpty() && !prefs.getString("token", "").isEmpty();
+        return !prefs.getString("url", "").isEmpty();
     }
 
     private void showSetup(String error) {
         hideSplash();
         urlInput.setText(prefs.getString("url", "http://100.100.142.113:17779"));
-        tokenInput.setText(prefs.getString("token", ""));
         deviceInput.setText(prefs.getString("device", "owner"));
         setupPanel.setVisibility(View.VISIBLE);
         if (error != null && !error.isEmpty()) {
@@ -453,7 +450,6 @@ public class MainActivity extends Activity {
 
     private void saveConfig() {
         String url = urlInput.getText().toString().trim().replaceAll("/+$", "");
-        String token = tokenInput.getText().toString().trim();
         String device = deviceInput.getText().toString().trim();
         if (device.isEmpty()) {
             device = "owner";
@@ -462,13 +458,8 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "地址要以 http:// 或 https:// 开头", Toast.LENGTH_SHORT).show();
             return;
         }
-        if (token.isEmpty()) {
-            Toast.makeText(this, "请填写访问令牌", Toast.LENGTH_SHORT).show();
-            return;
-        }
         prefs.edit()
                 .putString("url", url)
-                .putString("token", token)
                 .putString("device", device)
                 .apply();
         setupPanel.setVisibility(View.GONE);
@@ -477,13 +468,12 @@ public class MainActivity extends Activity {
 
     private void loadWeb(boolean reset) {
         String base = prefs.getString("url", "").replaceAll("/+$", "");
-        String token = prefs.getString("token", "");
         String device = prefs.getString("device", "owner");
-        if (base.isEmpty() || token.isEmpty()) {
+        if (base.isEmpty()) {
             showSetup("");
             return;
         }
-        String target = base + "/?token=" + Uri.encode(token) + "&device=" + Uri.encode(device)
+        String target = base + "/?device=" + Uri.encode(device)
                 + (reset ? "&reset=1" : "");
         uiHandler.postDelayed(this::hideSplash, 4000);
         webView.loadUrl(target);

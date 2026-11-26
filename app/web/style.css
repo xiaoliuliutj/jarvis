@@ -947,6 +947,17 @@ body.viewer-open { overflow: hidden; }
 .settings-row:last-child { border-bottom: none; }
 .settings-row span:first-child { color: var(--muted); flex: 0 0 auto; }
 .settings-row span:last-child { text-align: right; word-break: break-all; }
+.settings-edit { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.inline-input {
+  width: 128px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+}
 .ghost-btn {
   padding: 8px 12px;
   border: 1px solid var(--line);

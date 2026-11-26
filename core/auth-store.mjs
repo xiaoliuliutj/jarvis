@@ -212,6 +212,21 @@ export function login(account, password) {
   return { ...publicUser(user), tokenId: user.tokenId }
 }
 
+/** 修改昵称（账号/accountId 均可定位）。 */
+export function updateNickname(accountOrAccountId, nickname) {
+  const value = String(accountOrAccountId || '').trim()
+  const safeNickname = normalizeNickname(nickname)
+  const data = readUsers()
+  const user = data.users[value.toLowerCase()]
+    || Object.values(data.users).find(item => item.accountId === value)
+  if (!user) throw new Error('账号不存在')
+  user.nickname = safeNickname
+  user.updatedAt = new Date().toISOString()
+  writeUsers(data)
+  setPrincipalDisplayName(user.principalId, safeNickname)
+  return publicUser(user)
+}
+
 /** 重置密码（供 owner token 恢复入口使用）。 */
 export function setPassword(accountOrAccountId, password) {
   const value = String(accountOrAccountId || '').trim()

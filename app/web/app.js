@@ -117,8 +117,15 @@
     settingsStatus: $('settingsStatus'),
     settingsUrl: $('settingsUrl'),
     settingsDevice: $('settingsDevice'),
-    settingsToken: $('settingsToken'),
-    settingsOwnerToken: $('settingsOwnerToken'),
+    settingsNickname: $('settingsNickname'),
+    settingsAccount: $('settingsAccount'),
+    settingsAccountId: $('settingsAccountId'),
+    settingsOwnerStatus: $('settingsOwnerStatus'),
+    editNickname: $('editNickname'),
+    nicknameEditor: $('nicknameEditor'),
+    nicknameInput: $('nicknameInput'),
+    saveNickname: $('saveNickname'),
+    cancelNickname: $('cancelNickname'),
     editConnection: $('editConnection'),
     reconnectBtn: $('reconnectBtn'),
     addModel: $('addModel'),
@@ -155,7 +162,6 @@
     loginBtn: $('loginBtn'),
     registerBtn: $('registerBtn'),
     advancedSetup: $('advancedSetup'),
-    settingsUsername: $('settingsUsername'),
     logoutBtn: $('logoutBtn'),
     modelModal: $('modelModal'),
     modelModalTitle: $('modelModalTitle'),
@@ -879,6 +885,38 @@
 
   el.editConnection.addEventListener('click', () => openSetup(''))
   el.reconnectBtn.addEventListener('click', reconnect)
+
+  function openNicknameEditor() {
+    if (!el.nicknameEditor) return
+    el.nicknameInput.value = state.me?.nickname || ''
+    el.nicknameEditor.classList.remove('hidden')
+    if (el.editNickname) el.editNickname.classList.add('hidden')
+    el.nicknameInput.focus()
+    try { el.nicknameInput.select() } catch {}
+  }
+  function closeNicknameEditor() {
+    if (el.nicknameEditor) el.nicknameEditor.classList.add('hidden')
+    if (el.editNickname) el.editNickname.classList.remove('hidden')
+  }
+  async function saveNickname() {
+    const nickname = (el.nicknameInput.value || '').trim()
+    if (!nickname) { toast('昵称不能为空'); return }
+    try {
+      const data = await api('/api/v1/me', { method: 'PUT', body: { nickname } })
+      if (state.me) state.me.nickname = data.nickname || nickname
+      closeNicknameEditor()
+      renderConnection()
+      toast('昵称已更新')
+    } catch (err) {
+      toast(`修改失败：${err.message}`)
+    }
+  }
+  el.editNickname?.addEventListener('click', openNicknameEditor)
+  el.cancelNickname?.addEventListener('click', closeNicknameEditor)
+  el.saveNickname?.addEventListener('click', saveNickname)
+  el.nicknameInput?.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); saveNickname() }
+  })
 
   // ── API ─────────────────────────────────────────────────────────────────
 
@@ -1927,9 +1965,6 @@
       const data = await api('/api/v1/me')
       state.me = data
       setOwnerChip(!!data.owner)
-      if (el.settingsUsername) {
-        el.settingsUsername.textContent = data.nickname || data.account || data.displayName || '—'
-      }
       renderConnection()
       if (el.testChip) el.testChip.textContent = data.testMode ? '测试' : 'App'
     } catch {}
@@ -3042,14 +3077,23 @@
     }
   }
 
+  function maskId(value) {
+    const s = String(value || '').trim()
+    if (!s) return '—'
+    if (s.length <= 10) return `${s.slice(0, 3)}…${s.slice(-2)}`
+    return `${s.slice(0, 6)}…${s.slice(-4)}`
+  }
+
   function renderConnection() {
     if (!el.settingsStatus) return
-    el.settingsUsername.textContent = state.me?.nickname || state.me?.account || state.me?.displayName || '—'
+    const me = state.me || {}
+    el.settingsNickname.textContent = me.nickname || '—'
+    el.settingsAccount.textContent = me.account || '—'
+    el.settingsAccountId.textContent = maskId(me.accountId)
+    el.settingsOwnerStatus.textContent = me.owner ? '已开启' : '未开启'
     el.settingsStatus.textContent = state.connectionStatus || '—'
     el.settingsUrl.textContent = state.url || '—'
     el.settingsDevice.textContent = state.device || '—'
-    el.settingsToken.textContent = mask(state.token)
-    el.settingsOwnerToken.textContent = mask(state.ownerToken)
   }
 
   function renderModels() {
