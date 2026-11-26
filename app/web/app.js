@@ -2240,7 +2240,10 @@
     const meId = state.me?.principalId || ''
     const tools = state.tools.filter(tool => {
       if (state.toolScope === 'my') {
-        return tool.source === 'user' && !!meId && tool.ownerId === meId
+        if (tool.source === 'user') return !!meId && tool.ownerId === meId
+        // 系统工具是在这个账号的会话里逐步创建/定制的，归入「我的」；
+        // 外部/原生占位仍留在「全部」。
+        return tool.source === 'system' && tool.enabled !== false && tool.accessible !== false
       }
       return true
     })
@@ -2255,7 +2258,7 @@
       empty.className = 'empty-state'
       empty.textContent = state.toolQuery
         ? '没有匹配的工具'
-        : (state.toolScope === 'my' ? '你还没有创建自己的工具' : '还没有工具')
+        : (state.toolScope === 'my' ? '这个账号还没有可用工具' : '还没有工具')
       el.toolList.appendChild(empty)
       return
     }
