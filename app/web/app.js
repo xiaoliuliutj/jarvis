@@ -65,6 +65,9 @@
     navButtons: Array.from(document.querySelectorAll('.nav-btn')),
     messages: $('messages'),
     chatUnread: $('chatUnread'),
+    chatScrollbar: $('chatScrollbar'),
+    chatScrollbarThumb: $('chatScrollbarThumb'),
+    scrollBottomBtn: $('scrollBottomBtn'),
     olderLoading: $('olderLoading'),
     olderLoadingText: $('olderLoadingText'),
     input: $('input'),
@@ -813,6 +816,7 @@
       empty.className = 'empty-state'
       empty.textContent = '和 Jarvis 说点什么喵～'
       el.messages.appendChild(empty)
+      requestAnimationFrame(updateChatScrollbar)
       return
     }
     for (const item of items) {
@@ -1014,14 +1018,42 @@
   }
 
   function appendMessage(item) {
+    const wasAtBottom = el.messages.scrollTop + el.messages.clientHeight >= el.messages.scrollHeight - 60
     state.messages.push(item)
     if (el.messages.querySelector('.empty-state')) el.messages.textContent = ''
     el.messages.appendChild(buildMessageEl(item))
-    scrollToBottom()
+    if (wasAtBottom) scrollToBottom()
+    else requestAnimationFrame(updateChatScrollbar)
+  }
+
+  function updateChatScrollbar() {
+    const messages = el.messages
+    const track = el.chatScrollbar
+    const thumb = el.chatScrollbarThumb
+    if (!messages || !track || !thumb) return
+    const maxScroll = Math.max(0, messages.scrollHeight - messages.clientHeight)
+    if (maxScroll < 2) {
+      track.classList.add('hidden')
+      if (el.scrollBottomBtn) el.scrollBottomBtn.classList.add('hidden')
+      return
+    }
+    track.classList.remove('hidden')
+    const trackHeight = track.clientHeight
+    const thumbHeight = Math.max(32, Math.round(trackHeight * messages.clientHeight / messages.scrollHeight))
+    const maxTop = Math.max(0, trackHeight - thumbHeight)
+    const ratio = maxScroll ? Math.min(1, Math.max(0, messages.scrollTop / maxScroll)) : 0
+    thumb.style.height = thumbHeight + 'px'
+    thumb.style.transform = `translateY(${Math.round(maxTop * ratio)}px)`
+    if (el.scrollBottomBtn) {
+      el.scrollBottomBtn.classList.toggle('hidden', messages.scrollTop >= maxScroll - 40)
+    }
   }
 
   function scrollToBottom() {
-    requestAnimationFrame(() => { el.messages.scrollTop = el.messages.scrollHeight })
+    requestAnimationFrame(() => {
+      el.messages.scrollTop = el.messages.scrollHeight
+      updateChatScrollbar()
+    })
   }
 
   function showTyping() {
@@ -1118,6 +1150,7 @@
       renderMessages(state.messages)
       requestAnimationFrame(() => {
         container.scrollTop = previousTop + (container.scrollHeight - previousHeight)
+        updateChatScrollbar()
       })
     } catch {}
     finally {
@@ -1289,8 +1322,60 @@
   }
 
   el.messages.addEventListener('scroll', () => {
+    updateChatScrollbar()
     if (el.messages.scrollTop < 32) loadOlder().catch(() => {})
   })
+
+  if (el.scrollBottomBtn) {
+    el.scrollBottomBtn.addEventListener('click', () => {
+      el.messages.scrollTo({ top: el.messages.scrollHeight, behavior: 'smooth' })
+      updateChatScrollbar()
+    })
+  }
+
+  if (el.chatScrollbar && el.chatScrollbarThumb) {
+    const track = el.chatScrollbar
+    const thumb = el.chatScrollbarThumb
+    const messages = el.messages
+    const maxScroll = () => Math.max(0, messages.scrollHeight - messages.clientHeight)
+    const scrollToTrackY = clientY => {
+      const rect = track.getBoundingClientRect()
+      const ratio = rect.height ? Math.min(1, Math.max(0, (clientY - rect.top) / rect.height)) : 0
+      messages.scrollTop = ratio * maxScroll()
+    }
+    track.addEventListener('pointerdown', event => {
+      if (event.target === thumb) return
+      event.preventDefault()
+      scrollToTrackY(event.clientY)
+    })
+    thumb.addEventListener('pointerdown', event => {
+      event.preventDefault()
+      event.stopPropagation()
+      const startY = event.clientY
+      const startTop = messages.scrollTop
+      const trackHeight = track.clientHeight
+      const thumbHeight = thumb.offsetHeight
+      const total = maxScroll()
+      const denominator = Math.max(1, trackHeight - thumbHeight)
+      try { thumb.setPointerCapture(event.pointerId) } catch {}
+      const move = moveEvent => {
+        const delta = moveEvent.clientY - startY
+        messages.scrollTop = Math.min(total, Math.max(0, startTop + (delta / denominator) * total))
+      }
+      const end = () => {
+        thumb.removeEventListener('pointermove', move)
+        thumb.removeEventListener('pointerup', end)
+        thumb.removeEventListener('pointercancel', end)
+      }
+      thumb.addEventListener('pointermove', move)
+      thumb.addEventListener('pointerup', end)
+      thumb.addEventListener('pointercancel', end)
+    })
+    if (window.ResizeObserver) {
+      new ResizeObserver(() => updateChatScrollbar()).observe(messages)
+    }
+    window.addEventListener('resize', () => updateChatScrollbar())
+  }
 
   el.send.addEventListener('click', sendMessage)
   el.input.addEventListener('keydown', event => {

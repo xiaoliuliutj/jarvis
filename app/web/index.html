@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=34" />
+  <link rel="stylesheet" href="/style.css?v=35" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -29,8 +29,14 @@
           <span class="older-spinner"></span>
           <span id="olderLoadingText">正在加载更早消息…</span>
         </div>
-        <div id="messages" aria-live="polite">
-          <div class="empty-state" id="chatEmpty">和 Jarvis 说点什么喵～</div>
+        <div class="chat-scroll-wrap">
+          <div id="messages" aria-live="polite">
+            <div class="empty-state" id="chatEmpty">和 Jarvis 说点什么喵～</div>
+          </div>
+          <div id="chatScrollbar" class="chat-scrollbar hidden">
+            <div id="chatScrollbarThumb" class="chat-scrollbar-thumb"></div>
+          </div>
+          <button id="scrollBottomBtn" class="scroll-bottom-btn hidden" aria-label="回到最下方">↓</button>
         </div>
         <footer id="composer">
           <button id="attachBtn" class="icon-btn" aria-label="附件">＋</button>
@@ -305,6 +311,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=34"></script>
+  <script src="/app.js?v=35"></script>
 </body>
 </html>
