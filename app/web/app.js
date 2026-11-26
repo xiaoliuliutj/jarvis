@@ -57,6 +57,7 @@
     context: null,
     editingModelId: null,
     updateInfo: null,
+    pendingInstall: false,
   }
 
   const el = {
@@ -690,8 +691,41 @@
     try {
       if (typeof bridge.canInstallPackages === 'function') canInstall = !!bridge.canInstallPackages()
     } catch {}
-    if (el.updateStatus) el.updateStatus.textContent = canInstall ? '' : '需要允许安装未知应用'
+    if (el.updateStatus) {
+      el.updateStatus.textContent = canInstall
+        ? ''
+        : '需要允许 Jarvis 安装未知应用（设置 → 应用 → Jarvis → 安装未知应用）'
+    }
     return current
+  }
+
+  /** 从系统“安装未知应用”页面返回后，如果已授权就自动继续下载安装。 */
+  function retryPendingInstall() {
+    if (!state.pendingInstall || !state.updateInfo) return false
+    const bridge = notifyBridge()
+    if (!bridge || typeof bridge.installUpdate !== 'function') return false
+    let canInstall = true
+    try {
+      if (typeof bridge.canInstallPackages === 'function') canInstall = !!bridge.canInstallPackages()
+    } catch {}
+    if (!canInstall) {
+      if (el.updateStatus) {
+        el.updateStatus.textContent = '需要允许 Jarvis 安装未知应用（设置 → 应用 → Jarvis → 安装未知应用）'
+      }
+      return false
+    }
+    state.pendingInstall = false
+    try {
+      const ok = bridge.installUpdate(absUrl(state.updateInfo.url), state.updateInfo.sha256 || '')
+      if (el.updateStatus) {
+        el.updateStatus.textContent = ok ? '正在下载，随后会弹出安装确认…' : '请先允许 Jarvis 安装未知应用'
+      }
+      if (!ok) state.pendingInstall = true
+      return ok
+    } catch {
+      if (el.updateStatus) el.updateStatus.textContent = '无法开始安装'
+      return false
+    }
   }
 
   async function checkUpdate() {
@@ -3887,10 +3921,12 @@
       if (!bridge || !state.updateInfo) return
       try {
         const ok = bridge.installUpdate(absUrl(state.updateInfo.url), state.updateInfo.sha256 || '')
+        state.pendingInstall = !ok
         if (el.updateStatus) el.updateStatus.textContent = ok
           ? '正在下载，随后会弹出安装确认…'
-          : '请先允许 Jarvis 安装未知应用'
+          : '需要允许 Jarvis 安装未知应用，授权后返回会自动继续'
       } catch {
+        state.pendingInstall = false
         if (el.updateStatus) el.updateStatus.textContent = '无法开始安装'
       }
     })
@@ -3939,11 +3975,13 @@
       refreshCurrentSessionSoon()
       flushOutbox().catch(() => {})
       markReadSoon()
+      if (state.tab === 'settings') retryPendingInstall()
     }
   })
   window.addEventListener('focus', () => {
     syncChatVisible()
     refreshCurrentSessionSoon()
+    if (state.tab === 'settings') retryPendingInstall()
   })
   window.addEventListener('blur', syncChatVisible)
   window.addEventListener('online', () => {
