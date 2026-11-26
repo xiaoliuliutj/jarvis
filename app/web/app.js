@@ -57,7 +57,6 @@
     context: null,
     editingModelId: null,
     updateInfo: null,
-    pendingInstall: false,
   }
 
   const el = {
@@ -160,8 +159,6 @@
     appVersion: $('appVersion'),
     checkUpdateBtn: $('checkUpdateBtn'),
     installUpdateBtn: $('installUpdateBtn'),
-    installPermissionBtn: $('installPermissionBtn'),
-    updateAppSettingsBtn: $('updateAppSettingsBtn'),
     setup: $('setup'),
     setupUrl: $('setupUrl'),
     setupOwnerToken: $('setupOwnerToken'),
@@ -688,45 +685,8 @@
     try { current = bridge.getVersionName?.() || '' } catch {}
     if (el.appVersion) el.appVersion.textContent = current || '—'
     if (el.installUpdateBtn) el.installUpdateBtn.classList.add('hidden')
-    let canInstall = true
-    try {
-      if (typeof bridge.canInstallPackages === 'function') canInstall = !!bridge.canInstallPackages()
-    } catch {}
-    if (el.updateStatus) {
-      el.updateStatus.textContent = canInstall
-        ? ''
-        : '需要允许 Jarvis 安装未知应用（设置 → 应用 → Jarvis → 安装未知应用）'
-    }
+    if (el.updateStatus) el.updateStatus.textContent = ''
     return current
-  }
-
-  /** 从系统“安装未知应用”页面返回后，如果已授权就自动继续下载安装。 */
-  function retryPendingInstall() {
-    if (!state.pendingInstall || !state.updateInfo) return false
-    const bridge = notifyBridge()
-    if (!bridge || typeof bridge.installUpdate !== 'function') return false
-    let canInstall = true
-    try {
-      if (typeof bridge.canInstallPackages === 'function') canInstall = !!bridge.canInstallPackages()
-    } catch {}
-    if (!canInstall) {
-      if (el.updateStatus) {
-        el.updateStatus.textContent = '需要允许 Jarvis 安装未知应用（设置 → 应用 → Jarvis → 安装未知应用）'
-      }
-      return false
-    }
-    state.pendingInstall = false
-    try {
-      const ok = bridge.installUpdate(absUrl(state.updateInfo.url), state.updateInfo.sha256 || '')
-      if (el.updateStatus) {
-        el.updateStatus.textContent = ok ? '正在下载，随后会弹出安装确认…' : '请先允许 Jarvis 安装未知应用'
-      }
-      if (!ok) state.pendingInstall = true
-      return ok
-    } catch {
-      if (el.updateStatus) el.updateStatus.textContent = '无法开始安装'
-      return false
-    }
   }
 
   async function checkUpdate() {
@@ -738,7 +698,7 @@
       const data = await api('/api/v1/app/version')
       state.updateInfo = data
       if (versionNewer(data.version, current)) {
-        if (el.updateStatus) el.updateStatus.textContent = `发现 ${data.version}`
+        if (el.updateStatus) el.updateStatus.textContent = `发现 ${data.version}，点下方「下载安装包」`
         if (el.installUpdateBtn) el.installUpdateBtn.classList.remove('hidden')
       } else {
         if (el.updateStatus) el.updateStatus.textContent = '已是最新'
@@ -3906,38 +3866,27 @@
   if (el.checkUpdateBtn) {
     el.checkUpdateBtn.addEventListener('click', () => { checkUpdate().catch(() => {}) })
   }
-  if (el.installPermissionBtn) {
-    el.installPermissionBtn.addEventListener('click', () => {
-      const bridge = notifyBridge()
-      if (!bridge) return
-      try {
-        if (typeof bridge.openInstallPermission === 'function') bridge.openInstallPermission()
-        else if (typeof bridge.openAppSettings === 'function') bridge.openAppSettings()
-      } catch {}
-    })
-  }
-  if (el.updateAppSettingsBtn) {
-    el.updateAppSettingsBtn.addEventListener('click', () => {
-      const bridge = notifyBridge()
-      if (!bridge) return
-      try {
-        if (typeof bridge.openAppSettings === 'function') bridge.openAppSettings()
-      } catch {}
-    })
-  }
   if (el.installUpdateBtn) {
     el.installUpdateBtn.addEventListener('click', () => {
       const bridge = notifyBridge()
       if (!bridge || !state.updateInfo) return
+      const url = absUrl(state.updateInfo.url)
+      const fileName = `Jarvis-${state.updateInfo.version || 'update'}.apk`
       try {
-        const ok = bridge.installUpdate(absUrl(state.updateInfo.url), state.updateInfo.sha256 || '')
-        state.pendingInstall = !ok
-        if (el.updateStatus) el.updateStatus.textContent = ok
-          ? '正在下载，随后会弹出安装确认…'
-          : '需要允许 Jarvis 安装未知应用，授权后返回会自动继续'
+        // 不再使用 App 内置安装器：交给系统 DownloadManager 下载，用户从通知/文件管理器手动安装。
+        if (typeof bridge.downloadFile === 'function') {
+          const ok = bridge.downloadFile(url, fileName)
+          if (el.updateStatus) el.updateStatus.textContent = ok
+            ? '已开始下载，完成后点通知里的安装包安装'
+            : '下载失败，请稍后重试'
+        } else if (typeof bridge.openExternal === 'function') {
+          bridge.openExternal(browserSafeUrl(url))
+          if (el.updateStatus) el.updateStatus.textContent = '已打开浏览器下载安装包'
+        } else {
+          window.location.href = url
+        }
       } catch {
-        state.pendingInstall = false
-        if (el.updateStatus) el.updateStatus.textContent = '无法开始安装'
+        if (el.updateStatus) el.updateStatus.textContent = '下载失败'
       }
     })
   }
@@ -3985,13 +3934,11 @@
       refreshCurrentSessionSoon()
       flushOutbox().catch(() => {})
       markReadSoon()
-      if (state.tab === 'settings') retryPendingInstall()
     }
   })
   window.addEventListener('focus', () => {
     syncChatVisible()
     refreshCurrentSessionSoon()
-    if (state.tab === 'settings') retryPendingInstall()
   })
   window.addEventListener('blur', syncChatVisible)
   window.addEventListener('online', () => {
