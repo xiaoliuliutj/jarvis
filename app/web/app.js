@@ -1044,6 +1044,15 @@
           local: true,
         })
       }
+      // 文件消息按发送时间插回原位置，不能统一堆在最后。
+      state.messages.sort((a, b) => {
+        const at = Date.parse(a.ts || '') || 0
+        const bt = Date.parse(b.ts || '') || 0
+        if (at !== bt) return at - bt
+        const as = Number.isInteger(a.seq) ? a.seq : Number.MAX_SAFE_INTEGER
+        const bs = Number.isInteger(b.seq) ? b.seq : Number.MAX_SAFE_INTEGER
+        return as - bs
+      })
       renderMessages(state.messages)
       setOwnerChip(!!data.owner)
       setUnread(data.unread || 0)

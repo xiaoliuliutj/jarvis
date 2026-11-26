@@ -179,7 +179,9 @@ public class MainActivity extends Activity {
 
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        box.setGravity(Gravity.CENTER);
+        // 内容整体略高于屏幕正中，避免 logo 贴在顶部。
+        box.setPadding(0, 0, 0, dp(96));
         splash.addView(box, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -232,30 +234,30 @@ public class MainActivity extends Activity {
                 .alpha(1f)
                 .scaleX(1f)
                 .scaleY(1f)
-                .setStartDelay(60)
-                .setDuration(520)
+                .setStartDelay(40)
+                .setDuration(300)
                 .setInterpolator(new DecelerateInterpolator())
                 .start();
         title.animate()
                 .alpha(1f)
                 .translationY(0)
-                .setStartDelay(220)
-                .setDuration(480)
+                .setStartDelay(120)
+                .setDuration(280)
                 .start();
         subtitle.animate()
                 .alpha(1f)
-                .setStartDelay(360)
-                .setDuration(480)
+                .setStartDelay(200)
+                .setDuration(260)
                 .start();
         progress.animate()
                 .alpha(1f)
-                .setStartDelay(500)
-                .setDuration(400)
+                .setStartDelay(280)
+                .setDuration(240)
                 .start();
 
         splashPulse = ObjectAnimator.ofFloat(logo, "alpha", 1f, 0.55f, 1f);
-        splashPulse.setDuration(1900);
-        splashPulse.setStartDelay(750);
+        splashPulse.setDuration(1600);
+        splashPulse.setStartDelay(420);
         splashPulse.setRepeatCount(ObjectAnimator.INFINITE);
         splashPulse.start();
 
@@ -270,7 +272,7 @@ public class MainActivity extends Activity {
         }
         splashView.animate()
                 .alpha(0f)
-                .setDuration(300)
+                .setDuration(200)
                 .withEndAction(() -> {
                     if (splashView != null) splashView.setVisibility(View.GONE);
                 })
@@ -344,7 +346,7 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView v, String url) {
                 super.onPageFinished(v, url);
                 // 数据加载由页面通过 JarvisNative.pageReady() 通知；这里只做超时兜底。
-                uiHandler.postDelayed(MainActivity.this::hideSplash, 8000);
+                uiHandler.postDelayed(MainActivity.this::hideSplash, 2500);
             }
 
             @Override
@@ -483,7 +485,7 @@ public class MainActivity extends Activity {
         }
         String target = base + "/?token=" + Uri.encode(token) + "&device=" + Uri.encode(device)
                 + (reset ? "&reset=1" : "");
-        uiHandler.postDelayed(this::hideSplash, 12000);
+        uiHandler.postDelayed(this::hideSplash, 4000);
         webView.loadUrl(target);
     }
 
