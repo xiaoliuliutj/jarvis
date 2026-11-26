@@ -116,6 +116,7 @@
     usageMessages: $('usageMessages'),
     personaEntry: $('personaEntry'),
     personaSummary: $('personaSummary'),
+    personaPreview: $('personaPreview'),
     editPersona: $('editPersona'),
     personaModal: $('personaModal'),
     personaCancel: $('personaCancel'),
@@ -2154,13 +2155,18 @@
     if (!el.personaSummary) return
     const meta = state.persona || {}
     if (!meta.loaded) {
-      el.personaSummary.textContent = state.token ? '加载中…' : '登录后可设置你专属的 AI 人设。'
+      el.personaSummary.textContent = state.token ? '加载中…' : '未登录'
+      if (el.personaPreview) {
+        el.personaPreview.textContent = state.token ? '加载中…' : '登录后可设置你专属的 AI 人设。'
+      }
       return
     }
     const tone = PERSONA_STATUS_LABELS[meta.statusStyle] || '跟随人设'
     const suffix = meta.statusStyle === 'custom' && meta.statusSuffix ? `「${meta.statusSuffix}」` : ''
-    const hasPersona = String(meta.content || '').trim().length > 0
-    el.personaSummary.textContent = `运行状态：${tone}${suffix} · ${hasPersona ? '已设置人设（只编辑语言风格、人设和特点）' : '未设置'}`
+    el.personaSummary.textContent = `运行状态：${tone}${suffix}`
+    if (el.personaPreview) {
+      el.personaPreview.textContent = String(meta.content || '').trim() || '还没有设置人设'
+    }
   }
 
   function renderPersonaPresets() {

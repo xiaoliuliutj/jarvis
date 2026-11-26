@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=71" />
+  <link rel="stylesheet" href="/style.css?v=72" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -16,7 +16,7 @@
         <div class="brand">
           <span class="dot" id="statusDot" title="连接中…"></span>
           <span class="title">Jarvis</span>
-          <button id="personaEntry" class="persona-entry" type="button" title="AI 人设与运行状态">⚙ 系统设置</button>
+          <button id="personaEntry" class="persona-entry" type="button" title="AI 人设与运行状态">⚙ AI 人设</button>
         </div>
         <div class="top-right">
           <span id="ownerChip" class="chip owner hidden" title="Owner 权限已启用">Owner</span>
@@ -138,10 +138,15 @@
         <div class="settings-section" id="settingsPersona">
           <div class="section-head">
             <h3>AI 人设</h3>
-            <button id="editPersona" class="ghost-btn">编辑</button>
+            <button id="editPersona" class="ghost-btn compact">编辑</button>
           </div>
-          <p class="hint" id="personaSummary">加载中…</p>
-          <p class="hint">这里只设置 AI 的语言风格、人设和特点；工具、权限、系统规则、记忆等其他内容不要写。</p>
+          <div class="persona-preview">
+            <div class="persona-preview-head">
+              <span class="persona-preview-title">当前人设</span>
+              <span id="personaSummary" class="persona-preview-meta">—</span>
+            </div>
+            <div id="personaPreview" class="persona-preview-text">加载中…</div>
+          </div>
           <div id="personaPresetsSettingsWrap" class="hidden">
             <div class="persona-presets-label">预定义人设</div>
             <div id="personaPresetsSettings" class="persona-presets"></div>
@@ -396,6 +401,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=71"></script>
+  <script src="/app.js?v=72"></script>
 </body>
 </html>
