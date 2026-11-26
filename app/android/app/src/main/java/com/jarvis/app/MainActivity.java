@@ -1,26 +1,55 @@
 package com.jarvis.app;
 
+import android.Manifest;
+import android.animation.ObjectAnimator;
 import android.app.Activity;
+import android.app.DownloadManager;
+import android.app.PendingIntent;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInstaller;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
-import android.graphics.Typeface;
+import android.graphics.PorterDuff;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.animation.DecelerateInterpolator;
+import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.security.MessageDigest;
 
 /**
  * Jarvis 安卓 Demo 壳：负责服务器地址/令牌配置 + WebView 承载移动端聊天页。
@@ -29,74 +58,223 @@ import android.widget.Toast;
 public class MainActivity extends Activity {
 
     private static final int REQ_FILE = 1001;
+    private static final int REQ_NOTIFY = 1002;
 
     private SharedPreferences prefs;
-    private LinearLayout toolbar;
     private LinearLayout setupPanel;
     private WebView webView;
     private EditText urlInput;
     private EditText tokenInput;
     private EditText deviceInput;
     private ValueCallback<Uri[]> fileCallback;
+    private FrameLayout splashView;
+    private ObjectAnimator splashPulse;
+    private final Handler uiHandler = new Handler(Looper.getMainLooper());
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         prefs = getSharedPreferences("jarvis", MODE_PRIVATE);
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.parseColor("#f7f5ef"));
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(Color.parseColor("#123b2f"));
 
-        toolbar = buildToolbar();
-        root.addView(toolbar, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setBackgroundColor(Color.parseColor("#f7f5ef"));
 
         setupPanel = buildSetupPanel();
         setupPanel.setVisibility(View.GONE);
-        root.addView(setupPanel, new LinearLayout.LayoutParams(
+        content.addView(setupPanel, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         webView = buildWebView();
         LinearLayout.LayoutParams webParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0);
         webParams.weight = 1;
-        root.addView(webView, webParams);
+        content.addView(webView, webParams);
+
+        root.addView(content, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        splashView = buildSplash();
+        root.addView(splashView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         setContentView(root);
 
         if (hasConfig()) {
-            loadWeb();
+            loadWeb(false);
         } else {
             showSetup("");
+            uiHandler.postDelayed(this::hideSplash, 450);
+        }
+
+        requestNotificationPermissionIfNeeded();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        NotifyService.setAppVisible(this, true);
+    }
+
+    @Override
+    protected void onPause() {
+        NotifyService.setAppVisible(this, false);
+        super.onPause();
+    }
+
+    @Override
+    protected void onStop() {
+        NotifyService.setAppVisible(this, false);
+        super.onStop();
+    }
+
+    @Override
+    protected void onDestroy() {
+        NotifyService.setAppVisible(this, false);
+        super.onDestroy();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        NotifyService.setAppVisible(this, true);
+    }
+
+    private void requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            startNotifyIfEnabled();
+            return;
+        }
+        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFY);
+    }
+
+    private void startNotifyIfEnabled() {
+        if (NotifyService.isEnabled(this) && NotifyService.hasPermission(this)) {
+            NotifyService.start(this);
         }
     }
 
-    private LinearLayout buildToolbar() {
-        LinearLayout bar = new LinearLayout(this);
-        bar.setOrientation(LinearLayout.HORIZONTAL);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setBackgroundColor(Color.parseColor("#123b2f"));
-        bar.setPadding(dp(16), dp(10), dp(10), dp(10));
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQ_NOTIFY) return;
+        boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+        if (granted) {
+            startNotifyIfEnabled();
+            Toast.makeText(this, "系统通知已开启", Toast.LENGTH_SHORT).show();
+        } else {
+            Toast.makeText(this, "未允许通知，Jarvis 无法在后台提醒你", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private FrameLayout buildSplash() {
+        FrameLayout splash = new FrameLayout(this);
+        splash.setBackgroundColor(Color.parseColor("#123b2f"));
+        splash.setClickable(true);
+
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        splash.addView(box, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.icon);
+        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(dp(96), dp(96));
+        logoParams.gravity = Gravity.CENTER_HORIZONTAL;
+        logo.setAlpha(0f);
+        logo.setScaleX(0.82f);
+        logo.setScaleY(0.82f);
+        box.addView(logo, logoParams);
 
         TextView title = new TextView(this);
         title.setText("Jarvis");
         title.setTextColor(Color.parseColor("#f2efe4"));
-        title.setTextSize(18);
-        title.setTypeface(null, Typeface.BOLD);
-        bar.addView(title, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        title.setTextSize(30);
+        title.setGravity(Gravity.CENTER);
+        title.setLetterSpacing(0.08f);
+        title.setAlpha(0f);
+        title.setTranslationY(dp(8));
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        titleParams.topMargin = dp(18);
+        box.addView(title, titleParams);
 
-        Button settings = new Button(this);
-        settings.setText("设置");
-        settings.setTextColor(Color.parseColor("#f2efe4"));
-        settings.setTextSize(14);
-        settings.setBackgroundColor(Color.TRANSPARENT);
-        settings.setOnClickListener(v -> showSetup(""));
-        bar.addView(settings, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView subtitle = new TextView(this);
+        subtitle.setText("正在唤醒…");
+        subtitle.setTextColor(Color.parseColor("#a8b5ae"));
+        subtitle.setTextSize(13);
+        subtitle.setGravity(Gravity.CENTER);
+        subtitle.setAlpha(0f);
+        LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        subtitleParams.topMargin = dp(10);
+        box.addView(subtitle, subtitleParams);
 
-        return bar;
+        ProgressBar progress = new ProgressBar(this, null, android.R.attr.progressBarStyleSmall);
+        if (progress.getIndeterminateDrawable() != null) {
+            progress.getIndeterminateDrawable().setColorFilter(
+                    Color.parseColor("#f2efe4"), PorterDuff.Mode.SRC_IN);
+        }
+        progress.setAlpha(0f);
+        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        progressParams.gravity = Gravity.CENTER_HORIZONTAL;
+        progressParams.topMargin = dp(22);
+        box.addView(progress, progressParams);
+
+        logo.animate()
+                .alpha(1f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .setStartDelay(60)
+                .setDuration(520)
+                .setInterpolator(new DecelerateInterpolator())
+                .start();
+        title.animate()
+                .alpha(1f)
+                .translationY(0)
+                .setStartDelay(220)
+                .setDuration(480)
+                .start();
+        subtitle.animate()
+                .alpha(1f)
+                .setStartDelay(360)
+                .setDuration(480)
+                .start();
+        progress.animate()
+                .alpha(1f)
+                .setStartDelay(500)
+                .setDuration(400)
+                .start();
+
+        splashPulse = ObjectAnimator.ofFloat(logo, "alpha", 1f, 0.55f, 1f);
+        splashPulse.setDuration(1900);
+        splashPulse.setStartDelay(750);
+        splashPulse.setRepeatCount(ObjectAnimator.INFINITE);
+        splashPulse.start();
+
+        return splash;
+    }
+
+    private void hideSplash() {
+        if (splashView == null || splashView.getVisibility() != View.VISIBLE) return;
+        if (splashPulse != null) {
+            splashPulse.cancel();
+            splashPulse = null;
+        }
+        splashView.animate()
+                .alpha(0f)
+                .setDuration(300)
+                .withEndAction(() -> {
+                    if (splashView != null) splashView.setVisibility(View.GONE);
+                })
+                .start();
     }
 
     private LinearLayout buildSetupPanel() {
@@ -159,13 +337,22 @@ public class MainActivity extends Activity {
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
 
+        view.addJavascriptInterface(new NotifyBridge(), "JarvisNative");
+
         view.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView v, String url) {
                 super.onPageFinished(v, url);
-                // 页面正常加载后隐藏原生工具栏，只保留网页顶部状态栏
-                if (toolbar != null) {
-                    toolbar.setVisibility(View.GONE);
+                // 数据加载由页面通过 JarvisNative.pageReady() 通知；这里只做超时兜底。
+                uiHandler.postDelayed(MainActivity.this::hideSplash, 8000);
+            }
+
+            @Override
+            public void onReceivedError(WebView v, WebResourceRequest request, WebResourceError error) {
+                super.onReceivedError(v, request, error);
+                if (request != null && request.isForMainFrame()) {
+                    hideSplash();
+                    showSetup("页面加载失败，请检查服务器地址或网络");
                 }
             }
 
@@ -174,13 +361,36 @@ public class MainActivity extends Activity {
                 Uri uri = request.getUrl();
                 String scheme = uri.getScheme() == null ? "" : uri.getScheme();
                 if ("http".equals(scheme) || "https".equals(scheme)) {
-                    return false; // 留在应用内
+                    if (isApkUrl(uri.toString(), null)) {
+                        downloadAndInstallUpdate(uri.toString(), "");
+                        return true;
+                    }
+                    String base = prefs.getString("url", "");
+                    if (!base.isEmpty() && uri.toString().startsWith(base)) {
+                        return false; // Jarvis 自身留在应用内
+                    }
+                    try {
+                        startActivity(new Intent(Intent.ACTION_VIEW, uri));
+                    } catch (Exception ignored) {
+                    }
+                    return true;
                 }
                 try {
                     startActivity(new Intent(Intent.ACTION_VIEW, uri));
                 } catch (Exception ignored) {
                 }
                 return true;
+            }
+        });
+
+        view.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
+            if (isApkUrl(url, mimeType)) {
+                downloadAndInstallUpdate(url, "");
+                return;
+            }
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+            } catch (Exception ignored) {
             }
         });
 
@@ -229,6 +439,7 @@ public class MainActivity extends Activity {
     }
 
     private void showSetup(String error) {
+        hideSplash();
         urlInput.setText(prefs.getString("url", "http://100.100.142.113:17779"));
         tokenInput.setText(prefs.getString("token", ""));
         deviceInput.setText(prefs.getString("device", "owner"));
@@ -259,10 +470,10 @@ public class MainActivity extends Activity {
                 .putString("device", device)
                 .apply();
         setupPanel.setVisibility(View.GONE);
-        loadWeb();
+        loadWeb(true);
     }
 
-    private void loadWeb() {
+    private void loadWeb(boolean reset) {
         String base = prefs.getString("url", "").replaceAll("/+$", "");
         String token = prefs.getString("token", "");
         String device = prefs.getString("device", "owner");
@@ -270,7 +481,9 @@ public class MainActivity extends Activity {
             showSetup("");
             return;
         }
-        String target = base + "/?token=" + Uri.encode(token) + "&device=" + Uri.encode(device);
+        String target = base + "/?token=" + Uri.encode(token) + "&device=" + Uri.encode(device)
+                + (reset ? "&reset=1" : "");
+        uiHandler.postDelayed(this::hideSplash, 12000);
         webView.loadUrl(target);
     }
 
@@ -296,6 +509,110 @@ public class MainActivity extends Activity {
         fileCallback = null;
     }
 
+    private void openInstallPermissionSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        runOnUiThread(() -> {
+            try {
+                startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + getPackageName())));
+            } catch (Exception ignored) {
+                try {
+                    startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:" + getPackageName())));
+                } catch (Exception ignored2) {
+                }
+            }
+        });
+    }
+
+    private boolean isApkUrl(String url, String mimeType) {
+        if (mimeType != null && mimeType.contains("android.package-archive")) return true;
+        try {
+            String path = new URL(url).getPath();
+            return path != null && path.toLowerCase().endsWith(".apk");
+        } catch (Exception e) {
+            return String.valueOf(url).toLowerCase().contains(".apk");
+        }
+    }
+
+    private void downloadAndInstallUpdate(String targetUrl, String expectedSha256) {
+        new Thread(() -> {
+            PackageInstaller installer = null;
+            int sessionId = -1;
+            try {
+                URL url = new URL(targetUrl);
+                HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                connection.setConnectTimeout(15000);
+                connection.setReadTimeout(30000);
+                if (connection.getResponseCode() != 200) throw new Exception("下载失败：HTTP " + connection.getResponseCode());
+
+                File apk = new File(getCacheDir(), "jarvis-update.apk");
+                MessageDigest digest = MessageDigest.getInstance("SHA-256");
+                try (InputStream in = connection.getInputStream();
+                     FileOutputStream out = new FileOutputStream(apk)) {
+                    byte[] buffer = new byte[16 * 1024];
+                    int read;
+                    while ((read = in.read(buffer)) >= 0) {
+                        digest.update(buffer, 0, read);
+                        out.write(buffer, 0, read);
+                    }
+                } finally {
+                    connection.disconnect();
+                }
+
+                if (!expectedSha256.isEmpty()) {
+                    byte[] hash = digest.digest();
+                    StringBuilder hex = new StringBuilder();
+                    for (byte b : hash) hex.append(String.format("%02x", b));
+                    if (!expectedSha256.equalsIgnoreCase(hex.toString())) {
+                        throw new Exception("安装包校验失败");
+                    }
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                        && !getPackageManager().canRequestPackageInstalls()) {
+                    runOnUiThread(() -> {
+                        openInstallPermissionSettings();
+                        Toast.makeText(this, "请允许 Jarvis 安装未知应用后重试", Toast.LENGTH_LONG).show();
+                    });
+                    return;
+                }
+
+                installer = getPackageManager().getPackageInstaller();
+                PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(
+                        PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+                params.setAppPackageName(getPackageName());
+                sessionId = installer.createSession(params);
+                Intent resultIntent = new Intent(this, InstallResultReceiver.class)
+                        .setAction(InstallResultReceiver.ACTION_INSTALL_RESULT);
+                int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+                PendingIntent resultPending = PendingIntent.getBroadcast(this, 11, resultIntent, flags);
+
+                PackageInstaller.Session session = installer.openSession(sessionId);
+                try {
+                    try (FileInputStream in = new FileInputStream(apk);
+                         OutputStream out = session.openWrite("jarvis-update.apk", 0, apk.length())) {
+                        byte[] buffer = new byte[16 * 1024];
+                        int read;
+                        while ((read = in.read(buffer)) >= 0) out.write(buffer, 0, read);
+                        session.fsync(out);
+                    }
+                    session.commit(resultPending.getIntentSender());
+                } finally {
+                    session.close();
+                }
+                runOnUiThread(() -> Toast.makeText(this, "正在安装更新…", Toast.LENGTH_SHORT).show());
+            } catch (Exception e) {
+                if (installer != null && sessionId >= 0) {
+                    try { installer.abandonSession(sessionId); } catch (Exception ignored) {}
+                }
+                String message = e.getMessage() == null ? "更新失败" : e.getMessage();
+                runOnUiThread(() -> Toast.makeText(this, "更新失败：" + message, Toast.LENGTH_LONG).show());
+            }
+        }, "jarvis-updater").start();
+    }
+
     @Override
     public void onBackPressed() {
         if (webView != null && webView.canGoBack()) {
@@ -303,6 +620,278 @@ public class MainActivity extends Activity {
         } else {
             super.onBackPressed();
         }
+    }
+
+    /**
+     * 网页只通过这个桥配置后台通知；令牌留在应用私有 SharedPreferences，
+     * 不写日志、不暴露给其他网页。
+     */
+    private class NotifyBridge {
+        @JavascriptInterface
+        public boolean isSupported() {
+            return true;
+        }
+
+        @JavascriptInterface
+        public void pageReady() {
+            runOnUiThread(MainActivity.this::hideSplash);
+        }
+
+        @JavascriptInterface
+        public String getVersionName() {
+            try {
+                return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        @JavascriptInterface
+        public boolean installUpdate(String url, String sha256) {
+            if (url == null) return false;
+            String target = url.trim();
+            if (!target.startsWith("http://") && !target.startsWith("https://")) return false;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    && !getPackageManager().canRequestPackageInstalls()) {
+                runOnUiThread(() -> {
+                    openInstallPermissionSettings();
+                    Toast.makeText(MainActivity.this, "请先允许 Jarvis 安装未知应用", Toast.LENGTH_LONG).show();
+                });
+                return false;
+            }
+            downloadAndInstallUpdate(target, sha256 == null ? "" : sha256.trim());
+            return true;
+        }
+
+        @JavascriptInterface
+        public boolean canInstallPackages() {
+            return Build.VERSION.SDK_INT < Build.VERSION_CODES.O
+                    || getPackageManager().canRequestPackageInstalls();
+        }
+
+        @JavascriptInterface
+        public void openInstallPermission() {
+            openInstallPermissionSettings();
+        }
+
+        @JavascriptInterface
+        public boolean openExternal(String url) {
+            if (url == null) return false;
+            String target = url.trim();
+            if (!target.startsWith("http://") && !target.startsWith("https://")) return false;
+            runOnUiThread(() -> {
+                try {
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(target)));
+                } catch (Exception ignored) {
+                }
+            });
+            return true;
+        }
+
+        @JavascriptInterface
+        public boolean downloadFile(String url, String fileName) {
+            if (url == null) return false;
+            String target = url.trim();
+            if (!target.startsWith("http://") && !target.startsWith("https://")) return false;
+            try {
+                String name = sanitizeFileName(fileName);
+                DownloadManager.Request request = new DownloadManager.Request(Uri.parse(target));
+                request.setTitle(name);
+                request.setDescription("Jarvis 文件下载");
+                request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);
+                request.setAllowedOverMetered(true);
+                DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                if (manager == null) return false;
+                manager.enqueue(request);
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "已开始下载", Toast.LENGTH_SHORT).show());
+                return true;
+            } catch (Exception e) {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "下载失败：" + e.getMessage(), Toast.LENGTH_LONG).show());
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public boolean hasPermission() {
+            return NotifyService.hasPermission(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public boolean isEnabled() {
+            return prefs.getBoolean("notifyEnabled", false);
+        }
+
+        @JavascriptInterface
+        public boolean isServiceRunning() {
+            return NotifyService.isRunning();
+        }
+
+        @JavascriptInterface
+        public void setChatVisible(boolean visible) {
+            NotifyService.setChatVisible(visible);
+        }
+
+        @JavascriptInterface
+        public boolean testNotification() {
+            if (!NotifyService.hasPermission(MainActivity.this)) {
+                runOnUiThread(MainActivity.this::requestNotificationPermissionIfNeeded);
+                return false;
+            }
+            return NotifyService.testNotification(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public boolean isIgnoringBatteryOptimizations() {
+            try {
+                PowerManager manager = (PowerManager) getSystemService(POWER_SERVICE);
+                return manager != null && manager.isIgnoringBatteryOptimizations(getPackageName());
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public void openAppSettings() {
+            runOnUiThread(() -> {
+                try {
+                    startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:" + getPackageName())));
+                } catch (Exception ignored) {
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void openBatterySettings() {
+            runOnUiThread(() -> {
+                try {
+                    PowerManager manager = (PowerManager) getSystemService(POWER_SERVICE);
+                    boolean ignoring = manager != null && manager.isIgnoringBatteryOptimizations(getPackageName());
+                    Intent intent = ignoring
+                            ? new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                            : new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                    Uri.parse("package:" + getPackageName()));
+                    startActivity(intent);
+                } catch (Exception ignored) {
+                    openAppSettings();
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void openStartupSettings() {
+            runOnUiThread(() -> {
+                String[][] targets = {
+                        {"com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"},
+                        {"com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity"},
+                        {"com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity"},
+                };
+                for (String[] target : targets) {
+                    try {
+                        Intent intent = new Intent();
+                        intent.setComponent(new ComponentName(target[0], target[1]));
+                        startActivity(intent);
+                        return;
+                    } catch (Exception ignored) {
+                    }
+                }
+                openAppSettings();
+            });
+        }
+
+        @JavascriptInterface
+        public void openNotificationSettings() {
+            runOnUiThread(() -> {
+                try {
+                    Intent intent;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+                    } else {
+                        intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:" + getPackageName()));
+                    }
+                    startActivity(intent);
+                } catch (Exception ignored) {
+                    openAppSettings();
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void configure(String url, String token, String device, boolean enabled) {
+            if (url == null || token == null) return;
+            String cleanUrl = url.trim().replaceAll("/+$", "");
+            String cleanToken = token.trim();
+            if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) return;
+            if (cleanToken.isEmpty()) return;
+            String cleanDevice = sanitizeDevice(device);
+
+            String oldUrl = prefs.getString("url", "");
+            String oldToken = prefs.getString("token", "");
+            String oldDevice = prefs.getString("device", "");
+            boolean changed = !cleanUrl.equals(oldUrl)
+                    || !cleanToken.equals(oldToken)
+                    || !cleanDevice.equals(oldDevice);
+
+            prefs.edit()
+                    .putString("url", cleanUrl)
+                    .putString("token", cleanToken)
+                    .putString("device", cleanDevice)
+                    .putBoolean("notifyEnabled", enabled)
+                    .commit();
+
+            if (!enabled) {
+                NotifyService.clearNotification(MainActivity.this);
+                NotifyService.cancelWatchdog(MainActivity.this);
+                NotifyService.stop(MainActivity.this);
+                return;
+            }
+            if (!NotifyService.hasPermission(MainActivity.this)) return;
+            if (changed) NotifyService.stop(MainActivity.this);
+            NotifyService.start(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public void setEnabled(boolean enabled) {
+            prefs.edit().putBoolean("notifyEnabled", enabled).commit();
+            if (!enabled) {
+                NotifyService.clearNotification(MainActivity.this);
+                NotifyService.cancelWatchdog(MainActivity.this);
+                NotifyService.stop(MainActivity.this);
+                return;
+            }
+            if (!NotifyService.hasPermission(MainActivity.this)) {
+                requestNotificationPermissionIfNeeded();
+                return;
+            }
+            NotifyService.start(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public void requestPermission() {
+            runOnUiThread(MainActivity.this::requestNotificationPermissionIfNeeded);
+        }
+
+        @JavascriptInterface
+        public void clear() {
+            NotifyService.clearNotification(MainActivity.this);
+        }
+    }
+
+    private String sanitizeDevice(String value) {
+        String cleaned = String.valueOf(value == null ? "" : value).replaceAll("[^\\w.-]", "");
+        if (cleaned.length() > 64) cleaned = cleaned.substring(0, 64);
+        return cleaned.isEmpty() ? "owner" : cleaned;
+    }
+
+    private String sanitizeFileName(String value) {
+        String cleaned = String.valueOf(value == null ? "" : value)
+                .replaceAll("[\\\\/:*?\"<>|\\x00-\\x1f]", "_")
+                .trim();
+        if (cleaned.length() > 120) cleaned = cleaned.substring(0, 120);
+        return cleaned.isEmpty() ? "jarvis-file" : cleaned;
     }
 
     private int dp(int value) {

@@ -159,7 +159,9 @@ export function renameSession(principalId, sessionId, name) {
 
 export function appendMessage(principalId, sessionId, record) {
   ensureUser(principalId)
-  fs.appendFileSync(messagesFile(principalId, sessionId), JSON.stringify(record) + '\n', 'utf-8')
+  const entry = record?.id ? record : { ...record, id: `msg_${randomUUID()}` }
+  fs.appendFileSync(messagesFile(principalId, sessionId), JSON.stringify(entry) + '\n', 'utf-8')
+  return entry
 }
 
 export function readMessages(principalId, sessionId) {
@@ -168,7 +170,15 @@ export function readMessages(principalId, sessionId) {
   return fs.readFileSync(file, 'utf-8')
     .split('\n')
     .filter(l => l.trim())
-    .map(l => JSON.parse(l))
+    .map((line, index) => {
+      const record = JSON.parse(line)
+      return {
+        ...record,
+        // 旧记录没有 id；用 sessionId:index 生成稳定 ID。seq 用于 App 增量同步。
+        id: record.id || `${sessionId}:${index}`,
+        seq: index,
+      }
+    })
 }
 
 /** 扫描所有 principal 目录（跳过 tools/_legacy 等非用户目录）。 */

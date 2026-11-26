@@ -1,0 +1,12 @@
+<resources>
+    <style name="JarvisTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#123b2f</item>
+        <item name="android:statusBarColor">#123b2f</item>
+        <item name="android:navigationBarColor">#123b2f</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowSplashScreenBackground">#123b2f</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/icon</item>
+        <item name="android:windowSplashScreenAnimationDuration">300</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">#123b2f</item>
+    </style>
+</resources>

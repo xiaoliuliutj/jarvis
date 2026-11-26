@@ -13,7 +13,7 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import { USERDATA_DIR, PRINCIPALS_FILE, ensureDir } from './paths.mjs'
-import { resolvePrincipal } from './principals.mjs'
+import { resolvePrincipal, getPrincipal } from './principals.mjs'
 
 const AUTH_DIR = path.join(USERDATA_DIR, '_auth')
 const USERS_FILE = path.join(AUTH_DIR, 'users.json')
@@ -147,6 +147,31 @@ export function getUser(username) {
   const key = String(username || '').trim().toLowerCase()
   const user = readUsers().users[key]
   return user ? publicUser(user) : null
+}
+
+/** 只返回公开字段，不含密码 hash / tokenId。 */
+export function listUsersPublic() {
+  return Object.values(readUsers().users)
+    .map(publicUser)
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+}
+
+/**
+ * 把登录账号挂到已有 principal（用于 App 登录与微信主人身份合并）。
+ * 不读取/返回 tokenId 或密码 hash。
+ */
+export function linkUserPrincipal(username, principalId) {
+  const key = String(username || '').trim().toLowerCase()
+  const target = String(principalId || '').trim()
+  if (!key || !target) throw new Error('用户名和 principalId 不能为空')
+  if (!getPrincipal(target)) throw new Error(`未知 principal: ${target}`)
+  const data = readUsers()
+  const user = data.users[key]
+  if (!user) throw new Error('用户名不存在')
+  user.principalId = target
+  user.updatedAt = new Date().toISOString()
+  writeUsers(data)
+  return publicUser(user)
 }
 
 export function authDir() {

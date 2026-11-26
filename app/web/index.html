@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=14" />
+  <link rel="stylesheet" href="/style.css?v=30" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -102,6 +102,27 @@
           <div id="deviceList" class="device-list"></div>
         </div>
 
+        <div class="settings-section" id="notifySection">
+          <div class="section-head">
+            <h3>系统通知</h3>
+            <span class="muted" id="notifyStatus"></span>
+          </div>
+          <label class="check-row">
+            <input id="notifyToggle" type="checkbox" />
+            <span>新消息使用系统通知（后台 / 锁屏）</span>
+          </label>
+          <p class="hint">需要允许系统通知权限。App 后台保活时会有一条低优先级常驻通知；被系统清理后可能收不到，保持后台运行更稳定。</p>
+          <div class="settings-row"><span>电池优化</span><span id="batteryStatus">—</span></div>
+          <div class="keepalive-actions">
+            <button id="openBatteryBtn" class="ghost-btn">电池不优化</button>
+            <button id="openStartupBtn" class="ghost-btn">自启动设置</button>
+            <button id="openNotifySettingsBtn" class="ghost-btn">通知设置</button>
+            <button id="openAppSettingsBtn" class="ghost-btn">应用设置</button>
+          </div>
+          <p class="hint">一加/ColorOS：允许自启动、关联启动、后台活动；最近任务里锁定 Jarvis。</p>
+          <button id="notifyTestBtn" class="ghost-btn wide">发送测试通知</button>
+        </div>
+
         <div class="settings-section">
           <div class="section-head">
             <h3>测试模式</h3>
@@ -112,6 +133,18 @@
           </label>
         </div>
 
+        <div class="settings-section" id="updateSection">
+          <div class="section-head">
+            <h3>App 更新</h3>
+            <span class="muted" id="updateStatus"></span>
+          </div>
+          <div class="settings-row"><span>当前版本</span><span id="appVersion">—</span></div>
+          <p class="hint">从 Bridge 直接下载安装，不需要微信转发安装包。</p>
+          <button id="checkUpdateBtn" class="ghost-btn wide">检查更新</button>
+          <button id="installUpdateBtn" class="primary-btn wide hidden">下载并安装</button>
+          <button id="installPermissionBtn" class="ghost-btn wide">安装权限</button>
+        </div>
+
         <div class="settings-section">
           <div class="section-head"><h3>关于</h3></div>
           <p class="hint">Jarvis App 测试版 · 微信是正常使用主渠道。<br />会话/工具/用量数据按用户隔离。</p>
@@ -120,7 +153,7 @@
     </main>
 
     <nav id="bottomNav">
-      <button class="nav-btn active" data-tab="chat"><span>会话</span></button>
+      <button class="nav-btn active" data-tab="chat"><span>会话</span><span id="chatUnread" class="nav-badge hidden"></span></button>
       <button class="nav-btn" data-tab="tools"><span>工具</span></button>
       <button class="nav-btn" data-tab="usage"><span>用量</span></button>
       <button class="nav-btn" data-tab="settings"><span>设置</span></button>
@@ -139,6 +172,17 @@
       </div>
       <button id="attachCancel" class="sheet-cancel">取消</button>
     </div>
+  </div>
+
+  <div id="imageViewer" class="image-viewer hidden">
+    <div class="image-viewer-bar">
+      <span id="imageViewerName" class="image-viewer-name">图片</span>
+      <div class="image-viewer-actions">
+        <button id="imageDownloadBtn" class="image-viewer-btn">下载</button>
+        <button id="imageCloseBtn" class="image-viewer-btn close" aria-label="关闭">×</button>
+      </div>
+    </div>
+    <img id="imageViewerImg" alt="图片预览" />
   </div>
 
   <div id="login" class="setup hidden">
@@ -257,6 +301,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=14"></script>
+  <script src="/app.js?v=30"></script>
 </body>
 </html>

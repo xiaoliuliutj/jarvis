@@ -152,31 +152,43 @@ async function deliverOutbox(principalId, sourceType, accountId, externalUserId,
 }
 
 /**
- * 选择一个可用的投递账号：App 在线时优先 App，否则回退到其他渠道（微信）。
+ * 选择一个投递账号：主动消息 App 优先；App 离线也选 App，
+ * 由 app adapter 排队，等 App 后台服务重连后补发。
  */
 function pickDeliveryAccount(principal) {
-  for (const account of orderDeliveryAccounts(principal)) {
+  const accounts = orderDeliveryAccounts(principal)
+  const appAccount = accounts.find(a => a.sourceType === 'app' && adapters.app?.send
+    && a.externalUserId === 'owner')
+    || accounts.find(a => a.sourceType === 'app' && adapters.app?.send)
+  if (appAccount) return appAccount
+  for (const account of accounts) {
     const adapter = adapters[account.sourceType]
-    if (!adapter?.send) continue
-    if (account.sourceType === 'app' && typeof adapter.isOnline === 'function' && !adapter.isOnline(account.externalUserId)) {
-      continue
-    }
-    return account
+    if (adapter?.send) return account
   }
   return null
 }
 
 /**
- * 按「App 优先、其他渠道兜底」发送文本，返回实际使用的账号。
- * 某个渠道发送失败会自动尝试下一个渠道。
+ * 主动消息（定时任务/日程提醒）优先投递 App；App 离线时排队，不自动转微信。
+ * 微信回复仍由 sendReply 按原消息来源发送，不受这里影响。
  */
 async function sendToPrincipal(principal, text) {
-  for (const account of orderDeliveryAccounts(principal)) {
+  const accounts = orderDeliveryAccounts(principal)
+  const appAccount = accounts.find(a => a.sourceType === 'app' && adapters.app?.send
+    && a.externalUserId === 'owner')
+    || accounts.find(a => a.sourceType === 'app' && adapters.app?.send)
+  if (appAccount) {
+    try {
+      await adapters.app.send(appAccount.externalUserId, text, { accountId: appAccount.accountId })
+      return appAccount
+    } catch (err) {
+      logWarn('deliver.fail', err.message, { principalId: principal.id, sourceType: 'app' })
+      return null
+    }
+  }
+  for (const account of accounts) {
     const adapter = adapters[account.sourceType]
     if (!adapter?.send) continue
-    if (account.sourceType === 'app' && typeof adapter.isOnline === 'function' && !adapter.isOnline(account.externalUserId)) {
-      continue
-    }
     try {
       await adapter.send(account.externalUserId, text, { accountId: account.accountId })
       return account
@@ -537,9 +549,29 @@ function restartBridgeProcess(delayMs = 500) {
   }, delayMs)
 }
 
+let bridgeRestartQueued = false
+
+/**
+ * 不在回合中途重启：等调度器没有 active/queued 任务后再退出。
+ * 否则当前回合的回复还没发出去，Bridge 就先死了，用户会看到“没反应”。
+ */
+function scheduleBridgeRestart(delayMs = 500) {
+  if (bridgeRestartQueued) return
+  bridgeRestartQueued = true
+  const check = () => {
+    const status = scheduler.getStatus()
+    if (status.active === 0 && status.principals.length === 0) {
+      restartBridgeProcess(delayMs)
+      return
+    }
+    setTimeout(check, 1000)
+  }
+  setTimeout(check, delayMs)
+}
+
 app.post('/restart-bridge', (_req, res) => {
-  res.json({ ok: true, message: 'Bridge Server 将在 500ms 后重启' })
-  restartBridgeProcess()
+  res.json({ ok: true, message: 'Bridge Server 将在当前回合结束后重启' })
+  scheduleBridgeRestart()
 })
 
 // 同时重启 Bridge 和 Electron。Electron 仍走回合感知的重启队列。
@@ -550,8 +582,8 @@ app.post('/restart-all', (req, res) => {
   } else {
     void postSupervisor('/restart-electron').catch(() => {})
   }
-  res.json({ ok: true, message: 'Bridge 即将重启；Electron 将在当前回合结束后重启' })
-  restartBridgeProcess(700)
+  res.json({ ok: true, message: 'Bridge 将在当前回合结束后重启；Electron 将按原重启队列执行' })
+  scheduleBridgeRestart(700)
 })
 
 const server = createServer(app)

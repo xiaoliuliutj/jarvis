@@ -579,4 +579,55 @@ export function listMedia(principalId, limit = 50) {
     .slice(0, Math.max(1, limit))
 }
 
+// ── inbound idempotency ──────────────────────────────────────────────────────
+
+function inboundFile(principalId) {
+  return appFile(principalId, 'inbound.json')
+}
+
+export function hasInboundId(principalId, clientMessageId) {
+  const id = String(clientMessageId || '').trim()
+  if (!id) return false
+  const data = readJson(inboundFile(principalId), { version: 1, ids: [] })
+  return (data.ids || []).some(item => item.id === id)
+}
+
+export function rememberInboundId(principalId, clientMessageId) {
+  const id = String(clientMessageId || '').trim()
+  if (!id) return
+  const data = readJson(inboundFile(principalId), { version: 1, ids: [] })
+  const ids = Array.isArray(data.ids) ? data.ids.filter(item => item.id !== id) : []
+  ids.push({ id, at: nowIso() })
+  writeJson(inboundFile(principalId), { version: 1, ids: ids.slice(-300) })
+}
+
+// ── read state ───────────────────────────────────────────────────────────────
+
+function readStateFile(principalId) {
+  return appFile(principalId, 'read.json')
+}
+
+export function readAppReadState(principalId) {
+  const data = readJson(readStateFile(principalId), { version: 1, sessions: {} })
+  return { version: 1, sessions: (data.sessions && typeof data.sessions === 'object') ? data.sessions : {} }
+}
+
+export function getReadCursor(principalId, sessionId) {
+  const state = readAppReadState(principalId)
+  const item = state.sessions[String(sessionId || '')]
+  return item ? Math.max(0, Number(item.cursor) || 0) : 0
+}
+
+export function markRead(principalId, sessionId, cursor) {
+  const id = String(sessionId || '').trim()
+  if (!id) return 0
+  const value = Math.max(0, Number(cursor) || 0)
+  const state = readAppReadState(principalId)
+  const previous = state.sessions[id]
+  const next = Math.max(value, previous ? Number(previous.cursor) || 0 : 0)
+  state.sessions[id] = { cursor: next, updatedAt: nowIso() }
+  writeJson(readStateFile(principalId), state)
+  return next
+}
+
 export { appDir }

@@ -7,6 +7,9 @@
     token: 'jarvis.app.token',
     ownerToken: 'jarvis.app.ownerToken',
     device: 'jarvis.app.device',
+    notify: 'jarvis.app.notify',
+    outbox: 'jarvis.app.outbox',
+    localFiles: 'jarvis.app.localFiles',
   }
   const MAX_ATTACHMENTS = 3
   const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
@@ -19,6 +22,9 @@
     ownerToken: '',
     device: 'app-test',
     clientId: '',
+    sessionId: '',
+    syncCursor: 0,
+    unread: 0,
     ws: null,
     retry: 0,
     authFailed: false,
@@ -39,6 +45,7 @@
     usageSummary: null,
     usageRecords: [],
     editingModelId: null,
+    updateInfo: null,
   }
 
   const el = {
@@ -54,6 +61,7 @@
     },
     navButtons: Array.from(document.querySelectorAll('.nav-btn')),
     messages: $('messages'),
+    chatUnread: $('chatUnread'),
     input: $('input'),
     send: $('sendBtn'),
     attach: $('attachBtn'),
@@ -63,6 +71,11 @@
     attachItems: Array.from(document.querySelectorAll('.sheet-item')),
     fileInput: $('fileInput'),
     attachPreview: $('attachPreview'),
+    imageViewer: $('imageViewer'),
+    imageViewerImg: $('imageViewerImg'),
+    imageViewerName: $('imageViewerName'),
+    imageDownloadBtn: $('imageDownloadBtn'),
+    imageCloseBtn: $('imageCloseBtn'),
     toolCount: $('toolCount'),
     toolSearch: $('toolSearch'),
     toolScope: $('toolScope'),
@@ -81,7 +94,22 @@
     addModel: $('addModel'),
     modelList: $('modelList'),
     deviceList: $('deviceList'),
+    notifySection: $('notifySection'),
+    notifyStatus: $('notifyStatus'),
+    notifyToggle: $('notifyToggle'),
+    notifyTestBtn: $('notifyTestBtn'),
+    batteryStatus: $('batteryStatus'),
+    openBatteryBtn: $('openBatteryBtn'),
+    openStartupBtn: $('openStartupBtn'),
+    openNotifySettingsBtn: $('openNotifySettingsBtn'),
+    openAppSettingsBtn: $('openAppSettingsBtn'),
     testModeToggle: $('testModeToggle'),
+    updateSection: $('updateSection'),
+    updateStatus: $('updateStatus'),
+    appVersion: $('appVersion'),
+    checkUpdateBtn: $('checkUpdateBtn'),
+    installUpdateBtn: $('installUpdateBtn'),
+    installPermissionBtn: $('installPermissionBtn'),
     setup: $('setup'),
     setupUrl: $('setupUrl'),
     setupToken: $('setupToken'),
@@ -150,6 +178,22 @@
     if (url.startsWith('/')) return state.url + url
     return `${state.url}/${url}`
   }
+  /**
+   * APK/文件在 WebView 里直接点击只会被当成页面加载。把裸 IP 换成 nip.io
+   * 别名，让 Android 把它交给系统浏览器/下载器，而不是留在 WebView 里。
+   */
+  function browserSafeUrl(url) {
+    const absolute = absUrl(url)
+    try {
+      const parsed = new URL(absolute)
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(parsed.hostname)) {
+        parsed.hostname = `${parsed.hostname}.nip.io`
+      }
+      return parsed.toString()
+    } catch {
+      return absolute
+    }
+  }
   function formatTime(ts) {
     if (!ts) return ''
     try {
@@ -170,6 +214,262 @@
     appendMessage({ role: 'system', text, ts: new Date().toISOString() })
   }
 
+  let viewerImage = null
+
+  function openImageViewer(url, name) {
+    if (!el.imageViewer || !el.imageViewerImg) return
+    viewerImage = { url: absUrl(url), name: name || '图片' }
+    el.imageViewerImg.src = viewerImage.url
+    el.imageViewerName.textContent = viewerImage.name
+    el.imageViewer.classList.remove('hidden')
+    document.body.classList.add('viewer-open')
+  }
+
+  function closeImageViewer() {
+    if (!el.imageViewer) return
+    el.imageViewer.classList.add('hidden')
+    el.imageViewerImg.removeAttribute('src')
+    viewerImage = null
+    document.body.classList.remove('viewer-open')
+  }
+
+  function downloadViewerImage() {
+    if (!viewerImage) return
+    const url = browserSafeUrl(viewerImage.url)
+    const name = viewerImage.name || 'image.png'
+    const bridge = notifyBridge()
+    try {
+      if (bridge && typeof bridge.downloadFile === 'function') {
+        bridge.downloadFile(url, name)
+        return
+      }
+      if (bridge && typeof bridge.openExternal === 'function') {
+        bridge.openExternal(url)
+        return
+      }
+      const link = document.createElement('a')
+      link.href = url
+      link.download = name
+      link.target = '_blank'
+      link.rel = 'noopener'
+      link.click()
+    } catch {}
+  }
+
+  function setUnread(count) {
+    state.unread = Math.max(0, Number(count) || 0)
+    if (!el.chatUnread) return
+    if (state.unread > 0) {
+      el.chatUnread.textContent = state.unread > 99 ? '99+' : String(state.unread)
+      el.chatUnread.classList.remove('hidden')
+    } else {
+      el.chatUnread.textContent = ''
+      el.chatUnread.classList.add('hidden')
+    }
+  }
+
+  let readTimer = null
+  function markReadSoon() {
+    if (!state.token || state.tab !== 'chat' || document.visibilityState !== 'visible') return
+    clearTimeout(readTimer)
+    readTimer = setTimeout(async () => {
+      try {
+        const data = await api('/api/v1/read', { method: 'POST', body: {} })
+        setUnread(data.unread || 0)
+      } catch {}
+    }, 220)
+  }
+
+  function readOutbox() {
+    try {
+      const value = JSON.parse(read(KEYS.outbox, '[]'))
+      return Array.isArray(value) ? value : []
+    } catch {
+      return []
+    }
+  }
+
+  function writeOutbox(items) {
+    write(KEYS.outbox, JSON.stringify((items || []).slice(-50)))
+  }
+
+  function newClientMessageId() {
+    try {
+      if (window.crypto?.randomUUID) return window.crypto.randomUUID()
+    } catch {}
+    return `cim_${Date.now()}_${Math.random().toString(16).slice(2)}`
+  }
+
+  function readLocalFiles() {
+    try {
+      const value = JSON.parse(read(KEYS.localFiles, '[]'))
+      return Array.isArray(value) ? value : []
+    } catch {
+      return []
+    }
+  }
+
+  function rememberLocalFile(file) {
+    if (!file || !state.sessionId) return
+    const item = { ...file, sessionId: state.sessionId }
+    const items = readLocalFiles().filter(existing =>
+      !(existing.url === item.url && existing.ts === item.ts))
+    items.push(item)
+    write(KEYS.localFiles, JSON.stringify(items.slice(-30)))
+  }
+
+  function queueOutgoing(item) {
+    const items = readOutbox()
+    items.push({ ...item, clientMessageId: item.clientMessageId || newClientMessageId() })
+    writeOutbox(items)
+  }
+
+  let sessionRefreshTimer = null
+  function refreshCurrentSessionSoon() {
+    if (!state.token) return
+    clearTimeout(sessionRefreshTimer)
+    sessionRefreshTimer = setTimeout(() => { loadSession().catch(() => {}) }, 180)
+  }
+
+  async function flushOutbox() {
+    if (!state.token) return
+    const items = readOutbox()
+    if (!items.length) return
+    const remaining = []
+    for (const item of items) {
+      try {
+        await api('/api/v1/session/message', {
+          method: 'POST',
+          body: {
+            text: item.text || '',
+            attachmentIds: item.attachmentIds || [],
+            clientMessageId: item.clientMessageId,
+          },
+        })
+      } catch {
+        remaining.push(item)
+      }
+    }
+    writeOutbox(remaining)
+    if (remaining.length < items.length) refreshCurrentSessionSoon()
+  }
+
+  // ── native notifications ────────────────────────────────────────────────
+
+  function notifyBridge() {
+    return (typeof window !== 'undefined' && window.JarvisNative) || null
+  }
+
+  function notifyPreferred() {
+    return read(KEYS.notify, '1') !== '0'
+  }
+
+  function syncNativeNotify() {
+    const bridge = notifyBridge()
+    if (!bridge || !state.url || !state.token) return
+    try {
+      bridge.configure(state.url, state.token, state.device, notifyPreferred())
+    } catch {}
+  }
+
+  function syncChatVisible() {
+    const bridge = notifyBridge()
+    if (!bridge) return
+    try {
+      bridge.setChatVisible(document.visibilityState === 'visible' && document.hasFocus() && state.tab === 'chat')
+    } catch {}
+  }
+
+  function nativePageReady() {
+    try {
+      const bridge = notifyBridge()
+      if (bridge && typeof bridge.pageReady === 'function') bridge.pageReady()
+    } catch {}
+  }
+
+  function versionParts(value) {
+    return String(value || '').split(/[^0-9]+/).filter(Boolean).map(Number)
+  }
+
+  function versionNewer(candidate, current) {
+    const a = versionParts(candidate)
+    const b = versionParts(current)
+    const length = Math.max(a.length, b.length)
+    for (let i = 0; i < length; i++) {
+      const left = a[i] || 0
+      const right = b[i] || 0
+      if (left > right) return true
+      if (left < right) return false
+    }
+    return false
+  }
+
+  function refreshUpdateSection() {
+    const bridge = notifyBridge()
+    if (el.updateSection) el.updateSection.classList.toggle('hidden', !bridge)
+    if (!bridge) return
+    let current = ''
+    try { current = bridge.getVersionName?.() || '' } catch {}
+    if (el.appVersion) el.appVersion.textContent = current || '—'
+    if (el.installUpdateBtn) el.installUpdateBtn.classList.add('hidden')
+    let canInstall = true
+    try {
+      if (typeof bridge.canInstallPackages === 'function') canInstall = !!bridge.canInstallPackages()
+    } catch {}
+    if (el.updateStatus) el.updateStatus.textContent = canInstall ? '' : '需要允许安装未知应用'
+    return current
+  }
+
+  async function checkUpdate() {
+    const bridge = notifyBridge()
+    if (!bridge) return
+    const current = refreshUpdateSection()
+    if (el.updateStatus) el.updateStatus.textContent = '检查中…'
+    try {
+      const data = await api('/api/v1/app/version')
+      state.updateInfo = data
+      if (versionNewer(data.version, current)) {
+        if (el.updateStatus) el.updateStatus.textContent = `发现 ${data.version}`
+        if (el.installUpdateBtn) el.installUpdateBtn.classList.remove('hidden')
+      } else {
+        if (el.updateStatus) el.updateStatus.textContent = '已是最新'
+      }
+    } catch (err) {
+      if (el.updateStatus) el.updateStatus.textContent = `检查失败：${err.message}`
+    }
+  }
+
+  function refreshNotifyStatus() {
+    const bridge = notifyBridge()
+    if (el.notifySection) el.notifySection.classList.toggle('hidden', !bridge)
+    if (el.notifyToggle) el.notifyToggle.checked = notifyPreferred()
+    if (!el.notifyStatus) return
+    if (!bridge) {
+      el.notifyStatus.textContent = '仅 App 内可用'
+      return
+    }
+    try {
+      if (!notifyPreferred()) el.notifyStatus.textContent = '已关闭'
+      else if (!bridge.hasPermission()) el.notifyStatus.textContent = '系统权限未开启'
+      else if (typeof bridge.isServiceRunning === 'function' && !bridge.isServiceRunning()) {
+        el.notifyStatus.textContent = '已开启 · 后台服务未运行'
+      } else {
+        el.notifyStatus.textContent = '已开启 · 服务运行中'
+      }
+    } catch {
+      el.notifyStatus.textContent = ''
+    }
+    if (el.batteryStatus) {
+      try {
+        el.batteryStatus.textContent = bridge.isIgnoringBatteryOptimizations()
+          ? '已忽略（推荐）'
+          : '未忽略'
+      } catch {
+        el.batteryStatus.textContent = '—'
+      }
+    }
+  }
+
   // ── config / setup ──────────────────────────────────────────────────────
 
   function initConfig() {
@@ -177,8 +477,13 @@
     const qToken = params.get('token')
     const qOwner = params.get('ownerToken')
     const qDevice = params.get('device')
-    if (qToken) write(KEYS.token, qToken)
-    if (qOwner) write(KEYS.ownerToken, qOwner)
+    const reset = params.get('reset') === '1'
+    const savedToken = read(KEYS.token, '')
+    const savedOwner = read(KEYS.ownerToken, '')
+    // 登录 token 优先；只有首次配置或显式 reset 时才使用 URL 里的引导 token，
+    // 避免每次启动都被旧访问令牌覆盖登录身份。
+    if (qToken && (!savedToken || reset)) write(KEYS.token, qToken)
+    if (qOwner && (!savedOwner || reset)) write(KEYS.ownerToken, qOwner)
     if (qDevice) write(KEYS.device, qDevice)
     if (qToken || qOwner || qDevice) {
       try { history.replaceState(null, '', location.pathname) } catch {}
@@ -188,6 +493,7 @@
     state.ownerToken = read(KEYS.ownerToken, '')
     state.device = read(KEYS.device, 'app-test') || 'app-test'
     write(KEYS.url, state.url)
+    syncNativeNotify()
   }
 
   function openSetup(error) {
@@ -229,6 +535,7 @@
       state.authFailed = false
       state.clientId = ''
       write(KEYS.token, state.token)
+      syncNativeNotify()
       hideLogin()
       closeSetup()
       setStatus('连接中…', '')
@@ -256,8 +563,10 @@
     state.me = null
     state.authFailed = false
     state.messages = []
+    setUnread(0)
     remove(KEYS.token)
     remove(KEYS.ownerToken)
+    try { const bridge = notifyBridge(); if (bridge) bridge.setEnabled(false) } catch {}
     if (state.ws) { try { state.ws.close() } catch {} state.ws = null }
     renderMessages([])
     renderConnection()
@@ -299,6 +608,7 @@
     write(KEYS.token, state.token)
     write(KEYS.ownerToken, state.ownerToken)
     write(KEYS.device, state.device)
+    syncNativeNotify()
     closeSetup()
     hideLogin()
     renderConnection()
@@ -410,25 +720,32 @@
     if (msg.type === 'hello') {
       state.clientId = msg.clientId || ''
       setOwnerChip(!!msg.owner)
+      // WS 只负责实时；重连后从服务端补拉当前会话，避免漏消息。
+      refreshCurrentSessionSoon()
+      flushOutbox().catch(() => {})
       return
     }
     if (msg.type === 'assistant' && msg.text) {
       clearTyping()
       appendMessage({ role: 'bot', text: msg.text, ts: msg.timestamp || new Date().toISOString() })
+      if (state.tab === 'chat' && document.visibilityState === 'visible') markReadSoon()
+      else setUnread(state.unread + 1)
       return
     }
     if (msg.type === 'file') {
       clearTyping()
-      appendMessage({
-        role: 'bot',
-        file: {
-          name: msg.fileName,
-          url: msg.url,
-          kind: msg.kind || (msg.isImage ? 'image' : 'file'),
-          isImage: !!msg.isImage,
-        },
-        ts: msg.timestamp || new Date().toISOString(),
-      })
+      const file = {
+        name: msg.fileName,
+        url: msg.url,
+        kind: msg.kind || (msg.isImage ? 'image' : 'file'),
+        isImage: !!msg.isImage,
+        size: msg.size,
+      }
+      const ts = msg.timestamp || new Date().toISOString()
+      rememberLocalFile({ ...file, ts })
+      appendMessage({ role: 'bot', file, ts })
+      if (state.tab === 'chat' && document.visibilityState === 'visible') markReadSoon()
+      else setUnread(state.unread + 1)
       return
     }
     if (msg.type === 'notice' && msg.text) {
@@ -454,10 +771,14 @@
     for (const btn of el.navButtons) {
       btn.classList.toggle('active', btn.dataset.tab === name)
     }
-    if (name === 'chat') scrollToBottom()
+    if (name === 'chat') {
+      scrollToBottom()
+      markReadSoon()
+    }
     if (name === 'tools') loadTools()
     if (name === 'usage') loadUsage()
     if (name === 'settings') loadSettings()
+    syncChatVisible()
   }
 
   for (const btn of el.navButtons) {
@@ -481,12 +802,49 @@
     scrollToBottom()
   }
 
+  function appendLinkedText(parent, text) {
+    const pattern = /(https?:\/\/[^\s<>"']+)/g
+    let lastIndex = 0
+    let match
+    while ((match = pattern.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        parent.appendChild(document.createTextNode(text.slice(lastIndex, match.index)))
+      }
+      const link = document.createElement('a')
+      let cleanUrl = match[1]
+      // 消息里的 Markdown 反引号/句末标点不能带进 URL，否则会 404。
+      const trailing = /[`"'，。；：！？)\]}】]+$/.exec(cleanUrl)
+      if (trailing) cleanUrl = cleanUrl.slice(0, -trailing[0].length)
+      link.href = browserSafeUrl(cleanUrl)
+      link.target = '_blank'
+      link.rel = 'noopener'
+      link.textContent = cleanUrl
+      if (/\.apk(\?|$)/i.test(cleanUrl)) {
+        link.addEventListener('click', event => {
+          const bridge = notifyBridge()
+          // 普通聊天里的 APK 链接先交给系统浏览器下载，不直接调用 App 内安装器；
+          // 这样不会因为 Jarvis 自身的安装权限被卡住。App 更新入口仍走 installUpdate。
+          if (bridge && typeof bridge.openExternal === 'function') {
+            event.preventDefault()
+            bridge.openExternal(browserSafeUrl(cleanUrl))
+          } else if (bridge && typeof bridge.installUpdate === 'function') {
+            event.preventDefault()
+            bridge.installUpdate(browserSafeUrl(cleanUrl), '')
+          }
+        })
+      }
+      parent.appendChild(link)
+      lastIndex = match.index + match[1].length
+    }
+    if (lastIndex < text.length) parent.appendChild(document.createTextNode(text.slice(lastIndex)))
+  }
+
   function buildMessageEl(item) {
     const div = document.createElement('div')
     div.className = 'msg ' + (item.role === 'user' ? 'user' : item.role === 'system' ? 'system' : 'bot')
 
     if (item.text) {
-      div.appendChild(document.createTextNode(item.text))
+      appendLinkedText(div, item.text)
     }
 
     if (item.attachments) {
@@ -519,7 +877,48 @@
       name: file.name,
       url: absUrl(file.url),
       kind: file.kind || (file.isImage ? 'image' : 'file'),
+      size: file.size,
     })
+  }
+
+  function bindNativeFileLink(link, name, url) {
+    const bridge = notifyBridge()
+    if (!bridge) return
+    const isApk = /\.apk(\?|$)/i.test(name || '') || /\.apk(\?|$)/i.test(url || '')
+    link.addEventListener('click', event => {
+      // 聊天里的文件统一先交给浏览器/系统下载；只有设置里的“下载并安装”才走 App 内安装器。
+      if (typeof bridge.openExternal === 'function') {
+        event.preventDefault()
+        bridge.openExternal(browserSafeUrl(url))
+        return
+      }
+      if (isApk && typeof bridge.installUpdate === 'function') {
+        event.preventDefault()
+        bridge.installUpdate(browserSafeUrl(url), '')
+      }
+    })
+  }
+
+  function fileVisual(name) {
+    const ext = String(name || '').split('.').pop().toLowerCase()
+    const map = {
+      apk: { label: 'APK', cls: 'apk', type: '安装包' },
+      pdf: { label: 'PDF', cls: 'pdf', type: 'PDF 文档' },
+      doc: { label: 'DOC', cls: 'doc', type: 'Word 文档' },
+      docx: { label: 'DOC', cls: 'doc', type: 'Word 文档' },
+      xls: { label: 'XLS', cls: 'sheet', type: '表格' },
+      xlsx: { label: 'XLS', cls: 'sheet', type: '表格' },
+      csv: { label: 'CSV', cls: 'sheet', type: '表格' },
+      ppt: { label: 'PPT', cls: 'ppt', type: '演示文稿' },
+      pptx: { label: 'PPT', cls: 'ppt', type: '演示文稿' },
+      zip: { label: 'ZIP', cls: 'zip', type: '压缩包' },
+      rar: { label: 'RAR', cls: 'zip', type: '压缩包' },
+      '7z': { label: '7Z', cls: 'zip', type: '压缩包' },
+      txt: { label: 'TXT', cls: 'text', type: '文本' },
+      md: { label: 'MD', cls: 'text', type: 'Markdown' },
+      json: { label: 'JSON', cls: 'text', type: '数据文件' },
+    }
+    return map[ext] || { label: (ext || 'FILE').slice(0, 4).toUpperCase(), cls: 'generic', type: '文件' }
   }
 
   function buildMediaEl({ name, url, kind, size }) {
@@ -529,6 +928,7 @@
       img.className = 'media'
       img.src = url
       img.alt = name || '图片'
+      img.addEventListener('click', () => openImageViewer(url, name || '图片'))
       wrap.appendChild(img)
       return wrap
     }
@@ -548,20 +948,37 @@
       wrap.appendChild(audio)
       return wrap
     }
-    const card = document.createElement('div')
-    card.className = 'file-card'
-    const link = document.createElement('a')
-    link.href = url
-    link.target = '_blank'
-    link.rel = 'noopener'
-    link.textContent = name || '文件'
-    card.appendChild(link)
-    if (size) {
-      const sizeEl = document.createElement('span')
-      sizeEl.className = 'file-size'
-      sizeEl.textContent = formatSize(size)
-      card.appendChild(sizeEl)
-    }
+    const isApk = /\.apk(\?|$)/i.test(name || '') || /\.apk(\?|$)/i.test(url || '')
+    const visual = fileVisual(name)
+    const card = document.createElement('a')
+    card.className = 'file-card ' + (isApk ? 'is-apk' : '')
+    card.href = browserSafeUrl(url)
+    card.target = '_blank'
+    card.rel = 'noopener'
+
+    const icon = document.createElement('span')
+    icon.className = 'file-icon ' + visual.cls
+    icon.textContent = visual.label
+    card.appendChild(icon)
+
+    const info = document.createElement('span')
+    info.className = 'file-info'
+    const nameEl = document.createElement('span')
+    nameEl.className = 'file-name'
+    nameEl.textContent = name || '文件'
+    info.appendChild(nameEl)
+    const meta = document.createElement('span')
+    meta.className = 'file-meta'
+    meta.textContent = [visual.type, size ? formatSize(size) : ''].filter(Boolean).join(' · ')
+    info.appendChild(meta)
+    card.appendChild(info)
+
+    const action = document.createElement('span')
+    action.className = 'file-action'
+    action.textContent = isApk ? '下载' : '打开'
+    card.appendChild(action)
+
+    bindNativeFileLink(card, name || '', url)
     wrap.appendChild(card)
     return wrap
   }
@@ -605,9 +1022,25 @@
     if (!state.token) return
     try {
       const data = await api('/api/v1/session/current')
+      state.sessionId = data.session?.sessionId || data.sessionId || ''
+      state.syncCursor = Number(data.cursor || 0)
       state.messages = Array.isArray(data.messages) ? data.messages : []
+      const localFiles = readLocalFiles().filter(item => item.sessionId === state.sessionId)
+      const knownFiles = new Set(state.messages.filter(m => m.file?.url).map(m => m.file.url))
+      for (const item of localFiles) {
+        if (knownFiles.has(item.url)) continue
+        knownFiles.add(item.url)
+        state.messages.push({
+          role: 'bot',
+          file: { name: item.name, url: item.url, kind: item.kind, isImage: item.isImage, size: item.size },
+          ts: item.ts,
+          local: true,
+        })
+      }
       renderMessages(state.messages)
       setOwnerChip(!!data.owner)
+      setUnread(data.unread || 0)
+      markReadSoon()
     } catch (err) {
       try {
         const data = await api('/api/history')
@@ -641,6 +1074,19 @@
   for (const item of el.attachItems) {
     item.addEventListener('click', () => pickAttachment(item.dataset.kind))
   }
+
+  if (el.imageCloseBtn) el.imageCloseBtn.addEventListener('click', closeImageViewer)
+  if (el.imageDownloadBtn) el.imageDownloadBtn.addEventListener('click', downloadViewerImage)
+  if (el.imageViewer) {
+    el.imageViewer.addEventListener('click', event => {
+      if (event.target === el.imageViewer) closeImageViewer()
+    })
+  }
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && el.imageViewer && !el.imageViewer.classList.contains('hidden')) {
+      closeImageViewer()
+    }
+  })
 
   function toggleAttachSheet() {
     const willOpen = el.attachSheet.classList.contains('hidden')
@@ -739,8 +1185,11 @@
     const attachments = state.attachments.slice()
     if (!text && !attachments.length) return
     if (!state.token) { openSetup(''); return }
+    const clientMessageId = newClientMessageId()
+    const attachmentIds = attachments.map(a => a.id)
     appendMessage({
       role: 'user',
+      id: clientMessageId,
       text,
       attachments: attachments.map(a => ({ ...a, url: absUrl(a.url) })),
       ts: new Date().toISOString(),
@@ -753,17 +1202,24 @@
     try {
       await api('/api/v1/session/message', {
         method: 'POST',
-        body: { text, attachmentIds: attachments.map(a => a.id) },
+        body: { text, attachmentIds, clientMessageId },
       })
     } catch (err) {
       clearTyping()
-      appendMessage({ role: 'system', text: `发送失败：${err.message}`, ts: new Date().toISOString() })
+      queueOutgoing({ text, attachmentIds, clientMessageId })
+      appendMessage({
+        role: 'system',
+        text: `发送失败，已加入重试队列：${err.message}`,
+        ts: new Date().toISOString(),
+      })
     }
   }
 
   el.send.addEventListener('click', sendMessage)
   el.input.addEventListener('keydown', event => {
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    // 手机上没有 Shift；Enter 只换行，发送统一走按钮。
+    // 桌面端保留 Ctrl/Cmd + Enter 快捷发送。
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) {
       event.preventDefault()
       sendMessage()
     }
@@ -795,6 +1251,9 @@
 
   async function loadTools() {
     if (!state.token) return
+    if (!state.me) {
+      try { await loadMe() } catch {}
+    }
     try {
       const data = await api(`/api/v1/tools?q=${encodeURIComponent(state.toolQuery)}`)
       state.tools = Array.isArray(data.tools) ? data.tools : []
@@ -810,8 +1269,11 @@
   }
 
   function renderTools() {
+    const meId = state.me?.principalId || ''
     const tools = state.tools.filter(tool => {
-      if (state.toolScope === 'my') return tool.source === 'user' || tool.enabled
+      if (state.toolScope === 'my') {
+        return tool.source === 'user' && !!meId && tool.ownerId === meId
+      }
       return true
     })
     if (state.expandedToolId && !tools.some(tool => tool.id === state.expandedToolId)) {
@@ -823,7 +1285,9 @@
     if (!tools.length) {
       const empty = document.createElement('div')
       empty.className = 'empty-state'
-      empty.textContent = state.toolQuery ? '没有匹配的工具' : '还没有工具'
+      empty.textContent = state.toolQuery
+        ? '没有匹配的工具'
+        : (state.toolScope === 'my' ? '你还没有创建自己的工具' : '还没有工具')
       el.toolList.appendChild(empty)
       return
     }
@@ -1266,6 +1730,8 @@
   async function loadSettings() {
     if (!state.token) return
     renderConnection()
+    refreshNotifyStatus()
+    refreshUpdateSection()
     try {
       const data = await api('/api/v1/settings')
       state.settings = data.settings
@@ -1571,6 +2037,93 @@
     } catch {}
   }
 
+  function openNativeSettings(method) {
+    const bridge = notifyBridge()
+    if (!bridge) return
+    try {
+      if (typeof bridge[method] === 'function') bridge[method]()
+    } catch {}
+  }
+
+  if (el.openBatteryBtn) {
+    el.openBatteryBtn.addEventListener('click', () => openNativeSettings('openBatterySettings'))
+  }
+  if (el.openStartupBtn) {
+    el.openStartupBtn.addEventListener('click', () => openNativeSettings('openStartupSettings'))
+  }
+  if (el.openNotifySettingsBtn) {
+    el.openNotifySettingsBtn.addEventListener('click', () => openNativeSettings('openNotificationSettings'))
+  }
+  if (el.openAppSettingsBtn) {
+    el.openAppSettingsBtn.addEventListener('click', () => openNativeSettings('openAppSettings'))
+  }
+
+  if (el.notifyTestBtn) {
+    el.notifyTestBtn.addEventListener('click', () => {
+      const bridge = notifyBridge()
+      if (!bridge) return
+      try {
+        if (!bridge.hasPermission()) {
+          bridge.requestPermission()
+          el.notifyStatus.textContent = '等待系统通知权限…'
+          setTimeout(refreshNotifyStatus, 1200)
+          return
+        }
+        const ok = !!bridge.testNotification()
+        el.notifyStatus.textContent = ok ? '测试通知已发送，看看通知栏喵' : '发送失败'
+      } catch {
+        el.notifyStatus.textContent = '发送失败'
+      }
+      setTimeout(refreshNotifyStatus, 2500)
+    })
+  }
+
+  if (el.checkUpdateBtn) {
+    el.checkUpdateBtn.addEventListener('click', () => { checkUpdate().catch(() => {}) })
+  }
+  if (el.installPermissionBtn) {
+    el.installPermissionBtn.addEventListener('click', () => {
+      const bridge = notifyBridge()
+      if (!bridge) return
+      try {
+        if (typeof bridge.openInstallPermission === 'function') bridge.openInstallPermission()
+        else if (typeof bridge.openAppSettings === 'function') bridge.openAppSettings()
+      } catch {}
+    })
+  }
+  if (el.installUpdateBtn) {
+    el.installUpdateBtn.addEventListener('click', () => {
+      const bridge = notifyBridge()
+      if (!bridge || !state.updateInfo) return
+      try {
+        const ok = bridge.installUpdate(absUrl(state.updateInfo.url), state.updateInfo.sha256 || '')
+        if (el.updateStatus) el.updateStatus.textContent = ok
+          ? '正在下载，随后会弹出安装确认…'
+          : '请先允许 Jarvis 安装未知应用'
+      } catch {
+        if (el.updateStatus) el.updateStatus.textContent = '无法开始安装'
+      }
+    })
+  }
+
+  if (el.notifyToggle) {
+    el.notifyToggle.addEventListener('change', () => {
+      const enabled = !!el.notifyToggle.checked
+      write(KEYS.notify, enabled ? '1' : '0')
+      const bridge = notifyBridge()
+      if (!bridge) {
+        refreshNotifyStatus()
+        return
+      }
+      try {
+        bridge.setEnabled(enabled)
+        if (enabled) bridge.requestPermission()
+      } catch {}
+      refreshNotifyStatus()
+      setTimeout(refreshNotifyStatus, 800)
+    })
+  }
+
   el.testModeToggle.addEventListener('change', async () => {
     try {
       await api('/api/v1/settings', { method: 'PUT', body: { testMode: el.testModeToggle.checked } })
@@ -1590,6 +2143,23 @@
   window.addEventListener('unhandledrejection', event => {
     console.error('unhandled rejection', event.reason)
   })
+  document.addEventListener('visibilitychange', () => {
+    syncChatVisible()
+    if (document.visibilityState === 'visible') {
+      refreshCurrentSessionSoon()
+      flushOutbox().catch(() => {})
+      markReadSoon()
+    }
+  })
+  window.addEventListener('focus', () => {
+    syncChatVisible()
+    refreshCurrentSessionSoon()
+  })
+  window.addEventListener('blur', syncChatVisible)
+  window.addEventListener('online', () => {
+    refreshCurrentSessionSoon()
+    flushOutbox().catch(() => {})
+  })
 
   initConfig()
   renderConnection()
@@ -1597,9 +2167,10 @@
   if (!state.token) {
     setStatus('未登录', 'offline')
     showLogin('')
+    nativePageReady()
   } else {
     connect()
     loadMe()
-    loadSession()
+    loadSession().finally(nativePageReady)
   }
 })()

@@ -55,11 +55,14 @@ let onMessageCb = null
 let accessToken = ''
 let cfg = {}
 const clients = new Map()      // clientId -> Set<WebSocket>
-const deviceClients = new Map() // deviceId -> clientId
+const deviceClients = new Map() // deviceId -> 最近一个 clientId
+const deviceClientSets = new Map() // deviceId -> Set<clientId>（同一设备的多个连接，例如网页 + 后台通知）
 const clientDevices = new Map() // clientId -> deviceId
+const clientDeviceHistory = new Map() // clientId -> { deviceId, at }（连接关闭后短暂保留，保证迟到的回复能转到后台服务）
 const pending = new Map()      // target key (clientId/device) -> payload[]
 const fileRegistry = new Map() // fileId -> { filePath, fileName }
 const rateBuckets = new Map()  // deviceId -> number[]
+const CLIENT_HISTORY_TTL = 24 * 3600_000
 let keepAliveTimer = null
 
 function readBridgeConfig() {
@@ -175,15 +178,39 @@ function sendToClient(clientId, payload) {
   return delivered
 }
 
+function sendToDevice(deviceId, payload) {
+  const set = deviceClientSets.get(deviceId)
+  if (!set || !set.size) return false
+  let delivered = false
+  for (const clientId of [...set]) {
+    if (sendToClient(clientId, payload)) delivered = true
+  }
+  if (delivered && payload && ['assistant', 'file', 'notice', 'error'].includes(payload.type)) {
+    logInfo('app.ws.deliver', '', { deviceId, clients: set.size, type: payload.type })
+  }
+  return delivered
+}
+
+function pruneClientHistory() {
+  if (clientDeviceHistory.size < 500) return
+  const cutoff = Date.now() - CLIENT_HISTORY_TTL
+  for (const [clientId, item] of clientDeviceHistory) {
+    if (!item || item.at < cutoff) clientDeviceHistory.delete(clientId)
+  }
+}
+
 function pushToTarget(target, payload) {
   const key = String(target || '')
   if (!key) return
-  if (sendToClient(key, payload)) return
+  const history = clientDeviceHistory.get(key)
+  const deviceId = clientDevices.get(key)
+    || (history && history.deviceId)
+    || (deviceClientSets.has(key) ? key : '')
 
-  // target 可能是 clientId（有 device 映射）或 device；优先找该 device 的最新连接
-  const deviceId = clientDevices.get(key) || key
-  const latestClient = deviceClients.get(deviceId)
-  if (latestClient && sendToClient(latestClient, payload)) return
+  // 同一个设备可能有多个连接：网页前台 + 原生后台通知服务。
+  // 回复只发一份给该设备的所有连接，网页负责展示，后台服务按前后台状态决定是否通知。
+  if (deviceId && sendToDevice(deviceId, payload)) return
+  if (!deviceId && sendToClient(key, payload)) return
 
   const queueKey = deviceId || key
   const queue = pending.get(queueKey) || []
@@ -257,6 +284,10 @@ function effectiveAppPrincipal(principal, owner) {
 async function handleIncomingMessage(req, res) {
   const { deviceId, principal } = appPrincipalFor(req)
   const owner = ownerTokenOk(req)
+  const clientMessageId = String(req.body?.clientMessageId || '').trim().slice(0, 100)
+  if (clientMessageId && appStore.hasInboundId(principal.id, clientMessageId)) {
+    return res.json({ ok: true, duplicate: true })
+  }
   if (!checkRate(deviceId)) {
     return res.status(429).json({ ok: false, error: '消息太频繁，稍等一下喵' })
   }
@@ -307,7 +338,8 @@ async function handleIncomingMessage(req, res) {
       timestamp: new Date().toISOString(),
       owner,
     })
-    logInfo('app.message.in', '', { deviceId, textLen: text.length, attachments: attachments.length, owner, replyTo })
+    if (clientMessageId) appStore.rememberInboundId(principal.id, clientMessageId)
+    logInfo('app.message.in', '', { deviceId, textLen: text.length, attachments: attachments.length, owner, replyTo, clientMessageId: clientMessageId || null })
     res.json({ ok: true })
   } catch (err) {
     logError('app.message.fail', err.message, { deviceId })
@@ -462,20 +494,86 @@ function buildServer() {
     })
   })
 
-  app.get('/api/v1/session/current', auth, (req, res) => {
-    const { principal } = appPrincipalFor(req)
-    const owner = ownerTokenOk(req)
-    const session = getCurrentSession(principal.id)
-    if (!session) return res.json({ ok: true, session: null, messages: [], owner })
-    const messages = readMessages(principal.id, session.sessionId)
+  app.get('/api/v1/app/version', auth, (_req, res) => {
+    try {
+      const latest = JSON.parse(fs.readFileSync(path.join(APP_WEB_DIR, 'dl', 'latest.json'), 'utf-8'))
+      res.json({ ok: true, ...latest })
+    } catch {
+      res.status(404).json({ ok: false, error: '还没有发布版本信息' })
+    }
+  })
+
+  function uiMessages(principalId, sessionId) {
+    return readMessages(principalId, sessionId)
       .filter(r => (r.type === 'user' || r.type === 'assistant') && typeof r.text === 'string' && r.text.trim())
-      .slice(-120)
       .map(r => ({
+        id: r.id,
+        seq: r.seq,
         role: r.type === 'user' ? 'user' : 'bot',
         text: r.text,
         ts: r.timestamp || '',
       }))
-    res.json({ ok: true, session, messages, owner })
+  }
+
+  app.get('/api/v1/session/current', auth, (req, res) => {
+    const { principal } = appPrincipalFor(req)
+    const owner = ownerTokenOk(req)
+    const session = getCurrentSession(principal.id)
+    if (!session) return res.json({ ok: true, session: null, messages: [], owner, unread: 0, readCursor: 0 })
+    const all = uiMessages(principal.id, session.sessionId)
+    const messages = all.slice(-120)
+    const readCursor = appStore.getReadCursor(principal.id, session.sessionId)
+    res.json({
+      ok: true,
+      session,
+      messages,
+      owner,
+      cursor: messages.length ? messages[messages.length - 1].seq + 1 : 0,
+      readCursor,
+      unread: all.filter(m => m.seq >= readCursor).length,
+    })
+  })
+
+  /**
+   * App 增量同步：WebSocket 只负责实时提醒，断线/重连后以这里为准。
+   * after 是上一次看到的 seq+1；返回 sessionId、消息和新的 cursor。
+   */
+  app.get('/api/v1/sync', auth, (req, res) => {
+    const { principal } = appPrincipalFor(req)
+    const session = getCurrentSession(principal.id)
+    if (!session) return res.json({ ok: true, session: null, sessionId: null, messages: [], cursor: 0, readCursor: 0, unread: 0 })
+    const all = uiMessages(principal.id, session.sessionId)
+    const readCursor = appStore.getReadCursor(principal.id, session.sessionId)
+    const after = Math.max(0, Number(req.query.after) || 0)
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100))
+    const messages = all.filter(m => m.seq >= after).slice(0, limit)
+    const cursor = messages.length ? messages[messages.length - 1].seq + 1 : after
+    res.json({
+      ok: true,
+      session,
+      sessionId: session.sessionId,
+      messages,
+      cursor,
+      readCursor,
+      unread: all.filter(m => m.seq >= readCursor).length,
+      lastSeq: all.length,
+      serverTime: new Date().toISOString(),
+    })
+  })
+
+  app.post('/api/v1/read', auth, (req, res) => {
+    const { principal } = appPrincipalFor(req)
+    const session = getCurrentSession(principal.id)
+    if (!session) return res.json({ ok: true, readCursor: 0, unread: 0 })
+    const all = uiMessages(principal.id, session.sessionId)
+    const requested = req.body?.cursor === undefined ? all.length : Number(req.body.cursor)
+    const cursor = Math.min(all.length, Math.max(0, Number.isFinite(requested) ? requested : all.length))
+    const readCursor = appStore.markRead(principal.id, session.sessionId, cursor)
+    res.json({
+      ok: true,
+      readCursor,
+      unread: all.filter(m => m.seq >= readCursor).length,
+    })
   })
 
   app.post('/api/v1/session/message', auth, handleIncomingMessage)
@@ -659,14 +757,20 @@ function setupWs(httpServer) {
     }
     const deviceId = sanitizeDevice(url.searchParams.get('device') || 'owner')
     const owner = ownerTokenOk(req, url)
+    const userAgent = String(req.headers['user-agent'] || '').slice(0, 120)
     const clientId = crypto.randomUUID()
     let set = clients.get(clientId)
     if (!set) { set = new Set(); clients.set(clientId, set) }
     set.add(ws)
     ws.deviceId = deviceId
     ws.clientId = clientId
+    let deviceSet = deviceClientSets.get(deviceId)
+    if (!deviceSet) { deviceSet = new Set(); deviceClientSets.set(deviceId, deviceSet) }
+    deviceSet.add(clientId)
     deviceClients.set(deviceId, clientId)
     clientDevices.set(clientId, deviceId)
+    clientDeviceHistory.set(clientId, { deviceId, at: Date.now() })
+    pruneClientHistory()
 
     let principal = null
     try {
@@ -699,11 +803,21 @@ function setupWs(httpServer) {
         bucket.delete(ws)
         if (bucket.size === 0) clients.delete(clientId)
       }
-      if (deviceClients.get(deviceId) === clientId) deviceClients.delete(deviceId)
+      const deviceSet = deviceClientSets.get(deviceId)
+      if (deviceSet) {
+        deviceSet.delete(clientId)
+        if (deviceSet.size === 0) deviceClientSets.delete(deviceId)
+      }
+      if (deviceClients.get(deviceId) === clientId) {
+        const remaining = deviceSet ? [...deviceSet] : []
+        if (remaining.length) deviceClients.set(deviceId, remaining[remaining.length - 1])
+        else deviceClients.delete(deviceId)
+      }
       clientDevices.delete(clientId)
+      logInfo('app.ws.close', '', { deviceId, clientId, ua: userAgent })
     })
 
-    logInfo('app.ws.connect', '', { deviceId, clientId, owner, username: user?.username || null })
+    logInfo('app.ws.connect', '', { deviceId, clientId, owner, username: user?.username || null, ua: userAgent })
   })
 
   keepAliveTimer = setInterval(() => {
@@ -745,10 +859,20 @@ export async function start(onMessage) {
 export function isOnline(externalUserId) {
   const key = String(externalUserId || '')
   if (!key) return false
-  const deviceId = clientDevices.get(key) || key
-  const clientId = deviceClients.get(deviceId) || key
-  const set = clients.get(clientId)
-  return !!set && [...set].some(ws => ws.readyState === 1)
+  const history = clientDeviceHistory.get(key)
+  const deviceId = clientDevices.get(key)
+    || (history && history.deviceId)
+    || (deviceClientSets.has(key) ? key : '')
+  if (!deviceId) {
+    const set = clients.get(key)
+    return !!set && [...set].some(ws => ws.readyState === 1)
+  }
+  const deviceSet = deviceClientSets.get(deviceId)
+  if (!deviceSet) return false
+  return [...deviceSet].some(clientId => {
+    const set = clients.get(clientId)
+    return !!set && [...set].some(ws => ws.readyState === 1)
+  })
 }
 
 export async function send(externalUserId, text, opts = {}) {
@@ -771,16 +895,18 @@ async function sendFileLike(externalUserId, filePath, opts = {}) {
     ? 'image'
     : (/\.(mp4|webm|mov|m4v)$/i.test(fileName) ? 'video'
       : (/\.(mp3|wav|m4a|ogg|aac)$/i.test(fileName) ? 'audio' : 'file'))
+  const size = fs.statSync(filePath).size
   pushToTarget(target, {
     type: 'file',
     id: staged.id,
     fileName: staged.name,
     kind,
     isImage,
+    size,
     url: `/api/file/${staged.id}?token=${encodeURIComponent(accessToken)}`,
     timestamp: new Date().toISOString(),
   })
-  logInfo('app.file.sent', fileName, { target, bytes: fs.statSync(filePath).size })
+  logInfo('app.file.sent', fileName, { target, bytes: size })
 }
 
 export async function sendFile(externalUserId, filePath, opts = {}) {
@@ -799,7 +925,9 @@ export function stop() {
   }
   clients.clear()
   deviceClients.clear()
+  deviceClientSets.clear()
   clientDevices.clear()
+  clientDeviceHistory.clear()
   pending.clear()
   try { wss?.close() } catch {}
   wss = null
