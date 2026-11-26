@@ -65,11 +65,7 @@ export function buildInjectedEnv({
   }
   delete injectedEnv.CLAUDECODE
 
-  // 自动压缩窗口使用模型默认的 1M；不再提前压到 200k，避免过早丢历史。
-  // 如果以后又要降低延迟，再单独把 AUTO_COMPACT_WINDOW 调小。
-  if (!injectedEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW) {
-    injectedEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(AUTO_COMPACT_WINDOW)
-  }
+  // 不再注入默认的自动压缩窗口：有模型配置就用配置，没有就交给模型/SDK 决定。
 
   if (authMode === 'auth_token') {
     injectedEnv.ANTHROPIC_AUTH_TOKEN = apiKey

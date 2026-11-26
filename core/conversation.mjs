@@ -146,11 +146,8 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
       activeModel = userModel?.model || (canUseGlobal ? getModel() : '')
       agentEnv = canUseGlobal ? getAgentEnv() : {}
     }
-    // owner/maintainer 统一使用 1M 上下文窗口；即使有用户模型配置也覆盖窗口，
-    // 避免旧配置里的 786432 继续生效。普通用户自己的模型配置不被覆盖。
-    if (canUseGlobal) {
-      agentEnv = { ...(agentEnv || {}), CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000' }
-    }
+    // 上下文窗口按模型配置/模型能力决定，不在这里强制覆盖。
+    // 模型支持 1M 就用 1M；配置里没有就沿用模型/SDK 的默认值。
     if (!apiKey) {
       return {
         text: userModel
