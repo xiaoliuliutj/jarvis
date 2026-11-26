@@ -81,6 +81,17 @@ body { overflow: hidden; }
   cursor: pointer;
   display: block;
   overflow: hidden;
+  position: relative;
+}
+.context-threshold {
+  position: absolute;
+  left: 75%;
+  top: -1px;
+  bottom: -1px;
+  width: 1px;
+  background: rgba(242, 239, 228, 0.55);
+  z-index: 2;
+  pointer-events: none;
 }
 .context-bar.empty { opacity: 0.55; }
 .context-segments {

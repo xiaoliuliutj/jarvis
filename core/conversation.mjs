@@ -26,8 +26,15 @@ import {
   buildAgentEnv,
 } from './config.mjs'
 import { logInfo, logWarn, logError } from './logger.mjs'
-import { getChatRuntime, listModels, appendUsage, setSessionContext } from './app-store.mjs'
+import {
+  getChatRuntime,
+  listModels,
+  appendUsage,
+  setSessionContext,
+  getSessionContext,
+} from './app-store.mjs'
 import { readTranscriptUsage } from './usage-transcript.mjs'
+import { compactSessionContext } from './context-compactor.mjs'
 
 const locks = new Map()
 
@@ -79,17 +86,22 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
 
     const workspace = store.workspaceDir(principalId)
     const current = store.getCurrentSession(principalId)
-    const resumeId = forceNew ? null : (sessionId || current?.sessionId || null)
+    const displaySessionId = forceNew ? null : (sessionId || current?.sessionId || null)
+    const resumeId = displaySessionId
+    const sessionRecord = displaySessionId ? store.getSession(principalId, displaySessionId) : null
+    let agentSessionId = forceNew ? null : (sessionRecord?.agentSessionId || displaySessionId || null)
+    let rotateAgent = false
+    let handoffBlock = ''
 
     const persona = store.readPersona(principalId)
-    const memory = store.formatMemory(principalId, 6000)
+    let memory = store.formatMemory(principalId, 6000)
     const rules = store.readRulesText()
-    const systemPrompt = buildSystemPrompt({ principal, rules, persona, memory })
+    let systemPrompt = buildSystemPrompt({ principal, rules, persona, memory })
     const mcpServers = buildMcpServers(principal)
     const canUseTool = buildCanUseTool({ principal, workspace })
     let toolChars = 0
     try { toolChars = JSON.stringify(mcpServers || {}).length } catch {}
-    const contextHints = {
+    let contextHints = {
       systemChars: Math.max(0, systemPrompt.length - persona.length - memory.length),
       memoryChars: (persona?.length || 0) + (memory?.length || 0),
       toolChars,
@@ -145,6 +157,45 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
       }
     }
 
+    // 上下文达到窗口 75% 时，把较早对话压成长期记忆，并换一个新的 Agent 会话；
+    // App 的显示会话保持不变，所以历史聊天记录不会消失。
+    if (!forceNew && displaySessionId && agentSessionId) {
+      const lastContext = getSessionContext(principalId, displaySessionId)
+      const ratio = lastContext
+        ? (Number(lastContext.percentage) || (
+          Number(lastContext.maxTokens) > 0
+            ? Number(lastContext.totalTokens) / Number(lastContext.maxTokens) * 100
+            : 0
+        ))
+        : 0
+      if (ratio >= 75) {
+        const compacted = await compactSessionContext({
+          principalId,
+          displaySessionId,
+          apiKey,
+          baseUrl,
+          authMode,
+          model: activeModel,
+        })
+        if (compacted) {
+          rotateAgent = true
+          handoffBlock = compacted.handoffBlock || ''
+          memory = store.formatMemory(principalId, 6000)
+          systemPrompt = buildSystemPrompt({ principal, rules, persona, memory })
+          contextHints = {
+            systemChars: Math.max(0, systemPrompt.length - persona.length - memory.length),
+            memoryChars: (persona?.length || 0) + (memory?.length || 0),
+            toolChars,
+          }
+          logInfo('context.compact.rotate', '', {
+            principalId,
+            sessionId: displaySessionId,
+            ratio: Math.round(ratio),
+          })
+        }
+      }
+    }
+
     // cron 的内部 prompt 不是用户发的消息，不写入聊天记录。
     const includeUser = source !== 'cron'
     // 首次会话的名称：主会话固定叫“主会话”；用户 chat 取第一条消息；cron 叫“定时任务”
@@ -156,7 +207,7 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
     // ── 进行中即落盘 ─────────────────────────────────────────────────────────
     // 用户消息和工具记录不等回合结束才写。否则回合进行中切换会话/刷新历史时，
     // 已发出的消息和已执行的工具会“消失”，回合结束后才重新出现。
-    let persistSessionId = resumeId        // 当前可落盘的会话 ID（新会话等 init 事件带回）
+    let persistSessionId = displaySessionId // App 显示会话 ID；新会话等 init 事件带回
     let userPersisted = false
     let toolsPersisted = 0
 
@@ -179,18 +230,19 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
     const toolRecords = []
     const llmUsageRecords = []
     const { run } = await import('../agents/agent.mjs')
+    const agentPrompt = handoffBlock ? `${handoffBlock}${prompt}` : prompt
 
     const runOnce = async () => {
       result = null
       llmUsageRecords.length = 0
-      for await (const event of run(prompt, {
+      for await (const event of run(agentPrompt, {
         model: activeModel,
         apiKey,
         baseUrl,
         authMode,
         agentEnv,
         cwd: workspace,
-        resumeSessionId: persistSessionId || resumeId,
+        resumeSessionId: rotateAgent ? null : (agentSessionId || null),
         systemPrompt,
         mcpServers,
         canUseTool,
@@ -199,8 +251,11 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
         memory: { append: (entry) => store.appendMemory(principalId, entry) },
       })) {
         if (event.type === 'session' && event.sessionId) {
-          // 新会话首次运行：init 带回 sessionId，立刻补写用户消息
+          agentSessionId = event.sessionId
+          // 新的显示会话：init 带回 sessionId，立刻补写用户消息
           if (!persistSessionId) persistSessionId = event.sessionId
+          // 压缩后的首轮已经创建了新 Agent 会话，后续重试应续接它
+          rotateAgent = false
           if (includeUser && !userPersisted) {
             store.ensureSession(principalId, persistSessionId, { name: sessionName, isMain })
             store.appendMessage(principalId, persistSessionId, userRecord)
@@ -252,8 +307,9 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
       turns: result.turns ?? 0,
     })
 
-    const finalSessionId = result.sessionId || persistSessionId
-    if (!finalSessionId) throw new Error('Agent 没有返回 sessionId')
+    const finalAgentSessionId = result.sessionId || agentSessionId || persistSessionId
+    const finalSessionId = persistSessionId || finalAgentSessionId
+    if (!finalSessionId || !finalAgentSessionId) throw new Error('Agent 没有返回 sessionId')
 
     let text = result.isError
       ? sanitizeForUser(principal, result.text)
@@ -267,6 +323,7 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
       name: sessionName,
       isMain,
     })
+    store.setSessionAgentId(principalId, finalSessionId, finalAgentSessionId)
     // 补写还没落盘的记录（新会话 sessionId 来得太晚 / cron 等场景）
     if (includeUser && !userPersisted) {
       store.appendMessage(principalId, finalSessionId, userRecord)
@@ -287,7 +344,7 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
     try {
       let transcriptEvents = []
       try {
-        transcriptEvents = readTranscriptUsage(finalSessionId, { sinceMs: turnStartedAt - 100 })
+        transcriptEvents = readTranscriptUsage(finalAgentSessionId, { sinceMs: turnStartedAt - 100 })
       } catch (err) {
         logWarn('usage.transcript.fail', err.message, { principalId })
       }

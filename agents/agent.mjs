@@ -21,6 +21,8 @@ import { query } from '@anthropic-ai/claude-agent-sdk'
 import path from 'path'
 import fs from 'fs'
 
+export const AUTO_COMPACT_WINDOW = 200000
+
 export const name = 'Claude Code'
 export const description = '基于 Claude Agent SDK，内置完整 Claude Code 工具集（Read/Bash/Edit/Grep/Glob…）'
 
@@ -66,7 +68,7 @@ export function buildInjectedEnv({
   // 主会话上下文过长会拖慢每一次工具调用；把自动压缩窗口从模型默认的 1M
   // 降到 200k，让 CLI 更早压缩历史，后续回合的 cache/延迟都会明显下降。
   if (!injectedEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW) {
-    injectedEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '200000'
+    injectedEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(AUTO_COMPACT_WINDOW)
   }
 
   if (authMode === 'auth_token') {
@@ -273,10 +275,14 @@ export async function* run(prompt, options = {}) {
           const contextTokens = (Number(usage.input_tokens) || 0)
             + (Number(usage.cache_read_input_tokens) || 0)
             + (Number(usage.cache_creation_input_tokens) || 0)
+          const configuredWindow = Number(agentEnv?.CLAUDE_CODE_AUTO_COMPACT_WINDOW) || AUTO_COMPACT_WINDOW
           let maxTokens = Math.max(
             0,
             ...Object.values(msg.modelUsage || {}).map(item => Number(item?.contextWindow) || 0),
           )
+          if (configuredWindow >= 100000 && configuredWindow <= 1000000) {
+            maxTokens = configuredWindow
+          }
           if (!maxTokens) maxTokens = 1000000
           const hints = contextHints || {}
           let systemTokens = Math.max(0, Math.round((Number(hints.systemChars) || 0) / 3))
