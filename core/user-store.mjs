@@ -114,6 +114,7 @@ export function createSession(principalId, sessionId, { name = '新会话', isMa
   sessions.forEach(s => { s.isCurrent = false })
   const session = {
     sessionId,
+    agentSessionId: sessionId,
     name,
     isMain,
     createdAt: new Date().toISOString(),
@@ -155,6 +156,36 @@ export function renameSession(principalId, sessionId, name) {
   if (!session) return
   session.name = name
   writeJson(indexFile(principalId), sessions)
+}
+
+/** 显示会话 ID 与 Agent SDK 会话 ID 分开保存：上下文压缩时只换 Agent 会话，不清空 App 历史。 */
+export function setSessionAgentId(principalId, sessionId, agentSessionId) {
+  const sessions = listSessions(principalId)
+  const session = sessions.find(s => s.sessionId === sessionId)
+  if (!session) return null
+  session.agentSessionId = agentSessionId
+  writeJson(indexFile(principalId), sessions)
+  return session
+}
+
+export function readSessionDigestState(principalId, sessionId) {
+  const file = path.join(sessionsDir(principalId), `${sessionId}.digest.json`)
+  const data = readJson(file, null)
+  return {
+    digest: typeof data?.digest === 'string' ? data.digest : '',
+    compactedUpto: Number(data?.compactedUpto) || 0,
+    updatedAt: data?.updatedAt || null,
+  }
+}
+
+export function writeSessionDigestState(principalId, sessionId, { digest = '', compactedUpto = 0 } = {}) {
+  ensureDir(sessionsDir(principalId))
+  const file = path.join(sessionsDir(principalId), `${sessionId}.digest.json`)
+  writeJson(file, {
+    digest: String(digest || ''),
+    compactedUpto: Math.max(0, Number(compactedUpto) || 0),
+    updatedAt: new Date().toISOString(),
+  })
 }
 
 export function appendMessage(principalId, sessionId, record) {
@@ -214,6 +245,33 @@ export function appendMemory(principalId, { content, type = 'fact', refs = [] })
     createdAt: new Date().toISOString(),
   }
   fs.appendFileSync(memoryFile(principalId), JSON.stringify(entry) + '\n', 'utf-8')
+  return entry
+}
+
+/** 每个显示会话只保留一条压缩摘要，避免长期记忆无限膨胀。 */
+export function upsertSessionSummary(principalId, sessionId, content) {
+  ensureUser(principalId)
+  const ref = `session:${sessionId}`
+  const entries = readMemoryEntries(principalId).filter(entry => (
+    !(entry.type === 'session_summary'
+      && Array.isArray(entry.refs)
+      && entry.refs.includes(ref))
+  ))
+  const entry = {
+    id: randomUUID(),
+    content,
+    type: 'session_summary',
+    refs: [ref],
+    mentions: 1,
+    lastMentioned: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+  }
+  entries.push(entry)
+  fs.writeFileSync(
+    memoryFile(principalId),
+    entries.map(item => JSON.stringify(item)).join('\n') + (entries.length ? '\n' : ''),
+    'utf-8',
+  )
   return entry
 }
 
