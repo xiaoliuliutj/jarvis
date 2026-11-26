@@ -170,8 +170,8 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
     let toolChars = 0
     try { toolChars = JSON.stringify(mcpServers || {}).length } catch {}
     let contextHints = {
-      systemChars: Math.max(0, systemPrompt.length - persona.length - memory.length),
-      memoryChars: (persona?.length || 0) + (memory?.length || 0),
+      systemChars: Math.max(0, systemPrompt.length - memory.length),
+      memoryChars: memory?.length || 0,
       toolChars,
     }
 
@@ -204,8 +204,8 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
           memory = store.formatMemory(principalId, { contextWindowTokens })
           systemPrompt = buildSystemPrompt({ principal, rules, persona, memory })
           contextHints = {
-            systemChars: Math.max(0, systemPrompt.length - persona.length - memory.length),
-            memoryChars: (persona?.length || 0) + (memory?.length || 0),
+            systemChars: Math.max(0, systemPrompt.length - memory.length),
+            memoryChars: memory?.length || 0,
             toolChars,
           }
           logInfo('context.compact.rotate', '', {

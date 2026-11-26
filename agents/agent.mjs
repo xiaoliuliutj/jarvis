@@ -42,19 +42,23 @@ const SIGNAL_FILE = path.join(import.meta.dirname, 'tools', '_reload.signal')
 
 /**
  * SDK 会把整段 system prompt 都算进 system_prompt；
- * 把 persona + 长期记忆的估算 token 拆到 memory_files，上下文条才能看出记忆占了多少。
- * 只对 SDK 真实统计生效；fallback 已经自己拆分过。
+ * 把长期记忆的估算 token 拆到 memory_files，上下文条才能看出记忆占了多少。
+ * persona/规则仍然留在 system_prompt 里。只对 SDK 真实统计生效；fallback 已经自己拆分过。
  */
 function splitMemoryContext(contextUsage, hints = {}) {
   if (!contextUsage || contextUsage.estimated) return contextUsage
   const memoryChars = Number(hints.memoryChars) || 0
+  const systemChars = Number(hints.systemChars) || 0
   const memoryTokens = Math.round(memoryChars / 3)
+  // 系统提示里除了记忆还有规则/工具提示/文件路径等；至少把这部分留在「系统」里，
+  // 不能因为记忆估算偏大就把 system_prompt 直接扣成 0。
+  const baseSystemTokens = Math.round(systemChars / 3)
   if (memoryTokens <= 0) return contextUsage
   const categories = Array.isArray(contextUsage.categories) ? contextUsage.categories : []
   const system = categories.find(c => c && c.id === 'system_prompt')
   if (!system) return contextUsage
   const systemTokens = Number(system.tokens) || 0
-  const moved = Math.min(memoryTokens, systemTokens)
+  const moved = Math.min(memoryTokens, Math.max(0, systemTokens - baseSystemTokens))
   if (moved <= 0) return contextUsage
 
   const next = {
@@ -171,7 +175,11 @@ export async function* run(prompt, options = {}) {
     permissionMode: 'default',
     ...(resumeSessionId ? { resume: resumeSessionId } : {}),
     env: injectedEnv,
-    systemPrompt,
+    // 默认 SDK 会把首轮 system prompt 快照下来，后续 resume 即使传入新内容也不生效。
+    // Jarvis 的人设/长期记忆/当前时间需要每轮刷新，所以显式关闭快照。
+    ...(systemPrompt
+      ? { systemPrompt: { type: 'custom', prompt: systemPrompt, snapshot: false } }
+      : {}),
     mcpServers,
     canUseTool,
   }
