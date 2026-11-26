@@ -273,9 +273,12 @@ export function callNativeTool(principalId, tool, args = {}, opts = {}) {
 
   const native = latestClientFor(pid, true)
   const web = latestClientFor(pid, false)
-  const target = (native && nativeClientSupportsTools(native.userAgent)) ? native : web
+  const nativeTarget = (native && nativeClientSupportsTools(native.userAgent)) ? native : null
+  // 闹钟需要拉起系统时钟界面，优先用前台网页连接；后台通知服务在系统限制下不一定能启动 Activity。
+  const preferWeb = name === 'android_alarm'
+  const target = preferWeb ? (web || nativeTarget) : (nativeTarget || web)
   if (!target) {
-    if (native) return Promise.resolve({ ok: false, error: '请更新 Android App 到 0.2.4 后再使用手机原生工具' })
+    if (native) return Promise.resolve({ ok: false, error: '请更新 Android App 到 0.2.5 后再使用手机原生工具' })
     return Promise.resolve({ ok: false, error: '手机未连接，请打开 App 或通知服务' })
   }
 

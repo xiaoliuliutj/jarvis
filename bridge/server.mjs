@@ -705,7 +705,7 @@ app.post('/internal/native-tool', async (req, res) => {
   if (!definition || definition.provider !== 'android-native' || !definition.available) {
     return res.status(400).json({ ok: false, error: '该外接工具不可用' })
   }
-  if (!isToolEnabled(principalId, tool, false)) {
+  if (!isToolEnabled(principalId, tool, definition.enabledByDefault === true)) {
     return res.status(403).json({ ok: false, error: '该用户未启用此工具' })
   }
   if (typeof adapters.app?.callNativeTool !== 'function') {
@@ -716,7 +716,7 @@ app.post('/internal/native-tool', async (req, res) => {
     if (!result?.ok) {
       return res.status(502).json({ ok: false, error: result?.error || '手机执行失败' })
     }
-    const text = result.result?.delivered ? '通知已发送' : '已执行'
+    const text = result.result?.text || (result.result?.delivered ? '通知已发送' : '已执行')
     return res.json({ ok: true, result: result.result || {}, text })
   } catch (err) {
     return res.status(500).json({ ok: false, error: err.message })

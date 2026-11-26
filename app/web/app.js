@@ -1158,6 +1158,47 @@
               : { ok: false, error: '通知权限未开启或发送失败' }
           }
         }
+      } else if (tool === 'android_alarm') {
+        if (!bridge || typeof bridge.setAlarm !== 'function') {
+          result = { ok: false, error: '需要更新 Android App 到 0.2.5 才能设置闹钟' }
+        } else {
+          const hour = Number(args.hour)
+          const minute = Number(args.minute)
+          if (!Number.isInteger(hour) || hour < 0 || hour > 23
+            || !Number.isInteger(minute) || minute < 0 || minute > 59) {
+            result = { ok: false, error: '闹钟时间不合法' }
+          } else {
+            const label = String(args.label || 'Jarvis 闹钟').slice(0, 80)
+            const vibrate = args.vibrate !== false
+            let outcome = ''
+            try {
+              outcome = String(bridge.setAlarm(hour, minute, label, vibrate) || '')
+            } catch (err) {
+              outcome = `error:${err?.message || 'bridge'}`
+            }
+            if (outcome.startsWith('ok')) {
+              result = { ok: true, result: { delivered: true, text: '已交给系统时钟设置闹钟' } }
+            } else if (outcome === 'duplicate') {
+              result = { ok: true, result: { delivered: true, duplicate: true, text: '这个闹钟刚刚已经设置过了' } }
+            } else if (outcome === 'opened') {
+              result = {
+                ok: true,
+                result: {
+                  delivered: false,
+                  needsConfirmation: true,
+                  text: '系统时钟不支持静默设置，已打开闹钟界面，请确认',
+                },
+              }
+            } else {
+              const reason = outcome.startsWith('error:') ? outcome.slice(6) : outcome
+              const message = reason === 'invalid_time' ? '闹钟时间不合法'
+                : reason === 'no_alarm_app' ? '手机上没有找到可用的系统时钟'
+                  : reason === 'no_context' ? '缺少 Android 上下文'
+                    : `设置闹钟失败：${reason || '未知错误'}`
+              result = { ok: false, error: message }
+            }
+          }
+        }
       } else {
         result = { ok: false, error: `不支持的原生工具：${tool}` }
       }

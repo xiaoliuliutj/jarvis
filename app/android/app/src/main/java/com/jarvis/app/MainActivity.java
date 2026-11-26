@@ -733,6 +733,12 @@ public class MainActivity extends Activity {
             return NotifyService.sendCustomNotification(MainActivity.this, title, body);
         }
 
+        /** 网页前台通道：调用系统时钟新建闹钟（链路 A）。 */
+        @JavascriptInterface
+        public String setAlarm(int hour, int minute, String label, boolean vibrate) {
+            return AlarmHelper.set(MainActivity.this, hour, minute, label, vibrate);
+        }
+
         @JavascriptInterface
         public boolean isIgnoringBatteryOptimizations() {
             try {

@@ -25,7 +25,7 @@ const ALLOWED_PROVIDERS = new Set([
 ])
 
 // 真正接了执行层的 Android 工具；其余保持 available:false。
-const IMPLEMENTED_ANDROID_TOOLS = new Set(['android_notification'])
+const IMPLEMENTED_ANDROID_TOOLS = new Set(['android_notification', 'android_alarm'])
 
 export const BUILTIN_EXTERNAL_TOOLS = [
   {
@@ -53,15 +53,21 @@ export const BUILTIN_EXTERNAL_TOOLS = [
     id: 'android_alarm',
     name: '手机闹钟',
     summary: '设置手机系统闹钟',
-    description: '通过 Android 系统闹钟设置提醒。当前只有接口，尚未接入执行。',
+    description: '在用户当前连接的 Android 手机上创建系统闹钟。传 24 小时制 hour/minute，可选 label；优先交给 ColorOS 系统时钟静默创建，不支持时会打开时钟界面。需要 Android App 0.2.5+ 在线。',
     provider: TOOL_PROVIDER.ANDROID_NATIVE,
     icon: '⏰',
     category: '手机',
     risk: 'medium',
     tags: ['android', 'alarm', '闹钟'],
-    available: false,
-    enabledByDefault: false,
-    impl: { type: TOOL_PROVIDER.ANDROID_NATIVE, server: 'android_native', action: 'alarm' },
+    available: true,
+    enabledByDefault: true,
+    impl: {
+      type: TOOL_PROVIDER.ANDROID_NATIVE,
+      server: 'android_native',
+      action: 'alarm',
+      executor: 'service',
+      fallback: 'web',
+    },
     configFields: [],
   },
   {

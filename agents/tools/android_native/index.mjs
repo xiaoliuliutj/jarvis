@@ -24,6 +24,12 @@ const SCHEMAS = {
     title: z.string().max(80).optional().describe('通知标题，默认 Jarvis'),
     body: z.string().min(1).max(500).describe('通知内容'),
   },
+  android_alarm: {
+    hour: z.number().int().min(0).max(23).describe('小时（24 小时制，0-23）'),
+    minute: z.number().int().min(0).max(59).describe('分钟（0-59）'),
+    label: z.string().max(80).optional().describe('闹钟备注，默认「Jarvis 闹钟」'),
+    vibrate: z.boolean().optional().describe('是否震动，默认 true'),
+  },
 }
 
 async function callBridge(tool, args) {
@@ -47,13 +53,13 @@ const definitions = listExternalToolDefinitions().filter(def => (
   && def.kind === 'tool'
   && def.available
   && SCHEMAS[def.id]
-  && isToolEnabled(principalId, def.id, false)
+  && isToolEnabled(principalId, def.id, def.enabledByDefault === true)
 ))
 
 for (const def of definitions) {
   server.tool(
     def.id,
-    `${def.description || def.summary || def.name}\n需要 Android App 0.2.4+ 在线；手机未连接时会直接报错。`,
+    `${def.description || def.summary || def.name}\n需要 Android App 0.2.5+ 在线；手机未连接时会直接报错。`,
     SCHEMAS[def.id],
     async (args) => {
       try {

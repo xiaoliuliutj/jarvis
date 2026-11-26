@@ -513,7 +513,7 @@ public class NotifyService extends Service {
                     + "Connection: Upgrade\r\n"
                     + "Sec-WebSocket-Key: " + key + "\r\n"
                     + "Sec-WebSocket-Version: 13\r\n"
-                    + "User-Agent: JarvisAndroid/0.2.4\r\n"
+                    + "User-Agent: JarvisAndroid/0.2.5\r\n"
                     + "\r\n";
             out.write(request.getBytes(StandardCharsets.UTF_8));
             out.flush();
@@ -645,12 +645,23 @@ public class NotifyService extends Service {
         JSONObject args = object == null ? null : object.optJSONObject("args");
         boolean ok = false;
         String error = null;
+        String outcome = null;
+        String resultText = null;
 
         if ("android_notification".equals(tool)) {
             String title = args == null ? "Jarvis" : args.optString("title", "Jarvis");
             String body = args == null ? "" : args.optString("body", "");
             ok = sendCustomNotification(this, title, body);
             if (!ok) error = hasPermission(this) ? "通知发送失败" : "通知权限未开启";
+        } else if ("android_alarm".equals(tool)) {
+            int hour = args == null ? -1 : args.optInt("hour", -1);
+            int minute = args == null ? -1 : args.optInt("minute", -1);
+            String label = args == null ? "" : args.optString("label", "");
+            boolean vibrate = args == null || args.optBoolean("vibrate", true);
+            outcome = AlarmHelper.set(this, hour, minute, label, vibrate);
+            ok = AlarmHelper.isSuccess(outcome);
+            if (ok) resultText = AlarmHelper.resultText(outcome);
+            else error = AlarmHelper.errorText(outcome);
         } else {
             error = "设备端不支持的原生工具：" + tool;
         }
@@ -661,7 +672,11 @@ public class NotifyService extends Service {
             result.put("requestId", requestId);
             result.put("ok", ok);
             if (ok) {
-                result.put("result", new JSONObject().put("delivered", true));
+                JSONObject data = new JSONObject();
+                if (resultText != null) data.put("text", resultText);
+                else data.put("delivered", true);
+                if ("opened".equals(outcome)) data.put("needsConfirmation", true);
+                result.put("result", data);
             } else {
                 result.put("error", error == null ? "执行失败" : error);
             }
