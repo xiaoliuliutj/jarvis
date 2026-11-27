@@ -59,6 +59,8 @@ public class MainActivity extends Activity {
 
     private static final int REQ_FILE = 1001;
     private static final int REQ_NOTIFY = 1002;
+    private static final int REQ_LOCATION = 1003;
+    private static final int REQ_SMS = 1004;
 
     private SharedPreferences prefs;
     private LinearLayout setupPanel;
@@ -109,6 +111,8 @@ public class MainActivity extends Activity {
         }
 
         requestNotificationPermissionIfNeeded();
+        requestLocationPermissionIfNeeded();
+        requestSmsPermissionIfNeeded();
     }
 
     @Override
@@ -157,9 +161,34 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void requestLocationPermissionIfNeeded() {
+        if (LocationHelper.hasPermission(this)) return;
+        requestPermissions(new String[]{
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+        }, REQ_LOCATION);
+    }
+
+    private void requestSmsPermissionIfNeeded() {
+        if (SmsHelper.hasPermission(this)) return;
+        requestPermissions(new String[]{Manifest.permission.READ_SMS}, REQ_SMS);
+    }
+
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_LOCATION) {
+            boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            Toast.makeText(this, granted ? "定位权限已开启" : "未允许定位，Jarvis 无法获取手机位置",
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (requestCode == REQ_SMS) {
+            boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            Toast.makeText(this, granted ? "短信读取权限已开启" : "未允许短信权限，Jarvis 无法读取短信",
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
         if (requestCode != REQ_NOTIFY) return;
         boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
         if (granted) {
@@ -744,6 +773,133 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public String setAlarm(int hour, int minute, String label, boolean vibrate) {
             return AlarmHelper.set(MainActivity.this, hour, minute, label, vibrate);
+        }
+
+        /** 网页前台通道：闹钟入口探针（排查 ColorOS 时钟不响应静默设置）。 */
+        @JavascriptInterface
+        public String probeAlarm() {
+            return AlarmHelper.probe(MainActivity.this);
+        }
+
+        /** 网页前台通道：是否已获得定位权限。 */
+        @JavascriptInterface
+        public boolean hasLocationPermission() {
+            return LocationHelper.hasPermission(MainActivity.this);
+        }
+
+        /** 网页前台通道：获取手机位置（fresh=true 时尝试一次实时刷新）。 */
+        @JavascriptInterface
+        public String getLocationText(boolean fresh) {
+            return LocationHelper.getLocationText(MainActivity.this, fresh);
+        }
+
+        /** 网页前台通道：请求定位权限。 */
+        @JavascriptInterface
+        public void requestLocationPermission() {
+            runOnUiThread(MainActivity.this::requestLocationPermissionIfNeeded);
+        }
+
+        /** 网页前台通道：是否已获得短信读取权限。 */
+        @JavascriptInterface
+        public boolean hasSmsPermission() {
+            return SmsHelper.hasPermission(MainActivity.this);
+        }
+
+        /** 网页前台通道：列出最近短信。 */
+        @JavascriptInterface
+        public String listSms(int limit, String folder) {
+            return SmsHelper.list(MainActivity.this, limit, folder);
+        }
+
+        /** 网页前台通道：搜索短信。 */
+        @JavascriptInterface
+        public String searchSms(String keyword, int limit) {
+            return SmsHelper.search(MainActivity.this, keyword, limit);
+        }
+
+        /** 网页前台通道：读取单条短信详情。 */
+        @JavascriptInterface
+        public String readSms(long id) {
+            return SmsHelper.read(MainActivity.this, id);
+        }
+
+        /** 网页前台通道：请求短信读取权限。 */
+        @JavascriptInterface
+        public void requestSmsPermission() {
+            runOnUiThread(MainActivity.this::requestSmsPermissionIfNeeded);
+        }
+
+        /** 网页前台通道：用指定组件尝试新建闹钟。 */
+        @JavascriptInterface
+        public String tryAlarmComponent(String component, String customAction, int hour, int minute, String label,
+                                        boolean vibrate, boolean skipUi, String skipUiMode) {
+            return AlarmHelper.tryAlarmComponent(MainActivity.this, component, customAction,
+                    hour, minute, label, vibrate, skipUi, skipUiMode);
+        }
+
+        /** 网页前台通道：读取时钟包自定义权限的保护级别。 */
+        @JavascriptInterface
+        public String inspectClockPermissions() {
+            return ClockManifestReader.inspectPermissions(MainActivity.this);
+        }
+
+        /** 网页前台通道：列出时钟包所有组件的导出状态和权限要求。 */
+        @JavascriptInterface
+        public String inspectClockComponents() {
+            return ClockManifestReader.inspectComponents(MainActivity.this);
+        }
+
+        /** 网页前台通道：查询任意权限的保护级别。 */
+        @JavascriptInterface
+        public String clockPermissionInfo(String permission) {
+            return ClockManifestReader.permissionInfo(MainActivity.this, permission);
+        }
+
+        /** 网页前台通道：查询时钟 provider 的访问限制。 */
+        @JavascriptInterface
+        public String resolveClockProvider(String authority) {
+            return ClockManifestReader.resolveProvider(MainActivity.this, authority);
+        }
+
+        /** 网页前台通道：读取当前前台窗口的视图树（调试闹钟自动确认）。 */
+        @JavascriptInterface
+        public String dumpAlarmUi() {
+            return AlarmAutoConfirmService.dumpUi();
+        }
+
+        /** 网页前台通道：读取系统时钟 APK 的 manifest 字符串池（寻找私有通道）。 */
+        @JavascriptInterface
+        public String inspectClockManifest() {
+            return ClockManifestReader.inspect(MainActivity.this);
+        }
+
+        /** 网页前台通道：查询某个 action 的注册情况。 */
+        @JavascriptInterface
+        public String queryClockAction(String action) {
+            return ClockManifestReader.queryAction(MainActivity.this, action);
+        }
+
+        /** 网页前台通道：向系统时钟发送自定义广播。 */
+        @JavascriptInterface
+        public String sendAlarmBroadcast(String action, int hour, int minute, String label, boolean vibrate) {
+            return AlarmHelper.sendAlarmBroadcast(MainActivity.this, action, hour, minute, label, vibrate);
+        }
+
+        /** 无障碍自动确认服务是否已开启。 */
+        @JavascriptInterface
+        public boolean isAlarmAutoConfirmEnabled() {
+            return AlarmAutoConfirmService.isEnabled(MainActivity.this);
+        }
+
+        /** 打开系统无障碍设置页，方便用户开启 Jarvis 的闹钟自动确认服务。 */
+        @JavascriptInterface
+        public void openAccessibilitySettings() {
+            runOnUiThread(() -> {
+                try {
+                    startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+                } catch (Exception ignored) {
+                }
+            });
         }
 
         @JavascriptInterface

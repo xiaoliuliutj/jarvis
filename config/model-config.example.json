@@ -1,0 +1,17 @@
+{
+  "_comment": "模型配置模板：填好后可整段粘贴到 App「模型与能力 → LLM 配置」，或保存为 config/agent.json 作为全局配置。真实 Key 只填在本地，切勿提交到仓库。",
+  "name": "示例模型配置",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://api.example.com/anthropic",
+    "ANTHROPIC_AUTH_TOKEN": "sk-REPLACE_ME",
+    "ANTHROPIC_MODEL": "example-model",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "example-model",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "example-model",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "example-model",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "example-model",
+    "CLAUDE_CODE_EFFORT_LEVEL": "high",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": 786432
+  },
+  "effortLevel": "high",
+  "model": "example-model"
+}

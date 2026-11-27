@@ -24,11 +24,33 @@ const SCHEMAS = {
     title: z.string().max(80).optional().describe('通知标题，默认 Jarvis'),
     body: z.string().min(1).max(500).describe('通知内容'),
   },
+  android_location: {
+    fresh: z.boolean().optional().describe('是否尝试实时刷新（最多等待约 8 秒），默认 false 只读系统缓存'),
+  },
+  android_sms: {
+    action: z.enum(['list', 'search', 'read']).optional().describe('list=列出最近短信（默认）；search=按号码/关键词搜索；read=读取单条详情'),
+    limit: z.number().int().min(1).max(50).optional().describe('数量，默认 10'),
+    folder: z.string().optional().describe('list 专用：inbox（默认）/ sent / all'),
+    keyword: z.string().optional().describe('search 专用：号码或正文关键词'),
+    id: z.number().optional().describe('read 专用：短信 id（从 list/search 结果获取）'),
+  },
   android_alarm: {
-    hour: z.number().int().min(0).max(23).describe('小时（24 小时制，0-23）'),
-    minute: z.number().int().min(0).max(59).describe('分钟（0-59）'),
+    action: z.enum([
+      'set', 'probe', 'try_component', 'dump_ui', 'inspect_manifest',
+      'query_action', 'send_broadcast', 'inspect_permissions', 'resolve_provider',
+      'inspect_components', 'permission_info',
+    ]).optional()
+      .describe('set=新建闹钟（默认）；probe=列出系统时钟入口/包内组件；try_component=用指定组件尝试新建；dump_ui=读取当前时钟窗口视图树；inspect_manifest=解析时钟 APK manifest 字符串池找私有通道；query_action=查询某 action 的注册组件；send_broadcast=向系统时钟发送自定义广播；inspect_permissions=查看时钟自定义权限保护级别；resolve_provider=查询时钟 provider 访问限制；inspect_components=列出所有组件及权限要求；permission_info=查询任意权限保护级别'),
+    hour: z.number().int().min(0).max(23).optional().describe('小时（24 小时制，0-23），set/try_component/send_broadcast 必填'),
+    minute: z.number().int().min(0).max(59).optional().describe('分钟（0-59），set/try_component/send_broadcast 必填'),
     label: z.string().max(80).optional().describe('闹钟备注，默认「Jarvis 闹钟」'),
     vibrate: z.boolean().optional().describe('是否震动，默认 true'),
+    component: z.string().max(200).optional().describe('try_component 专用：包名/Activity 全名，例如 com.coloros.alarmclock/com.coloros.alarmclock.AlarmClock'),
+    skipUi: z.boolean().optional().describe('try_component 专用：EXTRA_SKIP_UI 的值，默认 true'),
+    skipUiMode: z.enum(['boolean', 'string', 'int']).optional().describe('try_component 专用：SKIP_UI 传值类型，用于排查厂商实现，默认 boolean'),
+    intentAction: z.string().max(200).optional().describe('query_action/send_broadcast/try_component 专用：action 字符串'),
+    authority: z.string().max(200).optional().describe('resolve_provider 专用：provider authority'),
+    permission: z.string().max(200).optional().describe('permission_info 专用：权限名，例如 com.oplus.permission.safe.ASSISTANT'),
   },
 }
 

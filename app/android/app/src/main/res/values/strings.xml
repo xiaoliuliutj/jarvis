@@ -1,0 +1,3 @@
+<resources>
+    <string name="accessibility_service_description">用于闹钟自动确认：只读取系统时钟（com.coloros.alarmclock）的窗口，在 Jarvis 发起设置闹钟后自动点击「保存」，实现静默新建闹钟，不读取任何其它应用内容。</string>
+</resources>
