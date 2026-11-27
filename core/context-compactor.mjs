@@ -13,7 +13,11 @@ import {
 import { logInfo, logWarn } from './logger.mjs'
 
 const RECENT_TAIL = 6
+// 每批最多 100 条消息；一次压缩最多跑 5 批 / 90 秒。
+// 从上次 compactedUpto 开始逐批推进，不再跳过中间消息。
 const MAX_MESSAGES_PER_COMPACT = 100
+const MAX_BATCHES_PER_COMPACT = 5
+const MAX_COMPACT_MS = 90_000
 const MAX_MESSAGE_CHARS = 500
 const MAX_PROMPT_CHARS = 60000
 const MAX_DIGEST_CHARS = 4000
@@ -53,6 +57,16 @@ function fallbackDigest(messages) {
     `[${item.type === 'user' ? '用户' : 'Jarvis'}] ${messageText(item).slice(0, 120)}`
   )).filter(Boolean).join('\n')
   return `（自动压缩摘录）\n${body}`
+}
+
+// 摘要调用失败时：保留旧摘要，再追加本批的原文摘录；绝不直接覆盖旧摘要。
+function mergeFallbackDigest(existingDigest, messages) {
+  const base = String(existingDigest || '').trim()
+  const excerpt = fallbackDigest(messages)
+  if (!base) return excerpt.slice(0, MAX_DIGEST_CHARS)
+  const room = Math.max(0, MAX_DIGEST_CHARS - base.length - 2)
+  if (!room) return base.slice(0, MAX_DIGEST_CHARS)
+  return `${base}\n\n${excerpt.slice(0, room)}`.slice(0, MAX_DIGEST_CHARS)
 }
 
 async function summarizeText({ apiKey, baseUrl, authMode, model, prompt }) {
@@ -114,7 +128,7 @@ function formatHandoff(messages) {
 }
 
 /**
- * @returns {Promise<null|{digest, compactedUpto, handoffBlock}>}
+ * @returns {Promise<null|{digest, compactedUpto, handoffBlock, partial}>}
  */
 export async function compactSessionContext({
   principalId,
@@ -130,51 +144,78 @@ export async function compactSessionContext({
 
   const state = readSessionDigestState(principalId, displaySessionId)
   const end = Math.max(0, allMessages.length - RECENT_TAIL)
-  const start = Math.max(
-    state.compactedUpto,
-    end - MAX_MESSAGES_PER_COMPACT,
-  )
   if (end <= 0) return null
-
-  const slice = allMessages.slice(start, end)
-  if (!slice.length && !state.digest) return null
 
   const handoffBlock = formatHandoff(allMessages.slice(end))
   let digest = state.digest
-  if (slice.length) {
-    const conversation = formatConversation(slice)
-    const prompt = [
-      state.digest ? `【已有长期摘要】\n${state.digest}` : '',
-      `【本次需要压缩的对话】\n${conversation || '（没有可用的文本消息）'}`,
-      '更早的历史消息如果不在上面，视为已由长期记忆覆盖。',
-      '请输出更新后的长期记忆摘要。',
-    ].filter(Boolean).join('\n\n')
+  // 从上次处理到的位置开始逐批推进，绝不跳过中间消息。
+  const startAt = Math.min(Math.max(Number(state.compactedUpto) || 0, 0), end)
+  let cursor = startAt
+  let batches = 0
+  const startedAt = Date.now()
 
-    try {
-      const summary = await summarizeText({ apiKey, baseUrl, authMode, model, prompt })
-      if (summary) digest = summary
-      else digest = fallbackDigest(slice)
-    } catch (err) {
-      logWarn('context.compact.summary.fail', err.message, { principalId })
-      digest = fallbackDigest(slice)
+  while (
+    cursor < end
+    && batches < MAX_BATCHES_PER_COMPACT
+    && Date.now() - startedAt < MAX_COMPACT_MS
+  ) {
+    const to = Math.min(cursor + MAX_MESSAGES_PER_COMPACT, end)
+    const batch = allMessages.slice(cursor, to)
+    const conversation = formatConversation(batch)
+    if (conversation) {
+      const prompt = [
+        digest ? `【已有长期摘要】\n${digest}` : '',
+        `【本次需要压缩的对话】\n${conversation}`,
+        '更早的历史消息如果不在上面，视为已由长期记忆覆盖。',
+        '请输出更新后的长期记忆摘要。',
+      ].filter(Boolean).join('\n\n')
+      try {
+        const summary = await summarizeText({ apiKey, baseUrl, authMode, model, prompt })
+        digest = summary || mergeFallbackDigest(digest, batch)
+      } catch (err) {
+        logWarn('context.compact.summary.fail', err.message, {
+          principalId,
+          fromMessage: cursor,
+          toMessage: to,
+        })
+        digest = mergeFallbackDigest(digest, batch)
+      }
+      batches += 1
     }
+    cursor = to
   }
 
   digest = String(digest || '').trim().slice(0, MAX_DIGEST_CHARS)
-  if (!digest) return null
+  if (!digest) {
+    // 整段都是工具记录等没有摘要的情况：推进游标，但不触发换挡。
+    if (cursor !== state.compactedUpto) {
+      writeSessionDigestState(principalId, displaySessionId, {
+        digest: '',
+        compactedUpto: cursor,
+      })
+    }
+    return null
+  }
 
   upsertSessionSummary(principalId, displaySessionId, `【会话压缩摘要】\n${digest}`)
   writeSessionDigestState(principalId, displaySessionId, {
     digest,
-    compactedUpto: end,
+    compactedUpto: cursor,
   })
   logInfo('context.compact', '', {
     principalId,
     sessionId: displaySessionId,
-    fromMessage: start,
-    toMessage: end,
+    fromMessage: startAt,
+    toMessage: cursor,
+    batches,
+    remaining: Math.max(0, end - cursor),
     digestChars: digest.length,
   })
 
-  return { digest, compactedUpto: end, handoffBlock }
+  return {
+    digest,
+    compactedUpto: cursor,
+    handoffBlock,
+    partial: cursor < end,
+  }
 }

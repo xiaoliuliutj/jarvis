@@ -247,31 +247,42 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
           model: activeModel,
         })
         if (compacted) {
-          rotateAgent = true
-          handoffBlock = compacted.handoffBlock || ''
-          memory = store.formatMemory(principalId, {
-            contextWindowTokens,
-            deterministic: true,
-            maxProjectFiles: 40,
-          })
-          memorySnapshotDirty = true
-          // 先写一个不绑定 Agent 会话的临时快照：即使本回合失败，
-          // 下一回合也不会继续用压缩前的旧记忆。
-          store.writePromptSnapshot(principalId, displaySessionId, {
-            memoryText: memory,
-            agentSessionId: null,
-          })
-          systemPrompt = buildSystemPrompt({ principal, rules, persona, memory, toolProfile })
-          contextHints = {
-            systemChars: Math.max(0, systemPrompt.length - memory.length),
-            memoryChars: memory?.length || 0,
-            toolChars,
+          if (compacted.partial) {
+            // 还有旧消息没压完：先不换 Agent 会话，避免最近那段未压缩消息被手交丢掉。
+            // 下一回合上下文仍超阈值，会从 compactedUpto 继续压。
+            logInfo('context.compact.partial', '', {
+              principalId,
+              sessionId: displaySessionId,
+              ratio: Math.round(ratio),
+              compactedUpto: compacted.compactedUpto,
+            })
+          } else {
+            rotateAgent = true
+            handoffBlock = compacted.handoffBlock || ''
+            memory = store.formatMemory(principalId, {
+              contextWindowTokens,
+              deterministic: true,
+              maxProjectFiles: 40,
+            })
+            memorySnapshotDirty = true
+            // 先写一个不绑定 Agent 会话的临时快照：即使本回合失败，
+            // 下一回合也不会继续用压缩前的旧记忆。
+            store.writePromptSnapshot(principalId, displaySessionId, {
+              memoryText: memory,
+              agentSessionId: null,
+            })
+            systemPrompt = buildSystemPrompt({ principal, rules, persona, memory, toolProfile })
+            contextHints = {
+              systemChars: Math.max(0, systemPrompt.length - memory.length),
+              memoryChars: memory?.length || 0,
+              toolChars,
+            }
+            logInfo('context.compact.rotate', '', {
+              principalId,
+              sessionId: displaySessionId,
+              ratio: Math.round(ratio),
+            })
           }
-          logInfo('context.compact.rotate', '', {
-            principalId,
-            sessionId: displaySessionId,
-            ratio: Math.round(ratio),
-          })
         }
       }
     }
