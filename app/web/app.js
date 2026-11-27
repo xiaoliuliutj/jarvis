@@ -3603,6 +3603,87 @@
       + (record.cacheWriteTokens || 0)
   }
 
+  // MCP 工具名太长，转成人类可读的短标签；完整原名放在 title 里。
+  function usageToolLabel(raw) {
+    const name = String(raw || '').trim()
+    if (!name) return ''
+    if (!name.startsWith('mcp__')) return name
+    let parts = name.slice(5).split('__').filter(Boolean)
+    if (parts.length >= 2) {
+      const half = parts.length / 2
+      if (Number.isInteger(half) && parts.slice(0, half).join('__') === parts.slice(half).join('__')) {
+        parts = parts.slice(0, half)
+      }
+    }
+    parts = parts.filter((part, index) => index === 0 || part !== parts[index - 1])
+    return parts.join('·') || name
+  }
+
+  function usageToolList(tools) {
+    const counts = new Map()
+    for (const raw of Array.isArray(tools) ? tools : []) {
+      const name = String(raw || '').trim()
+      if (!name) continue
+      counts.set(name, (counts.get(name) || 0) + 1)
+    }
+    return [...counts.entries()].map(([name, count]) => ({ name, count }))
+  }
+
+  function usageToolSummary(tools) {
+    const list = usageToolList(tools)
+    if (!list.length) return ''
+    const names = list.slice(0, 3).map(item => usageToolLabel(item.name)).join('、')
+    return list.length > 3 ? `${names} 等 ${list.length} 个` : names
+  }
+
+  function usageTokenChips(record) {
+    const row = document.createElement('div')
+    row.className = 'usage-token-row'
+    const add = (label, value) => {
+      if (!value) return
+      const chip = document.createElement('span')
+      chip.className = 'usage-token-chip'
+      chip.textContent = `${label} ${formatTokens(value)}`
+      row.appendChild(chip)
+    }
+    add('入', record.inputTokens)
+    add('出', record.outputTokens)
+    add('缓存读', record.cacheReadTokens)
+    add('缓存写', record.cacheWriteTokens)
+    return row
+  }
+
+  function usageToolChips(tools, emptyText = '无工具调用') {
+    const row = document.createElement('div')
+    row.className = 'usage-tool-row'
+    const label = document.createElement('span')
+    label.className = 'usage-tool-label'
+    label.textContent = '工具'
+    row.appendChild(label)
+    const list = usageToolList(tools)
+    if (!list.length) {
+      const chip = document.createElement('span')
+      chip.className = 'usage-tool-chip muted'
+      chip.textContent = emptyText
+      row.appendChild(chip)
+      return row
+    }
+    for (const item of list) {
+      const chip = document.createElement('span')
+      chip.className = 'usage-tool-chip'
+      chip.textContent = usageToolLabel(item.name)
+      chip.title = item.name
+      if (item.count > 1) {
+        const count = document.createElement('span')
+        count.className = 'count'
+        count.textContent = `×${item.count}`
+        chip.appendChild(count)
+      }
+      row.appendChild(chip)
+    }
+    return row
+  }
+
   async function loadUsage() {
     if (!state.token) return
     if (!state.usageSummary) renderUsage()
@@ -3762,7 +3843,8 @@
       if (message.models?.length === 1) parts.push(message.models[0])
       else if (message.models?.length > 1) parts.push(`${message.models.length} 个模型`)
       if (message.tools?.length) {
-        parts.push(`工具 ${message.tools.slice(0, 2).join('、')}${message.tools.length > 2 ? '…' : ''}`)
+        const toolSummary = usageToolSummary(message.tools)
+        if (toolSummary) parts.push(`工具 ${toolSummary}`)
       }
       sub.textContent = parts.join(' · ')
       main.appendChild(preview)
@@ -3828,7 +3910,7 @@
     target.appendChild(heading)
     for (const [index, record] of records.entries()) {
       const item = document.createElement('div')
-      item.className = 'record-item'
+      item.className = 'record-item usage-call-item'
       const main = document.createElement('div')
       main.className = 'record-main'
       const title = document.createElement('div')
@@ -3839,16 +3921,11 @@
       title.textContent = titleParts.join(' · ')
       const sub = document.createElement('div')
       sub.className = 'record-sub'
-      const parts = [
-        formatTime(record.ts),
-        `入 ${formatTokenExact(record.inputTokens)} / 出 ${formatTokenExact(record.outputTokens)}`,
-      ]
-      if (record.cacheReadTokens) parts.push(`缓存读 ${formatTokenExact(record.cacheReadTokens)}`)
-      if (record.cacheWriteTokens) parts.push(`缓存写 ${formatTokenExact(record.cacheWriteTokens)}`)
-      if (record.tools?.length) parts.push(`${record.tools.length} 工具`)
-      sub.textContent = parts.join(' · ')
+      sub.textContent = formatTime(record.ts)
       main.appendChild(title)
       main.appendChild(sub)
+      main.appendChild(usageTokenChips(record))
+      main.appendChild(usageToolChips(record.tools))
 
       const right = document.createElement('div')
       right.className = 'record-right'
@@ -3868,7 +3945,7 @@
   function renderUsageTurnSummary(target, message) {
     target.textContent = ''
     const item = document.createElement('div')
-    item.className = 'record-item'
+    item.className = 'record-item usage-call-item'
     const main = document.createElement('div')
     main.className = 'record-main'
     const title = document.createElement('div')
@@ -3876,16 +3953,11 @@
     title.textContent = `整轮汇总 · ${message.legacyTurns || message.turnRecords || 0} 轮`
     const sub = document.createElement('div')
     sub.className = 'record-sub'
-    const parts = [
-      formatTime(message.firstTs),
-      `入 ${formatTokenExact(message.inputTokens)} / 出 ${formatTokenExact(message.outputTokens)}`,
-    ]
-    if (message.cacheReadTokens) parts.push(`缓存读 ${formatTokenExact(message.cacheReadTokens)}`)
-    if (message.cacheWriteTokens) parts.push(`缓存写 ${formatTokenExact(message.cacheWriteTokens)}`)
-    if (message.tools?.length) parts.push(`${message.tools.length} 工具`)
-    sub.textContent = parts.join(' · ')
+    sub.textContent = formatTime(message.firstTs)
     main.appendChild(title)
     main.appendChild(sub)
+    main.appendChild(usageTokenChips(message))
+    main.appendChild(usageToolChips(message.tools))
     const right = document.createElement('div')
     right.className = 'record-right'
     const tokens = document.createElement('div')
