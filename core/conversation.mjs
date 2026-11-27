@@ -14,9 +14,9 @@
 
 import { getPrincipal } from './principals.mjs'
 import * as store from './user-store.mjs'
-import { buildSystemPrompt } from './prompt.mjs'
+import { buildSystemPrompt, buildTimeLine } from './prompt.mjs'
 import { buildCanUseTool } from './permissions.mjs'
-import { buildMcpServers } from './tools.mjs'
+import { buildMcpServers, getToolProfileSettings } from './tools.mjs'
 import {
   getAgentEnv,
   getAnthropicCredentials,
@@ -93,11 +93,15 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
     store.ensureUser(principalId)
 
     const workspace = store.workspaceDir(principalId)
+    const isCron = source === 'cron'
     const current = store.getCurrentSession(principalId)
     const displaySessionId = forceNew ? null : (sessionId || current?.sessionId || null)
     const resumeId = displaySessionId
     const sessionRecord = displaySessionId ? store.getSession(principalId, displaySessionId) : null
     let agentSessionId = forceNew ? null : (sessionRecord?.agentSessionId || displaySessionId || null)
+    // 定时任务不续接聊天 Agent 会话：每次用全新的轻量 Agent 会话。
+    // 这样巡检不会把日常聊天历史带进来，也不会覆盖主会话的 agentSessionId。
+    if (isCron) agentSessionId = null
     let rotateAgent = false
     let handoffBlock = ''
 
@@ -156,16 +160,44 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
       }
     }
 
-    // 长期记忆预算按当前上下文窗口的 5%-10% 计算：
-    // 低于 10% 原样保留，超过 10% 压缩到 5%，保证摘要/偏好始终有一席之地。
+    // 长期记忆预算按当前上下文窗口的 2%-4% 计算：
+    // 低于 4% 原样保留，超过 4% 压缩到 2%，保证摘要/偏好始终有一席之地。
     const lastContext = displaySessionId
       ? getSessionContext(principalId, displaySessionId)
       : null
     const contextWindowTokens = resolveContextWindowTokens(lastContext, agentEnv)
 
-    let memory = store.formatMemory(principalId, { contextWindowTokens })
+    // 工具按场景裁剪：主维护会话 full，普通用户 chat，定时任务 cron。
+    const toolProfile = isCron
+      ? 'cron'
+      : ((principal.role === 'maintainer' || principal.role === 'owner') ? 'full' : 'chat')
+    const toolSettings = getToolProfileSettings(toolProfile)
+    const buildServers = () => buildMcpServers(principal, { profile: toolProfile })
+
+    // 长期记忆快照：会话内冻结，只有换挡（agentSessionId 变化）或压缩时重建。
+    // 记忆写入仍然实时落库，只是不再每轮改写 system prompt。
+    const promptSnapshot = (!isCron && displaySessionId)
+      ? store.readPromptSnapshot(principalId, displaySessionId)
+      : null
+    const snapshotMatchesAgent = !!(
+      promptSnapshot
+      && (!promptSnapshot.agentSessionId
+        || !agentSessionId
+        || promptSnapshot.agentSessionId === agentSessionId)
+    )
+    // 记忆渲染时已按 2%-4% 预算压缩、文件操作最多 40 条，
+    // 渲染后的记忆不会超限；所以只在换挡/压缩时更新快照。
+    const useSnapshot = snapshotMatchesAgent
+    let memory = useSnapshot
+      ? promptSnapshot.memoryText
+      : store.formatMemory(principalId, {
+          contextWindowTokens,
+          deterministic: true,
+          maxProjectFiles: 40,
+        })
+    let memorySnapshotDirty = !useSnapshot
     let systemPrompt = buildSystemPrompt({ principal, rules, persona, memory })
-    const mcpServers = buildMcpServers(principal)
+    const mcpServers = buildServers()
     const canUseTool = buildCanUseTool({ principal, workspace })
     let toolChars = 0
     try { toolChars = JSON.stringify(mcpServers || {}).length } catch {}
@@ -177,7 +209,8 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
 
     // 上下文达到窗口 75% 时，把较早对话压成长期记忆，并换一个新的 Agent 会话；
     // App 的显示会话保持不变，所以历史聊天记录不会消失。
-    if (!forceNew && displaySessionId && agentSessionId) {
+    // 定时任务使用一次性 Agent 会话，不参与聊天历史的压缩/换挡。
+    if (!isCron && !forceNew && displaySessionId && agentSessionId) {
       const ratio = lastContext
         ? (Number(lastContext.percentage) || (
           Number(lastContext.maxTokens) > 0
@@ -201,7 +234,18 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
         if (compacted) {
           rotateAgent = true
           handoffBlock = compacted.handoffBlock || ''
-          memory = store.formatMemory(principalId, { contextWindowTokens })
+          memory = store.formatMemory(principalId, {
+            contextWindowTokens,
+            deterministic: true,
+            maxProjectFiles: 40,
+          })
+          memorySnapshotDirty = true
+          // 先写一个不绑定 Agent 会话的临时快照：即使本回合失败，
+          // 下一回合也不会继续用压缩前的旧记忆。
+          store.writePromptSnapshot(principalId, displaySessionId, {
+            memoryText: memory,
+            agentSessionId: null,
+          })
           systemPrompt = buildSystemPrompt({ principal, rules, persona, memory })
           contextHints = {
             systemChars: Math.max(0, systemPrompt.length - memory.length),
@@ -220,10 +264,13 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
     // cron 的内部 prompt 不是用户发的消息，不写入聊天记录。
     const includeUser = source !== 'cron'
     // 首次会话的名称：主会话固定叫“主会话”；用户 chat 取第一条消息；cron 叫“定时任务”
-    const sessionName = principal.role === 'maintainer'
-      ? '主会话'
-      : (includeUser ? prompt.slice(0, 20) : '定时任务')
-    const isMain = principal.role === 'maintainer'
+    const sessionName = isCron
+      ? '定时任务'
+      : (principal.role === 'maintainer'
+        ? '主会话'
+        : (includeUser ? prompt.slice(0, 20) : '定时任务'))
+    // 定时任务新建的显示会话不抢主会话的 isCurrent / isMain
+    const isMain = !isCron && principal.role === 'maintainer'
 
     // ── 进行中即落盘 ─────────────────────────────────────────────────────────
     // 用户消息和工具记录不等回合结束才写。否则回合进行中切换会话/刷新历史时，
@@ -251,7 +298,8 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
     const toolRecords = []
     const llmUsageRecords = []
     const { run } = await import('../agents/agent.mjs')
-    const agentPrompt = handoffBlock ? `${handoffBlock}${prompt}` : prompt
+    // 时间放在本轮用户消息的最前面（压缩交接之后），只动尾部，不动 system 前缀。
+    const agentPrompt = `${handoffBlock}${buildTimeLine()}${prompt}`
 
     const runOnce = async () => {
       result = null
@@ -266,9 +314,11 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
         resumeSessionId: rotateAgent ? null : (agentSessionId || null),
         systemPrompt,
         mcpServers,
+        builtinTools: toolSettings.builtinTools,
+        disallowedTools: toolSettings.disallowedTools,
         canUseTool,
         contextHints,
-        reloadMcpServers: () => buildMcpServers(principal),
+        reloadMcpServers: () => buildServers(),
         memory: { append: (entry) => store.appendMemory(principalId, entry) },
       })) {
         if (event.type === 'session' && event.sessionId) {
@@ -354,8 +404,18 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
     store.ensureSession(principalId, finalSessionId, {
       name: sessionName,
       isMain,
+      makeCurrent: !isCron,
     })
-    store.setSessionAgentId(principalId, finalSessionId, finalAgentSessionId)
+    // 定时任务的 Agent 会话是一次性的，不能覆盖主会话的 agentSessionId。
+    if (!isCron) {
+      store.setSessionAgentId(principalId, finalSessionId, finalAgentSessionId)
+      if (memorySnapshotDirty) {
+        store.writePromptSnapshot(principalId, finalSessionId, {
+          memoryText: memory,
+          agentSessionId: finalAgentSessionId,
+        })
+      }
+    }
     // 补写还没落盘的记录（新会话 sessionId 来得太晚 / cron 等场景）
     if (includeUser && !userPersisted) {
       store.appendMessage(principalId, finalSessionId, userRecord)
@@ -497,7 +557,8 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
     }
 
     let savedContext = null
-    if (result.context) {
+    // 定时任务的 Agent 上下文是一次性的，不能覆盖主会话的上下文统计/压缩比例。
+    if (!isCron && result.context) {
       try {
         savedContext = setSessionContext(principalId, finalSessionId, result.context)
         if (savedContext) {

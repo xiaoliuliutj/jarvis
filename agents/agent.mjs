@@ -145,6 +145,8 @@ export async function* run(prompt, options = {}) {
     resumeSessionId,
     systemPrompt = '',
     mcpServers = {},
+    builtinTools,
+    disallowedTools,
     canUseTool,
     memory,
     reloadMcpServers,
@@ -174,6 +176,10 @@ export async function* run(prompt, options = {}) {
     model,
     permissionMode: 'default',
     ...(resumeSessionId ? { resume: resumeSessionId } : {}),
+    ...(Array.isArray(builtinTools) ? { tools: builtinTools } : {}),
+    ...(Array.isArray(disallowedTools) && disallowedTools.length
+      ? { disallowedTools }
+      : {}),
     env: injectedEnv,
     // 默认 SDK 会把首轮 system prompt 快照下来，后续 resume 即使传入新内容也不生效。
     // Jarvis 的人设/长期记忆/当前时间需要每轮刷新，所以显式关闭快照。

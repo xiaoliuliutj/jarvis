@@ -108,10 +108,10 @@ export function getCurrentSession(principalId) {
   return listSessions(principalId).find(s => s.isCurrent) || null
 }
 
-export function createSession(principalId, sessionId, { name = '新会话', isMain = false } = {}) {
+export function createSession(principalId, sessionId, { name = '新会话', isMain = false, makeCurrent = true } = {}) {
   ensureUser(principalId)
   const sessions = listSessions(principalId)
-  sessions.forEach(s => { s.isCurrent = false })
+  if (makeCurrent) sessions.forEach(s => { s.isCurrent = false })
   const session = {
     sessionId,
     agentSessionId: sessionId,
@@ -119,7 +119,7 @@ export function createSession(principalId, sessionId, { name = '新会话', isMa
     isMain,
     createdAt: new Date().toISOString(),
     lastActiveAt: new Date().toISOString(),
-    isCurrent: true,
+    isCurrent: makeCurrent,
   }
   sessions.push(session)
   writeJson(indexFile(principalId), sessions)
@@ -127,13 +127,13 @@ export function createSession(principalId, sessionId, { name = '新会话', isMa
 }
 
 /** 如果会话不存在则创建，存在则 touch。新会话的名称取第一条用户消息。 */
-export function ensureSession(principalId, sessionId, { name = '新会话', isMain = false } = {}) {
+export function ensureSession(principalId, sessionId, { name = '新会话', isMain = false, makeCurrent = true } = {}) {
   const existing = getSession(principalId, sessionId)
   if (existing) {
     touchSession(principalId, sessionId)
     return existing
   }
-  return createSession(principalId, sessionId, { name, isMain })
+  return createSession(principalId, sessionId, { name, isMain, makeCurrent })
 }
 
 export function touchSession(principalId, sessionId) {
@@ -166,6 +166,41 @@ export function setSessionAgentId(principalId, sessionId, agentSessionId) {
   session.agentSessionId = agentSessionId
   writeJson(indexFile(principalId), sessions)
   return session
+}
+
+// ── 会话提示词快照 ────────────────────────────────────────────────────────────
+// system prompt 里的长期记忆在会话内冻结：
+//   - 记忆写入照常落库（appendMemory）
+//   - 但只有历史压缩/换挡（agentSessionId 变化）时才重建快照
+// 这样 system prompt 字节级稳定，缓存前缀不会被每轮记忆更新打断。
+
+function promptSnapshotFile(principalId, sessionId) {
+  return path.join(sessionsDir(principalId), `${sessionId}.prompt.json`)
+}
+
+export function readPromptSnapshot(principalId, sessionId) {
+  if (!principalId || !sessionId) return null
+  const data = readJson(promptSnapshotFile(principalId, sessionId), null)
+  if (!data || typeof data.memoryText !== 'string') return null
+  return {
+    memoryText: data.memoryText,
+    agentSessionId: typeof data.agentSessionId === 'string' ? data.agentSessionId : null,
+    memoryTokens: Number(data.memoryTokens) || 0,
+    builtAt: data.builtAt || null,
+  }
+}
+
+export function writePromptSnapshot(principalId, sessionId, { memoryText = '', agentSessionId = null } = {}) {
+  if (!principalId || !sessionId) return null
+  const text = String(memoryText || '')
+  const snapshot = {
+    memoryText: text,
+    agentSessionId: agentSessionId || null,
+    memoryTokens: estimateMemoryTokens(text),
+    builtAt: new Date().toISOString(),
+  }
+  writeJson(promptSnapshotFile(principalId, sessionId), snapshot)
+  return snapshot
 }
 
 export function readSessionDigestState(principalId, sessionId) {
@@ -233,6 +268,24 @@ export function readMemoryEntries(principalId) {
   return text.split('\n').filter(l => l.trim()).map(l => JSON.parse(l))
 }
 
+function pruneStoredProjectFiles(principalId) {
+  const entries = readMemoryEntries(principalId)
+  const projectEntries = entries.filter(entry => entry.type === 'project_file')
+  if (projectEntries.length <= MAX_STORED_PROJECT_FILES) return
+
+  const keep = new Set(
+    projectEntries.slice(-MAX_STORED_PROJECT_FILES).map(entry => entry.id),
+  )
+  const next = entries.filter(entry => (
+    entry.type !== 'project_file' || keep.has(entry.id)
+  ))
+  fs.writeFileSync(
+    memoryFile(principalId),
+    next.map(item => JSON.stringify(item)).join('\n') + (next.length ? '\n' : ''),
+    'utf-8',
+  )
+}
+
 export function appendMemory(principalId, { content, type = 'fact', refs = [] }) {
   ensureUser(principalId)
   const entry = {
@@ -245,6 +298,10 @@ export function appendMemory(principalId, { content, type = 'fact', refs = [] })
     createdAt: new Date().toISOString(),
   }
   fs.appendFileSync(memoryFile(principalId), JSON.stringify(entry) + '\n', 'utf-8')
+  // 文件操作记录只保留最近 200 条；偏好/事实/摘要不受影响。
+  if (type === 'project_file') {
+    try { pruneStoredProjectFiles(principalId) } catch {}
+  }
   return entry
 }
 
@@ -275,12 +332,18 @@ export function upsertSessionSummary(principalId, sessionId, content) {
   return entry
 }
 
-// 长期记忆在上下文窗口中的预算：10% 以内原样保留，超过 10% 时压缩到 5%。
-// 5% 作为保底预留，保证重要摘要不会被大量文件操作记录挤掉。
-const MEMORY_MIN_RATIO = 0.05
-const MEMORY_MAX_RATIO = 0.10
+// 长期记忆在上下文窗口中的预算：4% 以内原样保留，超过 4% 时压缩到 2%。
+// 2% 作为保底预留，保证重要摘要不会被大量文件操作记录挤掉。
+const MEMORY_MIN_RATIO = 0.02
+const MEMORY_MAX_RATIO = 0.04
 const MEMORY_CHARS_PER_TOKEN = 3
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 200000
+
+// 「近期文件操作」只是近况提示，不是履历：
+//  - 进 prompt 的最多 40 个文件（按最近提及排序、按路径去重）
+//  - 落库最多保留最近 200 条，避免 memory 文件无限膨胀
+const MAX_PROJECT_FILES_IN_PROMPT = 40
+const MAX_STORED_PROJECT_FILES = 200
 
 const MEMORY_SECTIONS = [
   ['preference', '用户偏好'],
@@ -346,6 +409,7 @@ function dedupeProjectFiles(entries) {
   }
   return [...byRef.values()].sort((a, b) => (
     (Date.parse(b.lastMentioned) || 0) - (Date.parse(a.lastMentioned) || 0)
+    || String(b.id || '').localeCompare(String(a.id || ''))
   ))
 }
 
@@ -358,7 +422,7 @@ function trimMemoryText(text, maxChars) {
   return `${body}${note}`
 }
 
-function compressMemorySections(sections, targetTokens) {
+function compressMemorySections(sections, targetTokens, maxProjectFiles = MAX_PROJECT_FILES_IN_PROMPT) {
   const budgetChars = Math.max(0, Math.floor(targetTokens * MEMORY_CHARS_PER_TOKEN))
   const important = {
     session_summary: dedupeEntries(sections.session_summary || []),
@@ -374,7 +438,7 @@ function compressMemorySections(sections, targetTokens) {
   let used = baseText.length
   let headerAdded = false
   const selected = []
-  for (const entry of dedupeProjectFiles(sections.project_file || [])) {
+  for (const entry of dedupeProjectFiles(sections.project_file || []).slice(0, maxProjectFiles)) {
     const headerCost = headerAdded ? 0 : '\n### 近期文件操作'.length
     const line = memoryLine(entry)
     if (used + headerCost + line.length + 1 > budgetChars) break
@@ -398,22 +462,45 @@ export function formatMemory(principalId, options = {}) {
   const entries = readMemoryEntries(principalId)
   if (!entries.length) return ''
 
-  const withWeight = entries
-    .map(e => ({ ...e, weight: calcWeight(e) }))
-    .filter(e => e.weight >= LOW_WEIGHT_THRESHOLD && String(e.content || '').trim())
-    .sort((a, b) => b.weight - a.weight)
+  const deterministic = opts.deterministic === true
+  const maxProjectFiles = Math.max(1, Number(opts.maxProjectFiles) || MAX_PROJECT_FILES_IN_PROMPT)
+
+  let ordered
+  if (deterministic) {
+    // 会话内冻结快照时，顺序必须只由存储顺序/创建时间决定，
+    // 不能按「距今天数」加权排序——否则内容不变、顺序也会漂移，缓存前缀失效。
+    ordered = entries
+      .filter(e => String(e.content || '').trim())
+      .sort((a, b) => {
+        const ta = Date.parse(a.createdAt) || 0
+        const tb = Date.parse(b.createdAt) || 0
+        if (ta !== tb) return ta - tb
+        return String(a.id || '').localeCompare(String(b.id || ''))
+      })
+  } else {
+    ordered = entries
+      .map(e => ({ ...e, weight: calcWeight(e) }))
+      .filter(e => e.weight >= LOW_WEIGHT_THRESHOLD && String(e.content || '').trim())
+      .sort((a, b) => b.weight - a.weight)
+  }
 
   const sections = { project_file: [], preference: [], session_summary: [], fact: [] }
-  for (const e of withWeight) {
+  for (const e of ordered) {
     const key = sections[e.type] ? e.type : 'fact'
     sections[key].push(e)
   }
+  // 相同内容的偏好/事实/摘要只保留一条，避免重复条目占 prompt。
+  sections.preference = dedupeEntries(sections.preference)
+  sections.session_summary = dedupeEntries(sections.session_summary)
+  sections.fact = dedupeEntries(sections.fact)
+  // 文件操作只保留最近 N 个唯一文件，避免 1600 条记录塞满 prompt。
+  sections.project_file = dedupeProjectFiles(sections.project_file).slice(0, maxProjectFiles)
   if (!MEMORY_SECTIONS.some(([key]) => sections[key].length)) return ''
 
   const budget = resolveMemoryBudget(opts.contextWindowTokens)
   const full = renderMemorySections(sections)
   if (estimateMemoryTokens(full) <= budget.maxTokens) return full
-  return compressMemorySections(sections, budget.minTokens)
+  return compressMemorySections(sections, budget.minTokens, maxProjectFiles)
 }
 
 // ── Cron ──────────────────────────────────────────────────────────────────────

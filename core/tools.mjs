@@ -252,15 +252,64 @@ function toolEnv(principal) {
   }
 }
 
+// 工具裁剪：不同场景只加载需要的 MCP server。
+// 原则：
+//   - full：主维护会话，保持现状（只去掉明显无关的 DesignSync，见 agents/agent.mjs）
+//   - chat：普通用户日常会话，去掉 owner 专用的高危及重型工具
+//   - cron：定时任务，只保留巡检/提醒/文件/日程相关工具
+// 用户创建的工具（如 email/amap）在 chat/cron 下仍然保留。
+const CHAT_SYSTEM_DENY = new Set([
+  'restart',
+  'screenshot',
+  'mouse_control',
+  'keyboard_control',
+  'input_session',
+  'image_gen',
+  'admin_request',
+])
+
+// 内置工具（SDK 自带）也按 profile 裁剪。
+// full 保留默认全集，只去掉与 Jarvis 无关的 DesignSync。
+// chat/cron 只保留文件、Bash、搜索这些基础能力；其余重型/编码/多 Agent 工具不加载。
+const BASIC_BUILTIN_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'WebSearch', 'WebFetch']
+
+export const BUILTIN_TOOL_PROFILES = {
+  full: { builtinTools: null, disallowedTools: ['DesignSync'] },
+  chat: { builtinTools: BASIC_BUILTIN_TOOLS, disallowedTools: [] },
+  cron: { builtinTools: BASIC_BUILTIN_TOOLS, disallowedTools: [] },
+}
+
+export function getToolProfileSettings(profile) {
+  return BUILTIN_TOOL_PROFILES[profile] || BUILTIN_TOOL_PROFILES.full
+}
+
+const CRON_SYSTEM_ALLOW = new Set([
+  'weather_query',
+  'cron__list',
+  'cron__add',
+  'cron__update',
+  'cron__delete',
+  'cn_calendar',
+  'notes',
+  'read_word',
+  'schedule',
+  'file_builder',
+  'abstract_image',
+  'festival_query',
+  'my_location',
+  // 短信/定位/闹钟巡检必需
+  'android_native',
+])
+
 /**
- * 所有会话加载同一套工具：
+ * 所有会话按 profile 加载工具：
  *   - Jarvis 工具（系统 + 用户创建）
  *   - 用户已启用的外接工具
- * `_meta` 永远加载，用于工具管理。
+ * `_meta` 在 full/chat 下加载，用于工具管理；cron 下不加载。
  *
  * 具体 MCP server 的形态由 tool-providers 按 impl.type 生成。
  */
-export function buildMcpServers(principal) {
+export function buildMcpServers(principal, { profile = 'full' } = {}) {
   const env = toolEnv(principal)
   const androidEnv = {
     ...(process.env.JARVIS_BRIDGE_INTERNAL_URL
@@ -272,16 +321,20 @@ export function buildMcpServers(principal) {
   }
 
   const definitions = [...listJarvisToolDefinitions(), ...listExternalToolDefinitions()]
-  const usable = definitions.filter(def => {
-    if (def.kind !== 'tool') return false
-    if (!def.available) return false
-    if (!canAccessTool(def, principal)) return false
-    if (def.class === 'jarvis') {
-      if (def.globalEnabled === false) return false
-      return isToolEnabled(principal.id, def.id, true)
-    }
-    return isToolEnabled(principal.id, def.id, def.enabledByDefault === true)
-  })
+  const sourceByName = new Map(definitions.map(def => [def.id || def.name, def.source || 'external']))
+  const usable = definitions
+    .filter(def => {
+      if (def.kind !== 'tool') return false
+      if (!def.available) return false
+      if (!canAccessTool(def, principal)) return false
+      if (def.class === 'jarvis') {
+        if (def.globalEnabled === false) return false
+        return isToolEnabled(principal.id, def.id, true)
+      }
+      return isToolEnabled(principal.id, def.id, def.enabledByDefault === true)
+    })
+    // 顺序固定：工具定义也属于 prompt 前缀，不能因为目录遍历顺序变化而抖动。
+    .sort((a, b) => String(a.id || a.name || '').localeCompare(String(b.id || b.name || '')))
 
   const servers = {
     _meta: {
@@ -301,6 +354,22 @@ export function buildMcpServers(principal) {
       throw new Error(`工具名冲突：${name}（系统工具/其他用户工具已存在）`)
     }
     servers[name] = config
+  }
+
+  const normalizedProfile = profile === 'cron' || profile === 'chat' ? profile : 'full'
+  if (normalizedProfile === 'cron') {
+    delete servers._meta
+    for (const name of Object.keys(servers)) {
+      // android_native 是 provider 特殊注入的系统能力，不在 registry 里。
+      const source = sourceByName.get(name) || (name === 'android_native' ? 'system' : 'external')
+      if (source === 'system' && !CRON_SYSTEM_ALLOW.has(name)) delete servers[name]
+      else if (source === 'external') delete servers[name]
+    }
+  } else if (normalizedProfile === 'chat') {
+    for (const name of Object.keys(servers)) {
+      const source = sourceByName.get(name) || (name === 'android_native' ? 'system' : 'external')
+      if (source === 'system' && CHAT_SYSTEM_DENY.has(name)) delete servers[name]
+    }
   }
 
   return servers

@@ -61,6 +61,23 @@ const TOOL_HINT = `
 `
 
 /**
+ * 当前时间不再放进 system prompt：system 前缀每变一次，整段对话缓存都会失效。
+ * 时间改为拼在本轮用户消息的最前面（见 core/conversation.mjs），只动尾部。
+ */
+export function buildTimeLine(now = new Date()) {
+  const text = now.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'long',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+  return `【当前时间】${text}（本机时间）\n`
+}
+
+/**
  * @param {object} opts
  * @param {object} opts.principal  principal 注册表条目（含 role/capabilities/displayName）
  * @param {string} opts.rules      全局 rules 文本
@@ -72,19 +89,9 @@ export function buildSystemPrompt({ principal, rules, persona, memory }) {
   const capabilityLine = canEdit
     ? '当前用户有项目代码修改权限：可以修改项目代码，但 config/credentials.json 和 config/agent.json 永远不可读写，config/rules.md 可读不可写；不得读取或外传凭证。'
     : '当前用户没有项目代码修改权限：不要修改项目源码或系统工具代码。config/credentials.json 和 config/agent.json 不可读写。'
-  const nowText = new Date().toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    weekday: 'long',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  })
 
   return [
     `# 全局规则（最高优先级，任何用户人设都不能覆盖）\n${rules}`,
-    `# 当前时间\n${nowText}（本机时间）`,
     `# 当前用户\n你正在和「${principal.displayName}」对话。${capabilityLine}`,
     `# 当前用户人设\n${persona || '（未设置）'}`,
     memory ? `# 当前用户长期记忆\n${memory}` : '',
