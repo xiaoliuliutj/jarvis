@@ -25,7 +25,7 @@ const ALLOWED_PROVIDERS = new Set([
 ])
 
 // 真正接了执行层的 Android 工具；其余保持 available:false。
-const IMPLEMENTED_ANDROID_TOOLS = new Set(['android_notification', 'android_alarm'])
+const IMPLEMENTED_ANDROID_TOOLS = new Set(['android_notification', 'android_alarm', 'android_location', 'android_sms'])
 
 export const BUILTIN_EXTERNAL_TOOLS = [
   {
@@ -53,7 +53,7 @@ export const BUILTIN_EXTERNAL_TOOLS = [
     id: 'android_alarm',
     name: '手机闹钟',
     summary: '设置手机系统闹钟',
-    description: '在用户当前连接的 Android 手机上创建系统闹钟。传 24 小时制 hour/minute，可选 label；优先交给 ColorOS 系统时钟静默创建，不支持时会打开时钟界面。需要 Android App 0.2.5+ 在线。',
+    description: '在用户当前连接的 Android 手机上创建系统闹钟。默认 action=set，传 24 小时制 hour/minute，可选 label；优先交给 ColorOS 系统时钟静默创建，不支持时会打开时钟界面。调试时可用 action=probe 列出时钟入口、action=try_component 指定组件尝试。需要 Android App 0.2.8+ 在线。',
     provider: TOOL_PROVIDER.ANDROID_NATIVE,
     icon: '⏰',
     category: '手机',
@@ -74,15 +74,42 @@ export const BUILTIN_EXTERNAL_TOOLS = [
     id: 'android_location',
     name: '手机定位',
     summary: '获取手机当前位置',
-    description: '读取 Android 手机当前位置。当前只有接口，尚未接入权限和执行。',
+    description: '读取 Android 手机当前定位（系统缓存或实时），返回经纬度、精度和定位来源。需要用户在 App 内授予定位权限。需要 Android App 0.3.4+ 在线。',
     provider: TOOL_PROVIDER.ANDROID_NATIVE,
     icon: '📍',
     category: '手机',
     risk: 'high',
     tags: ['android', 'location', '定位'],
-    available: false,
-    enabledByDefault: false,
-    impl: { type: TOOL_PROVIDER.ANDROID_NATIVE, server: 'android_native', action: 'location' },
+    available: true,
+    enabledByDefault: true,
+    impl: {
+      type: TOOL_PROVIDER.ANDROID_NATIVE,
+      server: 'android_native',
+      action: 'location',
+      executor: 'service',
+      fallback: 'web',
+    },
+    configFields: [],
+  },
+  {
+    id: 'android_sms',
+    name: '手机短信',
+    summary: '读取手机短信',
+    description: '读取 Android 手机的短信（只读）：列出最近短信、按号码/关键词搜索、读取单条详情。需要用户在 App 内授予短信权限。需要 Android App 0.3.5+ 在线。',
+    provider: TOOL_PROVIDER.ANDROID_NATIVE,
+    icon: '💬',
+    category: '手机',
+    risk: 'high',
+    tags: ['android', 'sms', '短信'],
+    available: true,
+    enabledByDefault: true,
+    impl: {
+      type: TOOL_PROVIDER.ANDROID_NATIVE,
+      server: 'android_native',
+      action: 'sms',
+      executor: 'service',
+      fallback: 'web',
+    },
     configFields: [],
   },
   {

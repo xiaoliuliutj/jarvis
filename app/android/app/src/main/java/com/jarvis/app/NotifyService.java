@@ -654,14 +654,137 @@ public class NotifyService extends Service {
             ok = sendCustomNotification(this, title, body);
             if (!ok) error = hasPermission(this) ? "通知发送失败" : "通知权限未开启";
         } else if ("android_alarm".equals(tool)) {
-            int hour = args == null ? -1 : args.optInt("hour", -1);
-            int minute = args == null ? -1 : args.optInt("minute", -1);
-            String label = args == null ? "" : args.optString("label", "");
-            boolean vibrate = args == null || args.optBoolean("vibrate", true);
-            outcome = AlarmHelper.set(this, hour, minute, label, vibrate);
-            ok = AlarmHelper.isSuccess(outcome);
-            if (ok) resultText = AlarmHelper.resultText(outcome);
-            else error = AlarmHelper.errorText(outcome);
+            String action = args == null ? "set" : args.optString("action", "set");
+            if ("probe".equals(action)) {
+                String probeText = AlarmHelper.probe(this);
+                ok = probeText != null && !probeText.startsWith("error:");
+                if (ok) {
+                    resultText = probeText + "\n无障碍自动确认: "
+                            + (AlarmAutoConfirmService.isEnabled(this) ? "已开启" : "未开启");
+                } else {
+                    error = "闹钟探针执行失败：" + (probeText == null ? "unknown" : probeText.replace("error:", ""));
+                }
+            } else if ("dump_ui".equals(action)) {
+                String dumpText = AlarmAutoConfirmService.dumpUi();
+                ok = dumpText != null && !dumpText.startsWith("error:");
+                if (ok) {
+                    resultText = dumpText;
+                } else if ("error:accessibility_not_running".equals(dumpText)) {
+                    error = "无障碍自动确认服务未开启，请先在系统设置里开启 Jarvis 的无障碍服务";
+                } else {
+                    error = "当前没有可读取的时钟窗口，请先让时钟界面弹出来";
+                }
+            } else if ("inspect_manifest".equals(action)) {
+                String text = ClockManifestReader.inspect(this);
+                ok = text != null && !text.startsWith("error:");
+                if (ok) resultText = text;
+                else error = "读取时钟 manifest 失败：" + (text == null ? "unknown" : text.replace("error:", ""));
+            } else if ("query_action".equals(action)) {
+                String intentAction = args == null ? "" : args.optString("intentAction", "");
+                String text = ClockManifestReader.queryAction(this, intentAction);
+                ok = text != null && !text.startsWith("error:");
+                if (ok) resultText = text;
+                else error = "查询 action 失败：" + (text == null ? "unknown" : text.replace("error:", ""));
+            } else if ("send_broadcast".equals(action)) {
+                String intentAction = args == null ? "" : args.optString("intentAction", "");
+                int hour = args == null ? -1 : args.optInt("hour", -1);
+                int minute = args == null ? -1 : args.optInt("minute", -1);
+                String label = args == null ? "" : args.optString("label", "");
+                boolean vibrate = args == null || args.optBoolean("vibrate", true);
+                outcome = AlarmHelper.sendAlarmBroadcast(this, intentAction, hour, minute, label, vibrate);
+                ok = AlarmHelper.isSuccess(outcome);
+                if (ok) resultText = "已发送广播 " + intentAction + "（目标：系统时钟）";
+                else error = AlarmHelper.errorText(outcome);
+            } else if ("inspect_permissions".equals(action)) {
+                String text = ClockManifestReader.inspectPermissions(this);
+                ok = text != null && !text.startsWith("error:");
+                if (ok) resultText = text;
+                else error = "读取权限失败：" + (text == null ? "unknown" : text.replace("error:", ""));
+            } else if ("inspect_components".equals(action)) {
+                String text = ClockManifestReader.inspectComponents(this);
+                ok = text != null && !text.startsWith("error:");
+                if (ok) resultText = text;
+                else error = "读取组件清单失败：" + (text == null ? "unknown" : text.replace("error:", ""));
+            } else if ("permission_info".equals(action)) {
+                String permission = args == null ? "" : args.optString("permission", "");
+                String text = ClockManifestReader.permissionInfo(this, permission);
+                ok = text != null && !text.startsWith("error:");
+                if (ok) resultText = text;
+                else error = "查询权限失败：" + (text == null ? "unknown" : text.replace("error:", ""));
+            } else if ("resolve_provider".equals(action)) {
+                String authority = args == null ? "" : args.optString("authority", "");
+                String text = ClockManifestReader.resolveProvider(this, authority);
+                ok = text != null && !text.startsWith("error:");
+                if (ok) resultText = text;
+                else error = "查询 provider 失败：" + (text == null ? "unknown" : text.replace("error:", ""));
+            } else if ("try_component".equals(action)) {
+                String component = args == null ? "" : args.optString("component", "");
+                String customAction = args == null ? "" : args.optString("intentAction", "");
+                int hour = args == null ? -1 : args.optInt("hour", -1);
+                int minute = args == null ? -1 : args.optInt("minute", -1);
+                String label = args == null ? "" : args.optString("label", "");
+                boolean vibrate = args == null || args.optBoolean("vibrate", true);
+                boolean skipUi = args == null || args.optBoolean("skipUi", true);
+                String skipUiMode = args == null ? "boolean" : args.optString("skipUiMode", "boolean");
+                outcome = AlarmHelper.tryAlarmComponent(this, component, customAction,
+                        hour, minute, label, vibrate, skipUi, skipUiMode);
+                ok = AlarmHelper.isSuccess(outcome);
+                if (ok) resultText = "已把新建闹钟请求交给 " + component
+                        + (customAction == null || customAction.isEmpty() ? "" : "（action=" + customAction + "）")
+                        + "（skipUi=" + skipUi + "，模式=" + skipUiMode + "）";
+                else error = AlarmHelper.errorText(outcome);
+            } else {
+                int hour = args == null ? -1 : args.optInt("hour", -1);
+                int minute = args == null ? -1 : args.optInt("minute", -1);
+                String label = args == null ? "" : args.optString("label", "");
+                boolean vibrate = args == null || args.optBoolean("vibrate", true);
+                outcome = AlarmHelper.set(this, hour, minute, label, vibrate);
+                ok = AlarmHelper.isSuccess(outcome);
+                if (ok) {
+                    resultText = AlarmHelper.resultText(outcome);
+                    if (!AlarmAutoConfirmService.isEnabled(this)) {
+                        resultText += "（无障碍未开启：界面需要手动点保存；开启 Jarvis 无障碍服务后可自动确认）";
+                    }
+                } else {
+                    error = AlarmHelper.errorText(outcome);
+                }
+            }
+        } else if ("android_location".equals(tool)) {
+            boolean fresh = args != null && args.optBoolean("fresh", false);
+            String locationText = LocationHelper.getLocationText(this, fresh);
+            ok = locationText != null && !locationText.startsWith("error:");
+            if (ok) {
+                resultText = locationText;
+            } else {
+                String reason = locationText == null ? "" : locationText.replace("error:", "");
+                if ("permission_denied".equals(reason)) {
+                    error = "定位权限未授予，请打开 Jarvis App 并允许定位权限";
+                } else if ("no_location".equals(reason)) {
+                    error = "暂时拿不到位置（定位服务可能关闭或没有信号）";
+                } else if ("no_location_service".equals(reason)) {
+                    error = "系统定位服务不可用";
+                } else {
+                    error = "获取定位失败：" + reason;
+                }
+            }
+        } else if ("android_sms".equals(tool)) {
+            String smsAction = args == null ? "list" : args.optString("action", "list");
+            String text;
+            if ("search".equals(smsAction)) {
+                String keyword = args == null ? "" : args.optString("keyword", "");
+                int limit = args == null ? 10 : args.optInt("limit", 10);
+                text = SmsHelper.search(this, keyword, limit);
+            } else if ("read".equals(smsAction)) {
+                long id = args == null ? -1 : args.optLong("id", -1);
+                text = SmsHelper.read(this, id);
+            } else {
+                int limit = args == null ? 10 : args.optInt("limit", 10);
+                String folder = args == null ? "" : args.optString("folder", "");
+                text = SmsHelper.list(this, limit, folder);
+            }
+            ok = text != null && !text.startsWith("error:");
+            if (ok) resultText = text;
+            else error = smsErrorText(text);
         } else {
             error = "设备端不支持的原生工具：" + tool;
         }
@@ -683,6 +806,16 @@ public class NotifyService extends Service {
             sendJson(result.toString());
         } catch (Exception ignored) {
         }
+    }
+
+    private static String smsErrorText(String outcome) {
+        String reason = outcome == null ? "" : outcome.replace("error:", "");
+        if ("permission_denied".equals(reason)) return "短信权限未授予，请打开 Jarvis App 并允许读取短信";
+        if ("no_cursor".equals(reason)) return "短信数据库不可用";
+        if ("bad_keyword".equals(reason)) return "搜索关键词不能为空";
+        if ("bad_id".equals(reason)) return "缺少有效的短信 id";
+        if ("not_found".equals(reason)) return "找不到这条短信";
+        return "读取短信失败：" + reason;
     }
 
     private boolean screenInteractive() {

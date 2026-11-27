@@ -4,9 +4,14 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ActivityInfo;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ProviderInfo;
 import android.content.pm.ResolveInfo;
 import android.provider.AlarmClock;
+
+import java.util.List;
 
 /**
  * 通过 Android 标准 AlarmClock Intent 让系统时钟创建闹钟。
@@ -21,11 +26,22 @@ import android.provider.AlarmClock;
 final class AlarmHelper {
     private static final long DUPLICATE_WINDOW_MS = 60_000L;
 
+    private static final String[] CLOCK_PACKAGES = {
+            "com.coloros.alarmclock",
+            "com.oppo.alarmclock",
+            "com.oneplus.deskclock",
+            "com.android.deskclock",
+            "com.google.android.deskclock",
+    };
+
     private AlarmHelper() {}
 
     static String set(Context context, int hour, int minute, String label, boolean vibrate) {
         if (context == null) return "error:no_context";
         if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return "error:invalid_time";
+
+        // 若用户已启用无障碍自动确认，在界面弹出时自动点「保存」。
+        AlarmAutoConfirmService.armAutoConfirm();
 
         String cleanLabel = String.valueOf(label == null ? "" : label).trim();
         if (cleanLabel.length() > 80) cleanLabel = cleanLabel.substring(0, 80);
@@ -41,17 +57,18 @@ final class AlarmHelper {
 
         Intent intent = buildIntent(hour, minute, cleanLabel, vibrate);
         PackageManager pm = context.getPackageManager();
-        ResolveInfo resolved = pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY);
-
-        // 先按标准入口启动；即使 resolveActivity 因包可见性返回 null，也直接试一次 startActivity。
-        if (resolved != null) {
-            String pkg = resolved.activityInfo != null ? resolved.activityInfo.packageName : "";
-            if (tryStart(context, intent)) {
-                return markAndReturn(prefs, signature, now, pkg);
+        String resolvedBy = null;
+        try {
+            ResolveInfo resolved = pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY);
+            if (resolved != null && resolved.activityInfo != null) {
+                resolvedBy = resolved.activityInfo.packageName + "/" + resolved.activityInfo.name;
             }
+        } catch (Exception ignored) {
         }
+
+        // 标准入口：声明 SET_ALARM 权限后，ColorOS 会路由到 cts.HandleApiActivity 真正新建闹钟。
         if (tryStart(context, intent)) {
-            return markAndReturn(prefs, signature, now, "implicit");
+            return markAndReturn(prefs, signature, now, resolvedBy == null ? "implicit" : resolvedBy);
         }
 
         // ColorOS 时钟包：有些版本不会注册标准 Action，显式指定包名再试。
@@ -88,6 +105,173 @@ final class AlarmHelper {
         // 没有可用的 SET_ALARM 入口：至少把用户带到闹钟界面。
         if (openAlarmList(context)) return "opened";
         return "error:no_alarm_app";
+    }
+
+    /**
+     * 调试探针：列出能响应 SET_ALARM / SHOW_ALARMS 的组件，以及各时钟包内部的 Activity 清单。
+     * 用于确认为什么 ColorOS 时钟接住了 Intent 却只打开界面。
+     */
+    static String probe(Context context) {
+        if (context == null) return "error:no_context";
+        PackageManager pm = context.getPackageManager();
+        StringBuilder sb = new StringBuilder();
+
+        appendResolutions(pm, sb, "SET_ALARM", new Intent(AlarmClock.ACTION_SET_ALARM));
+        appendResolutions(pm, sb, "SHOW_ALARMS", new Intent(AlarmClock.ACTION_SHOW_ALARMS));
+
+        for (String pkg : CLOCK_PACKAGES) {
+            try {
+                PackageInfo info = pm.getPackageInfo(pkg,
+                        PackageManager.GET_ACTIVITIES
+                                | PackageManager.GET_PROVIDERS
+                                | PackageManager.GET_RECEIVERS);
+                ActivityInfo[] activities = info.activities;
+                sb.append("\n").append(pkg)
+                        .append(": versionName=").append(info.versionName)
+                        .append(" activities=").append(activities == null ? 0 : activities.length);
+                if (activities != null) {
+                    for (ActivityInfo activity : activities) {
+                        sb.append("\n  ").append(activity.name);
+                        if (!activity.exported) sb.append(" [internal]");
+                    }
+                }
+                if (info.providers != null) {
+                    for (ProviderInfo provider : info.providers) {
+                        sb.append("\n  provider ").append(provider.name)
+                                .append(" authority=").append(provider.authority)
+                                .append(provider.exported ? "" : " [internal]");
+                    }
+                }
+                if (info.receivers != null) {
+                    for (ActivityInfo receiver : info.receivers) {
+                        sb.append("\n  receiver ").append(receiver.name)
+                                .append(receiver.exported ? "" : " [internal]");
+                    }
+                }
+            } catch (PackageManager.NameNotFoundException e) {
+                sb.append("\n").append(pkg).append(": not installed");
+            } catch (Exception e) {
+                sb.append("\n").append(pkg).append(": query failed ").append(e.getClass().getSimpleName());
+            }
+        }
+        String result = sb.toString().trim();
+        return result.isEmpty() ? "ok:empty" : result;
+    }
+
+    private static void appendResolutions(PackageManager pm, StringBuilder sb, String tag, Intent intent) {
+        sb.append(tag).append(" resolvers:");
+        try {
+            List<ResolveInfo> list = pm.queryIntentActivities(
+                    intent, PackageManager.MATCH_DEFAULT_ONLY | PackageManager.MATCH_ALL);
+            if (list == null || list.isEmpty()) {
+                sb.append(" none\n");
+                return;
+            }
+            for (ResolveInfo info : list) {
+                ActivityInfo ai = info.activityInfo;
+                sb.append("\n  ").append(ai.packageName).append("/").append(ai.name);
+                if (!ai.exported) sb.append(" [internal]");
+            }
+        } catch (Exception e) {
+            sb.append(" query failed ").append(e.getClass().getSimpleName());
+        }
+        sb.append("\n");
+    }
+
+    /** 调试用：用指定组件直接尝试新建闹钟，跳过 resolve，便于逐个试时钟包里的候选入口。 */
+    static String tryAlarmComponent(Context context, String component, String customAction, int hour, int minute,
+                                    String label, boolean vibrate, boolean skipUi, String skipUiMode) {
+        if (context == null) return "error:no_context";
+        if (component == null || !component.contains("/")) return "error:bad_component";
+        String pkg = component.substring(0, component.indexOf('/'));
+        if (!isClockPackage(pkg)) return "error:not_clock_package";
+        if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return "error:invalid_time";
+
+        String action = customAction == null ? "" : customAction.trim();
+        if (!action.isEmpty()) {
+            String lower = action.toLowerCase();
+            boolean allowed = lower.startsWith("com.coloros")
+                    || lower.startsWith("com.oplus")
+                    || lower.startsWith("com.android")
+                    || lower.startsWith("oppo.")
+                    || lower.startsWith("android.intent.action");
+            if (!allowed || action.length() > 200 || !action.contains(".")) return "error:action_not_allowed";
+        }
+
+        String cleanLabel = String.valueOf(label == null ? "" : label).trim();
+        if (cleanLabel.length() > 80) cleanLabel = cleanLabel.substring(0, 80);
+        if (cleanLabel.isEmpty()) cleanLabel = "Jarvis 闹钟";
+
+        ComponentName target = ComponentName.unflattenFromString(component);
+        if (target == null) return "error:bad_component";
+
+        AlarmAutoConfirmService.armAutoConfirm();
+
+        Intent intent = new Intent(action.isEmpty() ? AlarmClock.ACTION_SET_ALARM : action);
+        intent.putExtra(AlarmClock.EXTRA_HOUR, hour);
+        intent.putExtra(AlarmClock.EXTRA_MINUTES, minute);
+        intent.putExtra(AlarmClock.EXTRA_MESSAGE, cleanLabel);
+        // 有些厂商实现用 getStringExtra / getIntExtra 读 SKIP_UI，支持三种传法便于排查。
+        if ("string".equals(skipUiMode)) {
+            intent.putExtra(AlarmClock.EXTRA_SKIP_UI, skipUi ? "true" : "false");
+        } else if ("int".equals(skipUiMode)) {
+            intent.putExtra(AlarmClock.EXTRA_SKIP_UI, skipUi ? 1 : 0);
+        } else {
+            intent.putExtra(AlarmClock.EXTRA_SKIP_UI, skipUi);
+        }
+        intent.putExtra(AlarmClock.EXTRA_VIBRATE, vibrate);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.setComponent(target);
+        try {
+            context.startActivity(intent);
+            return "ok:" + component;
+        } catch (Exception e) {
+            String msg = e.getMessage() == null ? e.getClass().getSimpleName()
+                    : e.getClass().getSimpleName() + ": " + e.getMessage();
+            return "error:" + msg;
+        }
+    }
+
+    /** 调试用：向系统时钟发送自定义广播（带标准闹钟 extras），验证私有静默通道。 */
+    static String sendAlarmBroadcast(Context context, String action, int hour, int minute,
+                                     String label, boolean vibrate) {
+        if (context == null) return "error:no_context";
+        if (action == null) return "error:bad_action";
+        String act = action.trim();
+        String lower = act.toLowerCase();
+        boolean allowed = lower.startsWith("com.coloros")
+                || lower.startsWith("com.oplus")
+                || lower.startsWith("com.android")
+                || lower.startsWith("oppo.")
+                || lower.startsWith("android.intent.action");
+        if (!allowed || act.length() > 200 || !act.contains(".")) return "error:action_not_allowed";
+        if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return "error:invalid_time";
+
+        String cleanLabel = String.valueOf(label == null ? "" : label).trim();
+        if (cleanLabel.length() > 80) cleanLabel = cleanLabel.substring(0, 80);
+        if (cleanLabel.isEmpty()) cleanLabel = "Jarvis 闹钟";
+
+        Intent intent = new Intent(act);
+        intent.setPackage(ClockManifestReader.CLOCK_PACKAGE);
+        intent.putExtra(AlarmClock.EXTRA_HOUR, hour);
+        intent.putExtra(AlarmClock.EXTRA_MINUTES, minute);
+        intent.putExtra(AlarmClock.EXTRA_MESSAGE, cleanLabel);
+        intent.putExtra(AlarmClock.EXTRA_SKIP_UI, true);
+        intent.putExtra(AlarmClock.EXTRA_VIBRATE, vibrate);
+        try {
+            context.sendBroadcast(intent);
+            return "ok:" + act;
+        } catch (Exception e) {
+            return "error:broadcast_failed:" + e.getClass().getSimpleName();
+        }
+    }
+
+    private static boolean isClockPackage(String pkg) {
+        if (pkg == null) return false;
+        for (String p : CLOCK_PACKAGES) {
+            if (p.equals(pkg)) return true;
+        }
+        return false;
     }
 
     private static boolean tryStart(Context context, Intent intent) {
