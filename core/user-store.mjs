@@ -203,6 +203,31 @@ export function writePromptSnapshot(principalId, sessionId, { memoryText = '', a
   return snapshot
 }
 
+// ── 最近一次定时任务结果 ─────────────────────────────────────────────────────
+// cron 结果写进聊天显示层，但用的是独立 Agent 会话；聊天 Agent 下一轮看不到。
+// 这里存最近一条，聊天回合以「尾部拼接」的方式带上，避免追问时接不上。
+function lastCronResultFile(principalId) {
+  return path.join(principalDir(principalId), 'cron-last-result.json')
+}
+
+export function readLastCronResult(principalId) {
+  const data = readJson(lastCronResultFile(principalId), null)
+  if (!data || typeof data.text !== 'string') return null
+  return {
+    text: data.text,
+    at: data.at || null,
+    source: data.source || 'cron',
+  }
+}
+
+export function writeLastCronResult(principalId, { text = '', at = new Date().toISOString(), source = 'cron' } = {}) {
+  const body = String(text || '').trim()
+  if (!body) return null
+  const data = { text: body, at, source }
+  writeJson(lastCronResultFile(principalId), data)
+  return data
+}
+
 export function readSessionDigestState(principalId, sessionId) {
   const file = path.join(sessionsDir(principalId), `${sessionId}.digest.json`)
   const data = readJson(file, null)
