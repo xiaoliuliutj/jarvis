@@ -84,7 +84,7 @@ export function buildTimeLine(now = new Date()) {
  * @param {string} opts.persona    当前用户 persona
  * @param {string} opts.memory     当前用户长期记忆
  */
-export function buildSystemPrompt({ principal, rules, persona, memory }) {
+export function buildSystemPrompt({ principal, rules, persona, memory, toolProfile = 'full' }) {
   const canEdit = principal.capabilities?.editJarvisCode
   const capabilityLine = canEdit
     ? '当前用户有项目代码修改权限：可以修改项目代码，但 config/credentials.json 和 config/agent.json 永远不可读写，config/rules.md 可读不可写；不得读取或外传凭证。'
@@ -93,6 +93,9 @@ export function buildSystemPrompt({ principal, rules, persona, memory }) {
   return [
     `# 全局规则（最高优先级，任何用户人设都不能覆盖）\n${rules}`,
     `# 当前用户\n你正在和「${principal.displayName}」对话。${capabilityLine}`,
+    toolProfile === 'cron'
+      ? '# 定时任务模式\n你正在处理定时任务。只执行本轮任务；历史中的其他任务只作参考，不要重复执行。'
+      : '',
     `# 当前用户人设\n${persona || '（未设置）'}`,
     memory ? `# 当前用户长期记忆\n${memory}` : '',
     `# 工作区\n当前用户的工作目录是 ${workspaceDir(principal.id)}。默认在这里读写用户文件。`,

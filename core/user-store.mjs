@@ -268,24 +268,6 @@ export function readMemoryEntries(principalId) {
   return text.split('\n').filter(l => l.trim()).map(l => JSON.parse(l))
 }
 
-function pruneStoredProjectFiles(principalId) {
-  const entries = readMemoryEntries(principalId)
-  const projectEntries = entries.filter(entry => entry.type === 'project_file')
-  if (projectEntries.length <= MAX_STORED_PROJECT_FILES) return
-
-  const keep = new Set(
-    projectEntries.slice(-MAX_STORED_PROJECT_FILES).map(entry => entry.id),
-  )
-  const next = entries.filter(entry => (
-    entry.type !== 'project_file' || keep.has(entry.id)
-  ))
-  fs.writeFileSync(
-    memoryFile(principalId),
-    next.map(item => JSON.stringify(item)).join('\n') + (next.length ? '\n' : ''),
-    'utf-8',
-  )
-}
-
 export function appendMemory(principalId, { content, type = 'fact', refs = [] }) {
   ensureUser(principalId)
   const entry = {
@@ -298,10 +280,6 @@ export function appendMemory(principalId, { content, type = 'fact', refs = [] })
     createdAt: new Date().toISOString(),
   }
   fs.appendFileSync(memoryFile(principalId), JSON.stringify(entry) + '\n', 'utf-8')
-  // 文件操作记录只保留最近 200 条；偏好/事实/摘要不受影响。
-  if (type === 'project_file') {
-    try { pruneStoredProjectFiles(principalId) } catch {}
-  }
   return entry
 }
 
@@ -341,9 +319,8 @@ const DEFAULT_CONTEXT_WINDOW_TOKENS = 200000
 
 // 「近期文件操作」只是近况提示，不是履历：
 //  - 进 prompt 的最多 40 个文件（按最近提及排序、按路径去重）
-//  - 落库最多保留最近 200 条，避免 memory 文件无限膨胀
+//  - 磁盘上的 memory 文件保持全量，不裁剪；磁盘空间足够，历史可回溯
 const MAX_PROJECT_FILES_IN_PROMPT = 40
-const MAX_STORED_PROJECT_FILES = 200
 
 const MEMORY_SECTIONS = [
   ['preference', '用户偏好'],
