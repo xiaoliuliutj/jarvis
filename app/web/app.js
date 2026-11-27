@@ -50,6 +50,7 @@
     usageAnchor: todayKey(),
     usageSummary: null,
     usageError: '',
+    usagePricing: null,
     usageDetailsOpen: false,
     usageMessageOpen: {},
     usageMessageCalls: {},
@@ -119,6 +120,13 @@
     usageDetailsToggle: $('usageDetailsToggle'),
     usageMessageCount: $('usageMessageCount'),
     usageMessages: $('usageMessages'),
+    usagePriceInput: $('usagePriceInput'),
+    usagePriceOutput: $('usagePriceOutput'),
+    usagePriceCacheRead: $('usagePriceCacheRead'),
+    usagePriceCacheWrite: $('usagePriceCacheWrite'),
+    usagePriceCurrency: $('usagePriceCurrency'),
+    usagePriceSave: $('usagePriceSave'),
+    usagePriceStatus: $('usagePriceStatus'),
     personaEntry: $('personaEntry'),
     personaSummary: $('personaSummary'),
     personaPreview: $('personaPreview'),
@@ -348,6 +356,15 @@
   }
   function formatTokenExact(n) {
     return Math.round(Number(n) || 0).toLocaleString('zh-CN')
+  }
+  function formatCost(value, currency = 'USD') {
+    const n = Number(value)
+    if (!Number.isFinite(n)) return '—'
+    const symbol = currency === 'CNY' ? '¥' : '$'
+    if (n === 0) return `${symbol}0`
+    if (n < 0.0001) return `${symbol}<0.0001`
+    if (n < 0.01) return `${symbol}${n.toFixed(4)}`
+    return `${symbol}${n.toFixed(3)}`
   }
   function formatDuration(ms) {
     const value = Number(ms) || 0
@@ -3572,6 +3589,8 @@
     renderUsage()
   })
 
+  el.usagePriceSave?.addEventListener('click', () => { saveUsagePricing() })
+
   function resetUsagePeriod() {
     state.usageSummary = null
     state.usageError = ''
@@ -3594,6 +3613,19 @@
     empty.className = 'empty-state'
     empty.textContent = text
     target.appendChild(empty)
+  }
+
+  // 缓存读利用率 = 缓存命中 token / 全部输入 token（含命中、未命中与缓存写）
+  function usageCacheRate(record) {
+    const read = Number(record?.cacheReadTokens) || 0
+    const totalInput = (Number(record?.inputTokens) || 0) + read + (Number(record?.cacheWriteTokens) || 0)
+    if (!totalInput) return null
+    return read / totalInput * 100
+  }
+
+  function formatCacheRate(record, prefix = '缓存读') {
+    const rate = usageCacheRate(record)
+    return rate == null ? '' : `${prefix} ${rate.toFixed(1)}%`
   }
 
   function usageTokenTotal(record) {
@@ -3627,13 +3659,6 @@
       counts.set(name, (counts.get(name) || 0) + 1)
     }
     return [...counts.entries()].map(([name, count]) => ({ name, count }))
-  }
-
-  function usageToolSummary(tools) {
-    const list = usageToolList(tools)
-    if (!list.length) return ''
-    const names = list.slice(0, 3).map(item => usageToolLabel(item.name)).join('、')
-    return list.length > 3 ? `${names} 等 ${list.length} 个` : names
   }
 
   function usageTokenChips(record) {
@@ -3684,8 +3709,50 @@
     return row
   }
 
+  async function loadUsagePricing() {
+    if (!state.token) return
+    try {
+      const data = await api('/api/v1/usage/pricing')
+      applyUsagePricing(data.pricing)
+    } catch {}
+  }
+
+  function applyUsagePricing(pricing) {
+    state.usagePricing = pricing || null
+    const p = pricing || {}
+    if (el.usagePriceInput) el.usagePriceInput.value = p.input || ''
+    if (el.usagePriceOutput) el.usagePriceOutput.value = p.output || ''
+    if (el.usagePriceCacheRead) el.usagePriceCacheRead.value = p.cacheRead || ''
+    if (el.usagePriceCacheWrite) el.usagePriceCacheWrite.value = p.cacheWrite || ''
+    if (el.usagePriceCurrency) el.usagePriceCurrency.value = p.currency === 'CNY' ? 'CNY' : 'USD'
+    if (el.usagePriceStatus && !pricing) {
+      el.usagePriceStatus.textContent = '未配置价格，填入后显示估算费用'
+    }
+  }
+
+  async function saveUsagePricing() {
+    if (!state.token) return
+    const body = {
+      input: Number(el.usagePriceInput?.value) || 0,
+      output: Number(el.usagePriceOutput?.value) || 0,
+      cacheRead: Number(el.usagePriceCacheRead?.value) || 0,
+      cacheWrite: Number(el.usagePriceCacheWrite?.value) || 0,
+      currency: el.usagePriceCurrency?.value === 'CNY' ? 'CNY' : 'USD',
+    }
+    if (el.usagePriceStatus) el.usagePriceStatus.textContent = '保存中…'
+    try {
+      const data = await api('/api/v1/usage/pricing', { method: 'PUT', body })
+      applyUsagePricing(data.pricing)
+      if (el.usagePriceStatus) el.usagePriceStatus.textContent = '已保存'
+      await loadUsage()
+    } catch (err) {
+      if (el.usagePriceStatus) el.usagePriceStatus.textContent = `保存失败：${err.message}`
+    }
+  }
+
   async function loadUsage() {
     if (!state.token) return
+    loadUsagePricing().catch(() => {})
     if (!state.usageSummary) renderUsage()
     const { from, to } = usagePeriodRange(state.usageGranularity, state.usageAnchor)
     const query = new URLSearchParams({
@@ -3712,6 +3779,7 @@
   function renderUsage() {
     const s = state.usageSummary
     const data = s || {}
+    const pricing = data.pricing || state.usagePricing
     const { from, to } = usagePeriodRange(state.usageGranularity, state.usageAnchor)
     el.usagePeriodLabel.textContent = usagePeriodLabel(state.usageGranularity, from, to)
 
@@ -3724,6 +3792,7 @@
       ['输出 Token', s ? formatTokenExact(data.outputTokens) : '—'],
       ['缓存读 Token', s ? formatTokenExact(data.cacheReadTokens) : '—'],
       ['总 Token', s ? formatTokenExact(totalTokens) : '—'],
+      ['估算费用', s && pricing ? formatCost(data.estimatedCost, pricing.currency) : '—'],
     ]
     for (const [label, value] of cards) {
       const card = document.createElement('div')
@@ -3747,6 +3816,7 @@
       if (data.legacyTurns) parts.push(`历史部分按 ${formatTokenExact(data.legacyTurns)} 轮整轮汇总`)
       if (data.cacheWriteTokens) parts.push(`缓存写 ${formatTokens(data.cacheWriteTokens)}`)
       if (data.errors) parts.push(`失败 ${data.errors} 次`)
+      parts.push(pricing ? '费用按价格表估算' : '未配置价格')
       el.usageMeta.textContent = parts.join(' · ')
     } else {
       el.usageMeta.textContent = ''
@@ -3776,7 +3846,10 @@
         const nameEl = document.createElement('div')
         nameEl.className = 'bar-name'
         nameEl.textContent = item.name
-        nameEl.title = `${formatTokenExact(item.tokens)} tokens · ${item.calls || 0} 次/轮`
+        const costText = pricing && item.estimatedCost != null
+          ? ` · ≈ ${formatCost(item.estimatedCost, pricing.currency)}`
+          : ''
+        nameEl.title = `${formatTokenExact(item.tokens)} tokens · ${item.calls || 0} 次/轮${costText}`
         const track = document.createElement('div')
         track.className = 'bar-track'
         const fill = document.createElement('div')
@@ -3806,6 +3879,7 @@
 
   function renderUsageMessages() {
     const data = state.usageSummary
+    const pricing = data?.pricing || state.usagePricing
     el.usageMessages.textContent = ''
     if (!state.usageDetailsOpen) return
     if (!data) {
@@ -3837,15 +3911,8 @@
       const sub = document.createElement('div')
       sub.className = 'usage-message-sub'
       const parts = [formatTime(message.firstTs)]
-      if (message.sessionName) parts.push(message.sessionName)
       if (message.calls) parts.push(`${formatTokenExact(message.calls)} 次 LLM 调用`)
       else parts.push(`${formatTokenExact(message.legacyTurns || message.turnRecords)} 轮整轮汇总`)
-      if (message.models?.length === 1) parts.push(message.models[0])
-      else if (message.models?.length > 1) parts.push(`${message.models.length} 个模型`)
-      if (message.tools?.length) {
-        const toolSummary = usageToolSummary(message.tools)
-        if (toolSummary) parts.push(`工具 ${toolSummary}`)
-      }
       sub.textContent = parts.join(' · ')
       main.appendChild(preview)
       main.appendChild(sub)
@@ -3855,17 +3922,20 @@
       const total = document.createElement('div')
       total.className = 'usage-message-total'
       total.textContent = `${formatTokenExact(message.totalTokens || 0)} tok`
-      const breakdown = document.createElement('div')
-      breakdown.className = 'usage-message-sub'
-      const breakdownParts = [
-        `入 ${formatTokens(message.inputTokens)}`,
-        `出 ${formatTokens(message.outputTokens)}`,
-      ]
-      const cache = (message.cacheReadTokens || 0) + (message.cacheWriteTokens || 0)
-      if (cache) breakdownParts.push(`缓存 ${formatTokens(cache)}`)
-      breakdown.textContent = breakdownParts.join(' · ')
       right.appendChild(total)
-      right.appendChild(breakdown)
+      const rateText = formatCacheRate(message)
+      if (rateText) {
+        const rate = document.createElement('div')
+        rate.className = 'usage-message-sub'
+        rate.textContent = rateText
+        right.appendChild(rate)
+      }
+      if (pricing && message.estimatedCost != null) {
+        const cost = document.createElement('div')
+        cost.className = 'usage-message-cost'
+        cost.textContent = `≈ ${formatCost(message.estimatedCost, pricing.currency)}`
+        right.appendChild(cost)
+      }
 
       const chevron = document.createElement('span')
       chevron.className = 'usage-message-chevron'
@@ -3903,6 +3973,7 @@
   }
 
   function renderUsageCalls(target, records) {
+    const pricing = state.usageSummary?.pricing || state.usagePricing
     target.textContent = ''
     const heading = document.createElement('div')
     heading.className = 'usage-call-heading'
@@ -3921,7 +3992,10 @@
       title.textContent = titleParts.join(' · ')
       const sub = document.createElement('div')
       sub.className = 'record-sub'
-      sub.textContent = formatTime(record.ts)
+      const subParts = [formatTime(record.ts)]
+      const rateText = formatCacheRate(record)
+      if (rateText) subParts.push(rateText)
+      sub.textContent = subParts.join(' · ')
       main.appendChild(title)
       main.appendChild(sub)
       main.appendChild(usageTokenChips(record))
@@ -3935,6 +4009,12 @@
       status.className = record.status === 'error' ? 'record-error' : 'record-ok'
       status.textContent = record.status === 'error' ? '失败' : '成功'
       right.appendChild(tokens)
+      if (pricing && record.estimatedCost != null) {
+        const cost = document.createElement('div')
+        cost.className = 'record-cost'
+        cost.textContent = `≈ ${formatCost(record.estimatedCost, pricing.currency)}`
+        right.appendChild(cost)
+      }
       right.appendChild(status)
       item.appendChild(main)
       item.appendChild(right)
@@ -3943,6 +4023,7 @@
   }
 
   function renderUsageTurnSummary(target, message) {
+    const pricing = state.usageSummary?.pricing || state.usagePricing
     target.textContent = ''
     const item = document.createElement('div')
     item.className = 'record-item usage-call-item'
@@ -3953,7 +4034,10 @@
     title.textContent = `整轮汇总 · ${message.legacyTurns || message.turnRecords || 0} 轮`
     const sub = document.createElement('div')
     sub.className = 'record-sub'
-    sub.textContent = formatTime(message.firstTs)
+    const subParts = [formatTime(message.firstTs)]
+    const rateText = formatCacheRate(message)
+    if (rateText) subParts.push(rateText)
+    sub.textContent = subParts.join(' · ')
     main.appendChild(title)
     main.appendChild(sub)
     main.appendChild(usageTokenChips(message))
@@ -3966,6 +4050,12 @@
     status.className = message.status === 'error' ? 'record-error' : 'record-ok'
     status.textContent = message.status === 'error' ? '失败' : '成功'
     right.appendChild(tokens)
+    if (pricing && message.estimatedCost != null) {
+      const cost = document.createElement('div')
+      cost.className = 'record-cost'
+      cost.textContent = `≈ ${formatCost(message.estimatedCost, pricing.currency)}`
+      right.appendChild(cost)
+    }
     right.appendChild(status)
     item.appendChild(main)
     item.appendChild(right)

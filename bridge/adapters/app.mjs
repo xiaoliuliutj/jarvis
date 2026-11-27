@@ -1145,10 +1145,12 @@ function buildServer() {
   app.get('/api/v1/usage/summary', auth, (req, res) => {
     const { principal } = appPrincipalFor(req)
     const messageLimit = Math.min(500, Math.max(20, Number(req.query.messageLimit) || 200))
+    const pricing = appStore.readUsagePricing(principal.id)
     const summary = appStore.usageSummaryRange(principal.id, {
       from: req.query.from,
       to: req.query.to,
       messageLimit,
+      pricing,
     })
     const names = new Map(listSessions(principal.id).map(item => [item.sessionId, item.name]))
     summary.sessionList = Object.values(summary.bySession || {})
@@ -1165,7 +1167,19 @@ function buildServer() {
     const { principal } = appPrincipalFor(req)
     const turnId = typeof req.query.turnId === 'string' ? req.query.turnId.slice(0, 160) : ''
     if (!turnId) return res.status(400).json({ ok: false, error: 'turnId required' })
-    res.json({ ok: true, records: appStore.listUsageByTurn(principal.id, turnId) })
+    const pricing = appStore.readUsagePricing(principal.id)
+    res.json({ ok: true, records: appStore.listUsageByTurn(principal.id, turnId, pricing) })
+  })
+
+  app.get('/api/v1/usage/pricing', auth, (req, res) => {
+    const { principal } = appPrincipalFor(req)
+    res.json({ ok: true, pricing: appStore.readUsagePricing(principal.id) })
+  })
+
+  app.put('/api/v1/usage/pricing', auth, (req, res) => {
+    const { principal } = appPrincipalFor(req)
+    const pricing = appStore.writeUsagePricing(principal.id, req.body || {})
+    res.json({ ok: true, pricing })
   })
 
   app.get('/api/v1/usage/records', auth, (req, res) => {
