@@ -3661,6 +3661,15 @@
     return [...counts.entries()].map(([name, count]) => ({ name, count }))
   }
 
+  // 工具列表压成一行文本：Bash、WebSearch×2、android_native·android_sms
+  function usageToolLine(tools) {
+    const list = usageToolList(tools)
+    if (!list.length) return ''
+    return list
+      .map(item => `${usageToolLabel(item.name)}${item.count > 1 ? `×${item.count}` : ''}`)
+      .join('、')
+  }
+
   function usageTokenChips(record) {
     const row = document.createElement('div')
     row.className = 'usage-token-row'
@@ -3675,37 +3684,6 @@
     add('出', record.outputTokens)
     add('缓存读', record.cacheReadTokens)
     add('缓存写', record.cacheWriteTokens)
-    return row
-  }
-
-  function usageToolChips(tools, emptyText = '无工具调用') {
-    const row = document.createElement('div')
-    row.className = 'usage-tool-row'
-    const label = document.createElement('span')
-    label.className = 'usage-tool-label'
-    label.textContent = '工具'
-    row.appendChild(label)
-    const list = usageToolList(tools)
-    if (!list.length) {
-      const chip = document.createElement('span')
-      chip.className = 'usage-tool-chip muted'
-      chip.textContent = emptyText
-      row.appendChild(chip)
-      return row
-    }
-    for (const item of list) {
-      const chip = document.createElement('span')
-      chip.className = 'usage-tool-chip'
-      chip.textContent = usageToolLabel(item.name)
-      chip.title = item.name
-      if (item.count > 1) {
-        const count = document.createElement('span')
-        count.className = 'count'
-        count.textContent = `×${item.count}`
-        chip.appendChild(count)
-      }
-      row.appendChild(chip)
-    }
     return row
   }
 
@@ -3975,10 +3953,6 @@
   function renderUsageCalls(target, records) {
     const pricing = state.usageSummary?.pricing || state.usagePricing
     target.textContent = ''
-    const heading = document.createElement('div')
-    heading.className = 'usage-call-heading'
-    heading.textContent = `本轮 LLM 调用（${records.length} 次）`
-    target.appendChild(heading)
     for (const [index, record] of records.entries()) {
       const item = document.createElement('div')
       item.className = 'record-item usage-call-item'
@@ -3995,11 +3969,12 @@
       const subParts = [formatTime(record.ts)]
       const rateText = formatCacheRate(record)
       if (rateText) subParts.push(rateText)
+      const toolText = usageToolLine(record.tools)
+      if (toolText) subParts.push(`工具 ${toolText}`)
       sub.textContent = subParts.join(' · ')
       main.appendChild(title)
       main.appendChild(sub)
       main.appendChild(usageTokenChips(record))
-      main.appendChild(usageToolChips(record.tools))
 
       const right = document.createElement('div')
       right.className = 'record-right'
@@ -4037,11 +4012,12 @@
     const subParts = [formatTime(message.firstTs)]
     const rateText = formatCacheRate(message)
     if (rateText) subParts.push(rateText)
+    const toolText = usageToolLine(message.tools)
+    if (toolText) subParts.push(`工具 ${toolText}`)
     sub.textContent = subParts.join(' · ')
     main.appendChild(title)
     main.appendChild(sub)
     main.appendChild(usageTokenChips(message))
-    main.appendChild(usageToolChips(message.tools))
     const right = document.createElement('div')
     right.className = 'record-right'
     const tokens = document.createElement('div')
