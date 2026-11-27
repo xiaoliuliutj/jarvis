@@ -50,6 +50,7 @@
     usageAnchor: todayKey(),
     usageSummary: null,
     usageError: '',
+    usagePricing: null,
     usageDetailsOpen: false,
     usageMessageOpen: {},
     usageMessageCalls: {},
@@ -119,6 +120,13 @@
     usageDetailsToggle: $('usageDetailsToggle'),
     usageMessageCount: $('usageMessageCount'),
     usageMessages: $('usageMessages'),
+    usagePriceInput: $('usagePriceInput'),
+    usagePriceOutput: $('usagePriceOutput'),
+    usagePriceCacheRead: $('usagePriceCacheRead'),
+    usagePriceCacheWrite: $('usagePriceCacheWrite'),
+    usagePriceCurrency: $('usagePriceCurrency'),
+    usagePriceSave: $('usagePriceSave'),
+    usagePriceStatus: $('usagePriceStatus'),
     personaEntry: $('personaEntry'),
     personaSummary: $('personaSummary'),
     personaPreview: $('personaPreview'),
@@ -348,6 +356,15 @@
   }
   function formatTokenExact(n) {
     return Math.round(Number(n) || 0).toLocaleString('zh-CN')
+  }
+  function formatCost(value, currency = 'USD') {
+    const n = Number(value)
+    if (!Number.isFinite(n)) return '—'
+    const symbol = currency === 'CNY' ? '¥' : '$'
+    if (n === 0) return `${symbol}0`
+    if (n < 0.0001) return `${symbol}<0.0001`
+    if (n < 0.01) return `${symbol}${n.toFixed(4)}`
+    return `${symbol}${n.toFixed(3)}`
   }
   function formatDuration(ms) {
     const value = Number(ms) || 0
@@ -3572,6 +3589,8 @@
     renderUsage()
   })
 
+  el.usagePriceSave?.addEventListener('click', () => { saveUsagePricing() })
+
   function resetUsagePeriod() {
     state.usageSummary = null
     state.usageError = ''
@@ -3684,8 +3703,50 @@
     return row
   }
 
+  async function loadUsagePricing() {
+    if (!state.token) return
+    try {
+      const data = await api('/api/v1/usage/pricing')
+      applyUsagePricing(data.pricing)
+    } catch {}
+  }
+
+  function applyUsagePricing(pricing) {
+    state.usagePricing = pricing || null
+    const p = pricing || {}
+    if (el.usagePriceInput) el.usagePriceInput.value = p.input || ''
+    if (el.usagePriceOutput) el.usagePriceOutput.value = p.output || ''
+    if (el.usagePriceCacheRead) el.usagePriceCacheRead.value = p.cacheRead || ''
+    if (el.usagePriceCacheWrite) el.usagePriceCacheWrite.value = p.cacheWrite || ''
+    if (el.usagePriceCurrency) el.usagePriceCurrency.value = p.currency === 'CNY' ? 'CNY' : 'USD'
+    if (el.usagePriceStatus && !pricing) {
+      el.usagePriceStatus.textContent = '未配置价格，填入后显示估算费用'
+    }
+  }
+
+  async function saveUsagePricing() {
+    if (!state.token) return
+    const body = {
+      input: Number(el.usagePriceInput?.value) || 0,
+      output: Number(el.usagePriceOutput?.value) || 0,
+      cacheRead: Number(el.usagePriceCacheRead?.value) || 0,
+      cacheWrite: Number(el.usagePriceCacheWrite?.value) || 0,
+      currency: el.usagePriceCurrency?.value === 'CNY' ? 'CNY' : 'USD',
+    }
+    if (el.usagePriceStatus) el.usagePriceStatus.textContent = '保存中…'
+    try {
+      const data = await api('/api/v1/usage/pricing', { method: 'PUT', body })
+      applyUsagePricing(data.pricing)
+      if (el.usagePriceStatus) el.usagePriceStatus.textContent = '已保存'
+      await loadUsage()
+    } catch (err) {
+      if (el.usagePriceStatus) el.usagePriceStatus.textContent = `保存失败：${err.message}`
+    }
+  }
+
   async function loadUsage() {
     if (!state.token) return
+    loadUsagePricing().catch(() => {})
     if (!state.usageSummary) renderUsage()
     const { from, to } = usagePeriodRange(state.usageGranularity, state.usageAnchor)
     const query = new URLSearchParams({
@@ -3712,6 +3773,7 @@
   function renderUsage() {
     const s = state.usageSummary
     const data = s || {}
+    const pricing = data.pricing || state.usagePricing
     const { from, to } = usagePeriodRange(state.usageGranularity, state.usageAnchor)
     el.usagePeriodLabel.textContent = usagePeriodLabel(state.usageGranularity, from, to)
 
@@ -3724,6 +3786,7 @@
       ['输出 Token', s ? formatTokenExact(data.outputTokens) : '—'],
       ['缓存读 Token', s ? formatTokenExact(data.cacheReadTokens) : '—'],
       ['总 Token', s ? formatTokenExact(totalTokens) : '—'],
+      ['估算费用', s && pricing ? formatCost(data.estimatedCost, pricing.currency) : '—'],
     ]
     for (const [label, value] of cards) {
       const card = document.createElement('div')
@@ -3747,6 +3810,7 @@
       if (data.legacyTurns) parts.push(`历史部分按 ${formatTokenExact(data.legacyTurns)} 轮整轮汇总`)
       if (data.cacheWriteTokens) parts.push(`缓存写 ${formatTokens(data.cacheWriteTokens)}`)
       if (data.errors) parts.push(`失败 ${data.errors} 次`)
+      parts.push(pricing ? '费用按价格表估算' : '未配置价格')
       el.usageMeta.textContent = parts.join(' · ')
     } else {
       el.usageMeta.textContent = ''
@@ -3776,7 +3840,10 @@
         const nameEl = document.createElement('div')
         nameEl.className = 'bar-name'
         nameEl.textContent = item.name
-        nameEl.title = `${formatTokenExact(item.tokens)} tokens · ${item.calls || 0} 次/轮`
+        const costText = pricing && item.estimatedCost != null
+          ? ` · ≈ ${formatCost(item.estimatedCost, pricing.currency)}`
+          : ''
+        nameEl.title = `${formatTokenExact(item.tokens)} tokens · ${item.calls || 0} 次/轮${costText}`
         const track = document.createElement('div')
         track.className = 'bar-track'
         const fill = document.createElement('div')
@@ -3806,6 +3873,7 @@
 
   function renderUsageMessages() {
     const data = state.usageSummary
+    const pricing = data?.pricing || state.usagePricing
     el.usageMessages.textContent = ''
     if (!state.usageDetailsOpen) return
     if (!data) {
@@ -3866,6 +3934,12 @@
       breakdown.textContent = breakdownParts.join(' · ')
       right.appendChild(total)
       right.appendChild(breakdown)
+      if (pricing && message.estimatedCost != null) {
+        const cost = document.createElement('div')
+        cost.className = 'usage-message-cost'
+        cost.textContent = `≈ ${formatCost(message.estimatedCost, pricing.currency)}`
+        right.appendChild(cost)
+      }
 
       const chevron = document.createElement('span')
       chevron.className = 'usage-message-chevron'
@@ -3903,6 +3977,7 @@
   }
 
   function renderUsageCalls(target, records) {
+    const pricing = state.usageSummary?.pricing || state.usagePricing
     target.textContent = ''
     const heading = document.createElement('div')
     heading.className = 'usage-call-heading'
@@ -3935,6 +4010,12 @@
       status.className = record.status === 'error' ? 'record-error' : 'record-ok'
       status.textContent = record.status === 'error' ? '失败' : '成功'
       right.appendChild(tokens)
+      if (pricing && record.estimatedCost != null) {
+        const cost = document.createElement('div')
+        cost.className = 'record-cost'
+        cost.textContent = `≈ ${formatCost(record.estimatedCost, pricing.currency)}`
+        right.appendChild(cost)
+      }
       right.appendChild(status)
       item.appendChild(main)
       item.appendChild(right)
@@ -3943,6 +4024,7 @@
   }
 
   function renderUsageTurnSummary(target, message) {
+    const pricing = state.usageSummary?.pricing || state.usagePricing
     target.textContent = ''
     const item = document.createElement('div')
     item.className = 'record-item usage-call-item'
@@ -3966,6 +4048,12 @@
     status.className = message.status === 'error' ? 'record-error' : 'record-ok'
     status.textContent = message.status === 'error' ? '失败' : '成功'
     right.appendChild(tokens)
+    if (pricing && message.estimatedCost != null) {
+      const cost = document.createElement('div')
+      cost.className = 'record-cost'
+      cost.textContent = `≈ ${formatCost(message.estimatedCost, pricing.currency)}`
+      right.appendChild(cost)
+    }
     right.appendChild(status)
     item.appendChild(main)
     item.appendChild(right)

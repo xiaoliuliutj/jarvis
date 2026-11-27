@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=82" />
+  <link rel="stylesheet" href="/style.css?v=83" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -99,6 +99,26 @@
         <div id="usagePeriodLabel" class="usage-period-label"></div>
         <div id="usageCards" class="stat-grid"></div>
         <div id="usageMeta" class="usage-meta"></div>
+
+        <details id="usagePricingPanel" class="usage-pricing">
+          <summary>价格设置（每 1M token）</summary>
+          <div class="usage-pricing-grid">
+            <label>输入 <input id="usagePriceInput" type="number" min="0" step="0.001" inputmode="decimal" /></label>
+            <label>输出 <input id="usagePriceOutput" type="number" min="0" step="0.001" inputmode="decimal" /></label>
+            <label>缓存读 <input id="usagePriceCacheRead" type="number" min="0" step="0.001" inputmode="decimal" /></label>
+            <label>缓存写 <input id="usagePriceCacheWrite" type="number" min="0" step="0.001" inputmode="decimal" /></label>
+            <label>货币
+              <select id="usagePriceCurrency">
+                <option value="USD">USD</option>
+                <option value="CNY">CNY</option>
+              </select>
+            </label>
+            <button id="usagePriceSave" class="ghost-btn compact" type="button">保存价格</button>
+            <span id="usagePriceStatus" class="usage-price-status"></span>
+          </div>
+          <div class="usage-pricing-hint">单价按每 1M token 填；不填按 0 计。费用只是估算，以实际账单为准。</div>
+        </details>
+
         <div class="section-title">按模型</div>
         <div id="usageChart" class="usage-chart"></div>
         <div class="section-title usage-details-head">
@@ -425,6 +445,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=92"></script>
+  <script src="/app.js?v=93"></script>
 </body>
 </html>

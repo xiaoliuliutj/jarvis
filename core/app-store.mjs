@@ -449,6 +449,55 @@ function usageFile(principalId, month = monthKey()) {
   return path.join(usageDir(principalId), `${normalizeMonth(month)}.jsonl`)
 }
 
+// ── 用量价格（每 1M token） ──────────────────────────────────────────────────
+// 价格由用户自己填，不做供应商假设；没有配置文件时返回 null，前端显示「未配置价格」。
+function usagePricingFile(principalId) {
+  return appFile(principalId, 'pricing.json')
+}
+
+function normalizePrice(value) {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+export function readUsagePricing(principalId) {
+  const data = readJson(usagePricingFile(principalId), null)
+  if (!data || typeof data !== 'object') return null
+  return {
+    currency: String(data.currency || 'USD').toUpperCase() === 'CNY' ? 'CNY' : 'USD',
+    unit: 1000000,
+    input: normalizePrice(data.input),
+    output: normalizePrice(data.output),
+    cacheRead: normalizePrice(data.cacheRead),
+    cacheWrite: normalizePrice(data.cacheWrite),
+    updatedAt: data.updatedAt || null,
+  }
+}
+
+export function writeUsagePricing(principalId, data = {}) {
+  const pricing = {
+    currency: String(data.currency || 'USD').toUpperCase() === 'CNY' ? 'CNY' : 'USD',
+    unit: 1000000,
+    input: normalizePrice(data.input),
+    output: normalizePrice(data.output),
+    cacheRead: normalizePrice(data.cacheRead),
+    cacheWrite: normalizePrice(data.cacheWrite),
+    updatedAt: nowIso(),
+  }
+  writeJson(usagePricingFile(principalId), pricing)
+  return pricing
+}
+
+export function usageCost(record, pricing) {
+  if (!pricing || typeof pricing !== 'object') return null
+  const unit = Number(pricing.unit) || 1000000
+  const cost = (Number(record?.inputTokens) || 0) * (Number(pricing.input) || 0)
+    + (Number(record?.outputTokens) || 0) * (Number(pricing.output) || 0)
+    + (Number(record?.cacheReadTokens) || 0) * (Number(pricing.cacheRead) || 0)
+    + (Number(record?.cacheWriteTokens) || 0) * (Number(pricing.cacheWrite) || 0)
+  return cost / unit
+}
+
 function readUsageRows(file) {
   if (!fs.existsSync(file)) return []
   return fs.readFileSync(file, 'utf-8')
@@ -533,7 +582,7 @@ function readUsageRowsInRange(principalId, { from, to }) {
   return rows
 }
 
-export function listUsageByTurn(principalId, turnId) {
+export function listUsageByTurn(principalId, turnId, pricing = null) {
   if (!turnId) return []
   const dir = usageDir(principalId)
   if (!fs.existsSync(dir)) return []
@@ -548,10 +597,12 @@ export function listUsageByTurn(principalId, turnId) {
     }
   }
   rows.sort((a, b) => (Date.parse(a.ts) || 0) - (Date.parse(b.ts) || 0))
-  return rows
+  return rows.map(row => (
+    pricing ? { ...row, estimatedCost: usageCost(row, pricing) } : row
+  ))
 }
 
-function summarizeRows(rows, { from = null, to = null, messageLimit = 200 } = {}) {
+function summarizeRows(rows, { from = null, to = null, messageLimit = 200, pricing = null } = {}) {
   // 旧中间版本写出的逐次记录没有 turnId，无法归到具体对话轮，且是重复计费；
   // 读取时直接忽略，只保留有 turnId 的新逐次记录和旧整轮汇总。
   const validRows = rows.filter(row => !(row.level === 'call' && !row.turnId))
@@ -571,6 +622,8 @@ function summarizeRows(rows, { from = null, to = null, messageLimit = 200 } = {}
     errors: 0,
     activeDays: 0,
     avgLatencyMs: 0,
+    estimatedCost: 0,
+    pricing: pricing || null,
     byModel: {},
     byCapability: {},
     bySource: {},
@@ -588,6 +641,8 @@ function summarizeRows(rows, { from = null, to = null, messageLimit = 200 } = {}
     summary.outputTokens += row.outputTokens || 0
     summary.cacheReadTokens += row.cacheReadTokens || 0
     summary.cacheWriteTokens += row.cacheWriteTokens || 0
+    const rowCost = pricing ? usageCost(row, pricing) : null
+    if (rowCost != null) summary.estimatedCost += rowCost
     if (row.status === 'error') summary.errors += 1
     if (row.ts) {
       const date = new Date(row.ts)
@@ -602,6 +657,7 @@ function summarizeRows(rows, { from = null, to = null, messageLimit = 200 } = {}
       summary.byModel[modelKey] = {
         calls: 0,
         inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
+        estimatedCost: 0,
       }
     }
     const model = summary.byModel[modelKey]
@@ -610,16 +666,20 @@ function summarizeRows(rows, { from = null, to = null, messageLimit = 200 } = {}
     model.outputTokens += row.outputTokens || 0
     model.cacheReadTokens += row.cacheReadTokens || 0
     model.cacheWriteTokens += row.cacheWriteTokens || 0
+    model.estimatedCost += rowCost || 0
 
     const cap = row.capability || 'chat'
     if (!summary.byCapability[cap]) summary.byCapability[cap] = { calls: 0 }
     summary.byCapability[cap].calls += units
 
     const source = row.source || 'chat'
-    if (!summary.bySource[source]) summary.bySource[source] = { calls: 0, inputTokens: 0, outputTokens: 0 }
+    if (!summary.bySource[source]) {
+      summary.bySource[source] = { calls: 0, inputTokens: 0, outputTokens: 0, estimatedCost: 0 }
+    }
     summary.bySource[source].calls += units
     summary.bySource[source].inputTokens += row.inputTokens || 0
     summary.bySource[source].outputTokens += row.outputTokens || 0
+    summary.bySource[source].estimatedCost += rowCost || 0
 
     const sid = row.sessionId || 'unknown'
     if (!summary.bySession[sid]) {
@@ -632,6 +692,7 @@ function summarizeRows(rows, { from = null, to = null, messageLimit = 200 } = {}
         outputTokens: 0,
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
+        estimatedCost: 0,
         firstTs: null,
         lastTs: null,
       }
@@ -647,6 +708,7 @@ function summarizeRows(rows, { from = null, to = null, messageLimit = 200 } = {}
     sess.outputTokens += row.outputTokens || 0
     sess.cacheReadTokens += row.cacheReadTokens || 0
     sess.cacheWriteTokens += row.cacheWriteTokens || 0
+    sess.estimatedCost += rowCost || 0
     if (row.ts) {
       if (!sess.firstTs || row.ts < sess.firstTs) sess.firstTs = row.ts
       if (!sess.lastTs || row.ts > sess.lastTs) sess.lastTs = row.ts
@@ -665,6 +727,7 @@ function summarizeRows(rows, { from = null, to = null, messageLimit = 200 } = {}
         outputTokens: 0,
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
+        estimatedCost: 0,
         firstTs: row.ts || null,
         lastTs: row.ts || null,
         models: [],
@@ -685,6 +748,7 @@ function summarizeRows(rows, { from = null, to = null, messageLimit = 200 } = {}
     message.outputTokens += row.outputTokens || 0
     message.cacheReadTokens += row.cacheReadTokens || 0
     message.cacheWriteTokens += row.cacheWriteTokens || 0
+    message.estimatedCost += rowCost || 0
     if (row.ts) {
       if (!message.firstTs || row.ts < message.firstTs) message.firstTs = row.ts
       if (!message.lastTs || row.ts > message.lastTs) message.lastTs = row.ts
@@ -724,7 +788,7 @@ function summarizeRows(rows, { from = null, to = null, messageLimit = 200 } = {}
   return summary
 }
 
-export function usageSummaryRange(principalId, { from, to, messageLimit = 200 } = {}) {
+export function usageSummaryRange(principalId, { from, to, messageLimit = 200, pricing = null } = {}) {
   const now = new Date()
   const fallback = monthBounds(monthKey(now))
   let fromDate = from instanceof Date ? from : new Date(from)
@@ -736,7 +800,8 @@ export function usageSummaryRange(principalId, { from, to, messageLimit = 200 } 
     toDate = fallback.to
   }
   const rows = readUsageRowsInRange(principalId, { from: fromDate, to: toDate })
-  return summarizeRows(rows, { from: fromDate, to: toDate, messageLimit })
+  const rate = pricing || readUsagePricing(principalId)
+  return summarizeRows(rows, { from: fromDate, to: toDate, messageLimit, pricing: rate })
 }
 
 export function usageSummary(principalId, { month = monthKey() } = {}) {

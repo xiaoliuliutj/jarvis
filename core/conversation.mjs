@@ -15,6 +15,7 @@
 import { getPrincipal } from './principals.mjs'
 import * as store from './user-store.mjs'
 import { buildSystemPrompt, buildTimeLine } from './prompt.mjs'
+import { prepareMood } from './mood.mjs'
 import { buildCanUseTool } from './permissions.mjs'
 import { buildMcpServers, getToolProfileSettings } from './tools.mjs'
 import {
@@ -333,7 +334,15 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
       && (Date.now() - (Date.parse(lastCronResult.at) || 0)) < 2 * 60 * 60 * 1000
       ? `【最近的定时任务结果（供你接话用，不要主动重复）】\n${lastCronResult.text.slice(0, 800)}\n\n`
       : ''
-    const agentPrompt = `${handoffBlock}${buildTimeLine()}${recentCronBlock}${cronPromptLabel}${prompt}`
+    // 心情由代码兜底更新；只拼在尾部，system prompt 保持不变。
+    let moodLine = ''
+    try {
+      moodLine = prepareMood(principalId, {
+        text: String(displayText ?? prompt ?? ''),
+        isChat: !isCron,
+      }).line
+    } catch {}
+    const agentPrompt = `${handoffBlock}${buildTimeLine()}${moodLine}${recentCronBlock}${cronPromptLabel}${prompt}`
 
     const runOnce = async () => {
       result = null
