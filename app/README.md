@@ -32,7 +32,7 @@ ConversationService / 工具链 / 记忆 / 工作区
 
 ## 启用步骤
 
-1. 确认 `config/bridge.json` 中 `adapters.app.enabled = true`（默认已加好）：
+1. 确认 `config/bridge.json` 中 `adapters.app.enabled = true`（**示例模板默认是 `false`，复制后要手动改成 `true`**，否则 17779 端口不监听、手机端会白屏）：
    ```json
    "app": { "enabled": true, "accounts": ["default"], "port": 17779, "host": "0.0.0.0" }
    ```
@@ -59,7 +59,7 @@ ConversationService / 工具链 / 记忆 / 工作区
 | GET | `/api/file/:id` | 下载 Jarvis 发来的文件（暂存 7 天 / 最多 100 个） |
 | WS | `/ws?token=&device=` | 接收 `assistant` / `file` / `hello` 事件 |
 
-提醒投递：cron / 日程提醒当前以微信优先，发送失败或不可用时回退到 App（见 `core/delivery.mjs`）。
+提醒投递：cron / 日程提醒优先发到已注册的 App 设备（手机离线时先排队、重连后补发）；App 投递异常时回退微信等账号（见 `bridge/server.mjs` 的 `sendToPrincipal` 与 `core/delivery.mjs`）。
 
 限制：单条消息 20000 字；单附件 8MB、最多 3 个；每设备 30 条/分钟；WS 离线时内存队列保留最近 50 条。
 

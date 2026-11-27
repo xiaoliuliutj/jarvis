@@ -12,7 +12,7 @@
 - **多用户隔离**：每个用户独立的人设、会话、长期记忆、工作区、定时任务、日程和文件
 - **工具系统**：内置系统工具、用户自定义工具（`_meta` 创建、所有用户可用）、外接工具（安卓原生能力、第三方 MCP/HTTP）
 - **安卓原生能力**：系统通知、闹钟静默创建/自动确认、定位、短信只读
-- **日程与提醒**：日程提醒、定时任务（cron），支持按空闲时长触发的主动关心；提醒优先微信、失败回退 App
+- **日程与提醒**：日程提醒、定时任务（cron），支持按空闲时长触发的主动关心；提醒优先投递到 App（离线时排队、重连补发），App 不可用时回退微信
 - **用量统计**：按轮/按次记录 token 用量，展示缓存读利用率，并按用户自填价格表估算费用
 - **心情与人设**：`core/mood.mjs` 心情刻度、睡觉/打断结算；人设 Markdown 完全可改
 - **文件收发**：收件箱自动解析 txt/md/docx/pdf/xlsx，发件箱自动发送；截图 7 天、收发归档 30 天清理
@@ -43,6 +43,18 @@ Electron（PC，React + Vite）
 npm install
 npm run dev
 ```
+
+首次运行前要先初始化配置（仓库只保留 `*.example.*` 模板，缺少实际配置时 Bridge 会直接退出，手机端表现为白屏）：
+
+```powershell
+Copy-Item config/bridge.example.json config/bridge.json
+Copy-Item config/agent.example.json config/agent.json
+Copy-Item config/credentials.example.json config/credentials.json
+Copy-Item config/principals.example.json config/principals.json
+Copy-Item config/rules.example.md config/rules.md
+```
+
+然后按「配置」一节填写模型 Key；要用手机 App / 手机浏览器，还要把 `config/bridge.json` 里的 `adapters.app.enabled` 改成 `true`（示例模板默认是 `false`，不改 17779 端口不会监听）。
 
 开发模式请用 `npm run dev`。如果直接运行 `npm start` 或 `electron .`，Vite 没启动时 Electron 会回退加载 `dist/index.html`；`npm start` 会先构建 dist。
 
@@ -145,7 +157,7 @@ node bridge/adapters/weixin.mjs invite family_xiaoming
 通过聊天里的 `schedule__add / list / update / delete` 管理自己的日程，`remindBeforeMinutes` 选择提前多久提醒。
 
 - 日程只属于设置者，其他用户不可见
-- 提醒优先投递到微信，App 作为兜底通道
+- 提醒优先投递到 App（离线时排队、重连补发）；App 投递异常时回退微信等渠道
 
 ## 重启
 
