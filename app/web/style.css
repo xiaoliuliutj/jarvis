@@ -953,7 +953,6 @@ body.viewer-open { overflow: hidden; }
   overflow: hidden;
 }
 .usage-message-sub { font-size: 11px; color: var(--muted); margin-top: 3px; }
-.usage-message-cost { font-size: 11px; color: var(--amber); margin-top: 2px; font-weight: 600; }
 .usage-pricing {
   margin: 4px 0 14px;
   border: 1px solid var(--line);

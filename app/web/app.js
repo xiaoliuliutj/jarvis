@@ -3648,13 +3648,6 @@
     return [...counts.entries()].map(([name, count]) => ({ name, count }))
   }
 
-  function usageToolSummary(tools) {
-    const list = usageToolList(tools)
-    if (!list.length) return ''
-    const names = list.slice(0, 3).map(item => usageToolLabel(item.name)).join('、')
-    return list.length > 3 ? `${names} 等 ${list.length} 个` : names
-  }
-
   function usageTokenChips(record) {
     const row = document.createElement('div')
     row.className = 'usage-token-row'
@@ -3873,7 +3866,6 @@
 
   function renderUsageMessages() {
     const data = state.usageSummary
-    const pricing = data?.pricing || state.usagePricing
     el.usageMessages.textContent = ''
     if (!state.usageDetailsOpen) return
     if (!data) {
@@ -3905,15 +3897,8 @@
       const sub = document.createElement('div')
       sub.className = 'usage-message-sub'
       const parts = [formatTime(message.firstTs)]
-      if (message.sessionName) parts.push(message.sessionName)
       if (message.calls) parts.push(`${formatTokenExact(message.calls)} 次 LLM 调用`)
       else parts.push(`${formatTokenExact(message.legacyTurns || message.turnRecords)} 轮整轮汇总`)
-      if (message.models?.length === 1) parts.push(message.models[0])
-      else if (message.models?.length > 1) parts.push(`${message.models.length} 个模型`)
-      if (message.tools?.length) {
-        const toolSummary = usageToolSummary(message.tools)
-        if (toolSummary) parts.push(`工具 ${toolSummary}`)
-      }
       sub.textContent = parts.join(' · ')
       main.appendChild(preview)
       main.appendChild(sub)
@@ -3923,23 +3908,7 @@
       const total = document.createElement('div')
       total.className = 'usage-message-total'
       total.textContent = `${formatTokenExact(message.totalTokens || 0)} tok`
-      const breakdown = document.createElement('div')
-      breakdown.className = 'usage-message-sub'
-      const breakdownParts = [
-        `入 ${formatTokens(message.inputTokens)}`,
-        `出 ${formatTokens(message.outputTokens)}`,
-      ]
-      const cache = (message.cacheReadTokens || 0) + (message.cacheWriteTokens || 0)
-      if (cache) breakdownParts.push(`缓存 ${formatTokens(cache)}`)
-      breakdown.textContent = breakdownParts.join(' · ')
       right.appendChild(total)
-      right.appendChild(breakdown)
-      if (pricing && message.estimatedCost != null) {
-        const cost = document.createElement('div')
-        cost.className = 'usage-message-cost'
-        cost.textContent = `≈ ${formatCost(message.estimatedCost, pricing.currency)}`
-        right.appendChild(cost)
-      }
 
       const chevron = document.createElement('span')
       chevron.className = 'usage-message-chevron'
