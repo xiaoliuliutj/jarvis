@@ -60,6 +60,7 @@
     approvals: new Map(),
     activeApprovalId: '',
     approvalBusy: false,
+    refreshing: false,
   }
 
   const el = {
@@ -85,6 +86,7 @@
     chatScrollbar: $('chatScrollbar'),
     chatScrollbarThumb: $('chatScrollbarThumb'),
     scrollBottomBtn: $('scrollBottomBtn'),
+    refreshChatBtn: $('refreshChatBtn'),
     olderLoading: $('olderLoading'),
     olderLoadingText: $('olderLoadingText'),
     input: $('input'),
@@ -2987,6 +2989,30 @@
     updateChatScrollbar()
     if (el.messages.scrollTop < 32) loadOlder().catch(() => {})
   })
+
+  async function refreshChatNow() {
+    if (state.refreshing) return
+    state.refreshing = true
+    if (el.refreshChatBtn) el.refreshChatBtn.classList.add('spinning')
+    try {
+      // WS 不在线时顺手重连一次，避免只刷新了数据却收不到新消息
+      if (state.token && !state.ws && !state.authFailed) {
+        try { connect() } catch {}
+      }
+      await loadSession()
+      await flushOutbox()
+      toast('会话已刷新')
+    } catch (err) {
+      toast(`刷新失败：${err.message}`)
+    } finally {
+      state.refreshing = false
+      if (el.refreshChatBtn) el.refreshChatBtn.classList.remove('spinning')
+    }
+  }
+
+  if (el.refreshChatBtn) {
+    el.refreshChatBtn.addEventListener('click', () => { refreshChatNow() })
+  }
 
   if (el.scrollBottomBtn) {
     el.scrollBottomBtn.addEventListener('click', () => {
