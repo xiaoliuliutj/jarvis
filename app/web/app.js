@@ -3615,6 +3615,19 @@
     target.appendChild(empty)
   }
 
+  // 缓存读利用率 = 缓存命中 token / 全部输入 token（含命中、未命中与缓存写）
+  function usageCacheRate(record) {
+    const read = Number(record?.cacheReadTokens) || 0
+    const totalInput = (Number(record?.inputTokens) || 0) + read + (Number(record?.cacheWriteTokens) || 0)
+    if (!totalInput) return null
+    return read / totalInput * 100
+  }
+
+  function formatCacheRate(record, prefix = '缓存读') {
+    const rate = usageCacheRate(record)
+    return rate == null ? '' : `${prefix} ${rate.toFixed(1)}%`
+  }
+
   function usageTokenTotal(record) {
     return (record.inputTokens || 0)
       + (record.outputTokens || 0)
@@ -3866,6 +3879,7 @@
 
   function renderUsageMessages() {
     const data = state.usageSummary
+    const pricing = data?.pricing || state.usagePricing
     el.usageMessages.textContent = ''
     if (!state.usageDetailsOpen) return
     if (!data) {
@@ -3909,6 +3923,19 @@
       total.className = 'usage-message-total'
       total.textContent = `${formatTokenExact(message.totalTokens || 0)} tok`
       right.appendChild(total)
+      const rateText = formatCacheRate(message)
+      if (rateText) {
+        const rate = document.createElement('div')
+        rate.className = 'usage-message-sub'
+        rate.textContent = rateText
+        right.appendChild(rate)
+      }
+      if (pricing && message.estimatedCost != null) {
+        const cost = document.createElement('div')
+        cost.className = 'usage-message-cost'
+        cost.textContent = `≈ ${formatCost(message.estimatedCost, pricing.currency)}`
+        right.appendChild(cost)
+      }
 
       const chevron = document.createElement('span')
       chevron.className = 'usage-message-chevron'
@@ -3965,7 +3992,10 @@
       title.textContent = titleParts.join(' · ')
       const sub = document.createElement('div')
       sub.className = 'record-sub'
-      sub.textContent = formatTime(record.ts)
+      const subParts = [formatTime(record.ts)]
+      const rateText = formatCacheRate(record)
+      if (rateText) subParts.push(rateText)
+      sub.textContent = subParts.join(' · ')
       main.appendChild(title)
       main.appendChild(sub)
       main.appendChild(usageTokenChips(record))
@@ -4004,7 +4034,10 @@
     title.textContent = `整轮汇总 · ${message.legacyTurns || message.turnRecords || 0} 轮`
     const sub = document.createElement('div')
     sub.className = 'record-sub'
-    sub.textContent = formatTime(message.firstTs)
+    const subParts = [formatTime(message.firstTs)]
+    const rateText = formatCacheRate(message)
+    if (rateText) subParts.push(rateText)
+    sub.textContent = subParts.join(' · ')
     main.appendChild(title)
     main.appendChild(sub)
     main.appendChild(usageTokenChips(message))
