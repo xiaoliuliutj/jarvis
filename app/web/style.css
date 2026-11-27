@@ -52,6 +52,17 @@ body { overflow: hidden; }
 .topbar-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .brand { display: flex; align-items: center; gap: 5px; min-width: 0; }
 .title { font-weight: 600; font-size: 15px; line-height: 1.2; letter-spacing: 0.5px; }
+.mood-badge {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: #d8e3dd;
+  border: 1px solid #3d6254;
+  border-radius: 999px;
+  padding: 0 7px;
+  white-space: nowrap;
+  cursor: default;
+}
 .top-right { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .chip {
   font-size: 9.5px;
@@ -1244,6 +1255,23 @@ body.viewer-open { overflow: hidden; }
 .modal-head h2 { margin: 0; font-size: 17px; }
 .icon-close { border: none; background: none; font-size: 24px; line-height: 1; color: var(--muted); cursor: pointer; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+/* 管理员授权卡片 */
+.approval-card { max-width: 460px; }
+.approval-summary { margin: 0 0 10px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
+.approval-command {
+  margin: 0 0 4px;
+  max-height: 180px;
+  overflow: auto;
+  padding: 10px 12px;
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 .tool-detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .tool-detail-icon { width: 46px; height: 46px; border-radius: 12px; background: #f1eee4; display: flex; align-items: center; justify-content: center; font-size: 24px; }
 .tool-detail-desc { color: var(--muted); font-size: 12.5px; line-height: 1.55; margin: 8px 0; }

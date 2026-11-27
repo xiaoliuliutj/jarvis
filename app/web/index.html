@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#123b2f" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.png" />
-  <link rel="stylesheet" href="/style.css?v=80" />
+  <link rel="stylesheet" href="/style.css?v=81" />
   <title>Jarvis</title>
 </head>
 <body>
@@ -15,10 +15,11 @@
       <div class="topbar-row">
         <div class="brand">
           <span class="dot" id="statusDot" title="连接中…"></span>
-          <span class="title">Jarvis</span>
-          <button id="personaEntry" class="persona-entry" type="button" title="AI 人设与运行状态">⚙ AI 人设</button>
+          <span class="title" id="assistantName">Jarvis</span>
+          <span id="moodBadge" class="mood-badge hidden" title="当前心情"></span>
         </div>
         <div class="top-right">
+          <button id="personaEntry" class="persona-entry" type="button" title="AI 人设与运行状态">⚙ AI 人设</button>
           <span id="ownerChip" class="chip owner hidden" title="Owner 权限已启用">Owner</span>
         </div>
       </div>
@@ -123,6 +124,14 @@
                 <span id="settingsNickname">—</span>
                 <input id="nicknameInput" class="inline-input hidden" maxlength="64" placeholder="新昵称" />
                 <button id="editNickname" class="pencil-btn" aria-label="修改昵称" title="修改昵称">✎</button>
+              </span>
+            </div>
+            <div class="settings-row">
+              <span>助手名字</span>
+              <span class="settings-value-edit">
+                <span id="settingsAssistantName">Jarvis</span>
+                <input id="assistantNameInput" class="inline-input hidden" maxlength="20" placeholder="助手名字" />
+                <button id="editAssistantName" class="pencil-btn" aria-label="修改助手名字" title="修改助手名字">✎</button>
               </span>
             </div>
             <div class="settings-row"><span>账号</span><span id="settingsAccount">—</span></div>
@@ -400,6 +409,21 @@
     </div>
   </div>
 
-  <script src="/app.js?v=80"></script>
+  <div id="approvalModal" class="modal hidden">
+    <div class="modal-card approval-card">
+      <div class="modal-head">
+        <h2>🔐 管理员授权请求</h2>
+      </div>
+      <p class="approval-summary" id="approvalSummary"></p>
+      <pre class="approval-command" id="approvalCommand"></pre>
+      <p class="hint" id="approvalHint">点「允许」将以管理员权限在你的电脑上执行这条命令；长时间未处理会自动取消。</p>
+      <div class="modal-actions">
+        <button id="approvalDeny" class="ghost-btn">拒绝</button>
+        <button id="approvalAllow" class="primary-btn">允许</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=90"></script>
 </body>
 </html>

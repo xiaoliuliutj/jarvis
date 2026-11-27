@@ -35,6 +35,7 @@ import { handleIncomingOnboarding } from '../core/onboarding.mjs'
 import { loadAdapters } from '../core/adapters.mjs'
 import { sanitizeOutgoingText } from '../core/text-filter.mjs'
 import { readOwnerToken, verifyOwnerToken } from '../core/owner-token.mjs'
+import { createApproval, waitForDecision } from '../core/admin-approvals.mjs'
 import { ensureFileDirs, prepareInbound, listOutboxFiles, takeOutboxBatch, markOutboxSent, isImageFile } from '../core/files.mjs'
 import { logInfo, logWarn, logError } from '../core/logger.mjs'
 
@@ -689,6 +690,43 @@ app.post('/restart-all', (req, res) => {
   }
   res.json({ ok: true, message: 'Bridge 将在当前回合结束后重启；Electron 将按原重启队列执行' })
   scheduleBridgeRestart(700)
+})
+
+// 内部：本地工具 -> 向手机推送管理员授权请求，并等待主人远程允许/拒绝。
+// Bridge HTTP 只绑定 127.0.0.1，本接口仅供本机工具进程使用。
+app.post('/admin-approval', async (req, res) => {
+  const { principalId, summary, command, timeoutSec } = req.body || {}
+  if (!summary || !command) {
+    return res.status(400).json({ ok: false, error: 'summary 和 command 必填' })
+  }
+  // 主会话（pc-main）的授权请求投递给 owner 用户（优先有 App 设备的）
+  let target = null
+  if (principalId && principalId !== PC_MAIN_ID) target = getPrincipal(principalId)
+  if (!target) {
+    const owners = listPrincipals().filter(p => p.role === 'owner')
+    target = owners.find(p => {
+      try { return listDevices(p.id).length > 0 } catch { return false }
+    }) || owners[0] || null
+  }
+  if (!target) {
+    return res.status(400).json({ ok: false, error: '找不到可接收授权请求的用户' })
+  }
+
+  const approval = createApproval({ principalId: target.id, summary, command, timeoutSec })
+  let delivered = false
+  try {
+    delivered = adapters.app?.pushApprovalRequest?.(target.id, approval) || false
+  } catch (err) {
+    logWarn('approval.push.fail', err.message, { principalId: target.id })
+  }
+  if (!delivered) {
+    // 手机不在线：不空等，直接告诉工具改走别的路
+    return res.json({ ok: true, decision: 'phone_offline', delivered: false, approvalId: approval.id })
+  }
+  const waitMs = Math.min(Math.max(Number(timeoutSec) || 300, 30), 1800) * 1000
+  const decision = await waitForDecision(approval.id, waitMs)
+  logInfo('approval.result', '', { principalId: target.id, approvalId: approval.id, decision })
+  res.json({ ok: true, decision, delivered: true, approvalId: approval.id })
 })
 
 // 内部：MCP 工具进程 -> Bridge -> App 原生执行通道。

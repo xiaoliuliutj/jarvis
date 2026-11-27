@@ -40,6 +40,7 @@ import { listCatalog, getTool as getCatalogTool } from '../../core/tool-catalog.
 import { resolveAnthropicCredentials } from '../../core/config.mjs'
 import { isSilentText } from '../../core/text-filter.mjs'
 import { verifyOwnerToken } from '../../core/owner-token.mjs'
+import { listPendingApprovals, decideApproval } from '../../core/admin-approvals.mjs'
 
 export const id = 'app'
 
@@ -228,6 +229,32 @@ function pushToTarget(target, payload, principalId = '') {
   queue.push(payload)
   while (queue.length > QUEUE_LIMIT) queue.shift()
   pending.set(queueKey, queue)
+}
+
+/**
+ * 向某用户的手机推送「管理员授权请求」。
+ * 广播到该用户所有在线连接（多连接无妨，客户端按 approval.id 去重）；
+ * 同时发一条 notice，让手机通知服务弹出系统通知。返回是否有连接收到。
+ */
+export function pushApprovalRequest(principalId, approval) {
+  const pset = principalClients.get(String(principalId || ''))
+  if (!pset || !pset.size) return false
+  const summary = String(approval?.summary || '').slice(0, 120)
+  const payloads = [
+    { type: 'approval_request', approval },
+    { type: 'notice', text: `🔐 Jarvis 请求管理员权限：${summary}` },
+  ]
+  let delivered = false
+  for (const ws of pset) {
+    if (ws.readyState !== 1) continue
+    for (const payload of payloads) {
+      try { ws.send(JSON.stringify(payload)); delivered = true } catch {}
+    }
+  }
+  if (delivered) {
+    logInfo('app.approval.request', '', { principalId: principalId || null, approvalId: approval?.id })
+  }
+  return delivered
 }
 
 /** 找到该 principal 最新的指定类型连接：优先原生服务，再网页。 */
@@ -996,11 +1023,31 @@ function buildServer() {
     const { principal } = appPrincipalFor(req)
     const body = req.body || {}
     const patch = {}
-    for (const key of ['displayName', 'testMode', 'notifications', 'appearance']) {
+    for (const key of ['displayName', 'testMode', 'notifications', 'appearance', 'assistantName']) {
       if (body[key] !== undefined) patch[key] = body[key]
+    }
+    if (patch.assistantName !== undefined) {
+      patch.assistantName = String(patch.assistantName || '').trim().slice(0, 20)
     }
     const settings = appStore.updateSettings(principal.id, patch)
     res.json({ ok: true, settings })
+  })
+
+  // ── 心情：读取当前用户 workspace/mood.json（前端顶栏展示） ─────────────────
+  app.get('/api/v1/mood', auth, (req, res) => {
+    const { principal } = appPrincipalFor(req)
+    try {
+      const file = path.join(ROOT, 'userdata', principal.id, 'workspace', 'mood.json')
+      const data = JSON.parse(fs.readFileSync(file, 'utf-8'))
+      res.json({
+        ok: true,
+        mood: Number(data.mood) || 0,
+        state: String(data.state || ''),
+        updatedAt: data.updatedAt || '',
+      })
+    } catch {
+      res.json({ ok: true, mood: 0, state: '平静' })
+    }
   })
 
   app.get('/api/v1/settings/models', auth, (req, res) => {
@@ -1145,6 +1192,21 @@ function buildServer() {
   app.delete('/api/v1/devices/:clientId', auth, (req, res) => {
     const { principal } = appPrincipalFor(req)
     res.json({ ok: appStore.removeDevice(principal.id, req.params.clientId) })
+  })
+
+  // ── 管理员授权（远程审批：手机允许/拒绝） ────────────────────────────────
+  app.get('/api/v1/admin/approvals', auth, (req, res) => {
+    const { principal } = appPrincipalFor(req)
+    res.json({ ok: true, approvals: listPendingApprovals(principal.id) })
+  })
+
+  app.post('/api/v1/admin/approvals/:id/decide', auth, (req, res) => {
+    const { principal } = appPrincipalFor(req)
+    const decision = req.body?.decision === 'allow' ? 'allow' : 'deny'
+    const ok = decideApproval(req.params.id, principal.id, decision)
+    if (!ok) return res.status(404).json({ ok: false, error: '请求不存在或已过期' })
+    logInfo('app.approval.decide', '', { principalId: principal.id, approvalId: req.params.id, decision })
+    res.json({ ok: true, decision })
   })
 
   app.use(express.static(APP_WEB_DIR, {

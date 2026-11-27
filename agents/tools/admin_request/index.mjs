@@ -1,10 +1,11 @@
 /**
- * admin_request —— 管理员权限授权弹窗工具（仅 owner/main）
+ * admin_request —— 管理员权限远程授权工具（仅 owner/main）
  *
- * 工作原理（计划任务桥）：
+ * 工作原理：
  *   1. setup：以管理员身份（UAC 点一次「是」）注册计划任务 JarvisAdminBridge，
  *      该任务以「最高权限」运行 run.ps1。之后触发该任务不再需要 UAC。
- *   2. run：先在用户桌面弹出授权弹窗（是/否），主人点「是」后：
+ *   2. run：向本机 Bridge 发起授权请求 → Bridge 推送到主人手机（Jarvis App 弹出
+ *      允许/拒绝卡片 + 系统通知）→ 主人远程点「允许」后：
  *      写 request.json + cmd-<id>.ps1 → schtasks /run → 轮询 result-<id>.json → 返回输出。
  *   3. status：查看任务是否注册、最近一次执行、审计日志。
  *
@@ -25,7 +26,8 @@ const SCRIPTS = path.join(import.meta.dirname, 'scripts')
 const BRIDGE_DIR = path.join(ROOT, 'userdata', 'admin-bridge')
 const TASK_NAME = 'JarvisAdminBridge'
 const POWERSHELL = 'powershell.exe'
-const POPUP_TIMEOUT_SEC = 300
+const BRIDGE_HTTP = 'http://127.0.0.1:7779'
+const DEFAULT_APPROVAL_TIMEOUT_SEC = 300
 
 function ensureDir() {
   fs.mkdirSync(BRIDGE_DIR, { recursive: true })
@@ -50,20 +52,27 @@ async function taskExists() {
   return r.code === 0
 }
 
-/** 弹授权窗：返回 'approved' | 'denied' | 'timeout' */
-async function askApproval(title, message) {
-  ensureDir()
-  const msgFile = path.join(BRIDGE_DIR, `popup-${Date.now()}.txt`)
-  fs.writeFileSync(msgFile, '\uFEFF' + message, 'utf8')
-  const r = await run(POWERSHELL, [
-    '-NoProfile', '-ExecutionPolicy', 'Bypass',
-    '-File', path.join(SCRIPTS, 'popup.ps1'),
-    '-MessageFile', msgFile,
-  ], { timeout: (POPUP_TIMEOUT_SEC + 30) * 1000 })
-  try { fs.unlinkSync(msgFile) } catch {}
-  if (r.code === 6) return 'approved'
-  if (r.code === -1 || (r.error && r.error.killed)) return 'timeout'
-  return 'denied'
+/**
+ * 向手机推送授权请求并等待决定。
+ * 返回 'allow' | 'deny' | 'timeout' | 'phone_offline'
+ */
+async function askRemoteApproval({ summary, command, timeoutSec }) {
+  const principalId = String(process.env.JARVIS_PRINCIPAL_ID || '')
+  const timeout = Math.min(Math.max(Number(timeoutSec) || DEFAULT_APPROVAL_TIMEOUT_SEC, 30), 1800)
+  let res
+  try {
+    res = await fetch(BRIDGE_HTTP + '/admin-approval', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ principalId, summary, command, timeoutSec: timeout }),
+    })
+  } catch (err) {
+    throw new Error(`Bridge 内部通道不可用（${err.message}）——无法发起远程授权`)
+  }
+  let data = {}
+  try { data = await res.json() } catch {}
+  if (!res.ok) throw new Error(data.error || `Bridge 返回 HTTP ${res.status}`)
+  return String(data.decision || 'timeout')
 }
 
 /** 触发计划任务并等待结果文件。 */
@@ -135,15 +144,15 @@ function clip(text, max) {
   return s.slice(0, max) + `\n…（已截断，共 ${s.length} 字符）`
 }
 
-const server = new McpServer({ name: 'admin_request', version: '1.0.0' })
+const server = new McpServer({ name: 'admin_request', version: '1.1.0' })
 
 server.tool(
   'admin_request',
-  '申请管理员权限执行命令。会在主人电脑上弹出授权弹窗（是/否），主人点「是」后以管理员权限运行，并返回命令输出。' +
-  '首次使用前需执行 action=setup 注册计划任务（会弹一次 UAC，需主人点「是」）。仅 owner/main 可用。',
+  '申请管理员权限执行命令：向主人手机（Jarvis App）推送授权请求，主人远程点「允许」后以管理员权限运行并返回输出。' +
+  '首次使用前需执行 action=setup 注册计划任务（在电脑上点一次 UAC）。仅 owner/main 可用。',
   {
     action: z.enum(['setup', 'run', 'status']).optional().describe('setup=注册计划任务（一次性）；run=申请授权并执行；status=查看状态'),
-    summary: z.string().optional().describe('run：向主人说明要做什么、为什么（显示在授权弹窗里）'),
+    summary: z.string().optional().describe('run：向主人说明要做什么、为什么（显示在手机授权卡片里）'),
     command: z.string().optional().describe('run：要执行的 PowerShell 命令/脚本'),
     workDir: z.string().optional().describe('run：工作目录，默认 C:\\Windows\\System32'),
     timeoutSec: z.number().optional().describe('run：命令超时秒数，默认 120，最大 1800'),
@@ -168,7 +177,7 @@ server.tool(
           content: [{
             type: 'text',
             text: okNow
-              ? `✅ 已注册计划任务 ${TASK_NAME}（最高权限，按需运行）。以后 admin_request 会自动弹授权窗，主人点「是」即执行，无需再点 UAC。`
+              ? `✅ 已注册计划任务 ${TASK_NAME}（最高权限，按需运行）。以后 admin_request 会推送授权卡片到手机，主人手机上点「允许」即执行。`
               : `⚠️ 脚本执行完成但未查到任务 ${TASK_NAME}，请检查 setup-task.ps1 输出：\n${clip((r.stdout || r.stderr).trim(), 1500)}`,
           }],
         }
@@ -202,32 +211,21 @@ server.tool(
         return { isError: true, content: [{ type: 'text', text: '❌ 缺少 command：请提供需要管理员权限执行的 PowerShell 命令。' }] }
       }
       if (!summary || !summary.trim()) {
-        return { isError: true, content: [{ type: 'text', text: '❌ 缺少 summary：请在弹窗里向主人说明要做什么、为什么。' }] }
+        return { isError: true, content: [{ type: 'text', text: '❌ 缺少 summary：请说明要做什么、为什么（会显示在手机授权卡片里）。' }] }
       }
       if (!(await taskExists())) {
-        return { isError: true, content: [{ type: 'text', text: '⚠️ 尚未注册管理员通道。请先调用 admin_request（action=setup），主人点一次 UAC「是」即可。' }] }
+        return { isError: true, content: [{ type: 'text', text: '⚠️ 尚未注册管理员通道。请先调用 admin_request（action=setup），在电脑上点一次 UAC「是」即可。' }] }
       }
 
-      const cmdPreview = command.length > 500 ? command.slice(0, 500) + '\n…（命令较长，已截断预览）' : command
-      const message = [
-        'Jarvis 正在请求管理员权限。',
-        '',
-        '【要做什么】',
-        summary.trim(),
-        '',
-        '【将执行的命令】',
-        cmdPreview,
-        '',
-        `点「是」授权执行；点「否」取消（${POPUP_TIMEOUT_SEC} 秒未操作视为取消）。`,
-        '如果这不是你发起的操作，请点「否」。',
-      ].join('\n')
-
-      const approval = await askApproval('Jarvis 请求管理员权限', message)
-      if (approval === 'denied') {
+      const approval = await askRemoteApproval({ summary: summary.trim(), command, timeoutSec })
+      if (approval === 'phone_offline') {
+        return { isError: true, content: [{ type: 'text', text: '📵 手机 App 不在线，无法远程授权。请打开 Jarvis App（或等它重连）后重试。' }] }
+      }
+      if (approval === 'deny') {
         return { content: [{ type: 'text', text: '🚫 主人拒绝了本次管理员授权，命令未执行。' }] }
       }
       if (approval === 'timeout') {
-        return { content: [{ type: 'text', text: `⏰ 授权弹窗 ${POPUP_TIMEOUT_SEC} 秒无响应，视为取消，命令未执行。` }] }
+        return { content: [{ type: 'text', text: '⏰ 授权请求超时（主人在手机上未及时处理），命令未执行。' }] }
       }
 
       const result = await runElevated({ summary, command, workDir, timeoutSec })

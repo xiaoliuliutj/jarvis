@@ -57,6 +57,9 @@
     context: null,
     editingModelId: null,
     updateInfo: null,
+    approvals: new Map(),
+    activeApprovalId: '',
+    approvalBusy: false,
   }
 
   const el = {
@@ -139,6 +142,11 @@
     settingsOwnerStatus: $('settingsOwnerStatus'),
     editNickname: $('editNickname'),
     nicknameInput: $('nicknameInput'),
+    assistantName: $('assistantName'),
+    moodBadge: $('moodBadge'),
+    settingsAssistantName: $('settingsAssistantName'),
+    assistantNameInput: $('assistantNameInput'),
+    editAssistantName: $('editAssistantName'),
     editConnection: $('editConnection'),
     reconnectBtn: $('reconnectBtn'),
     addModel: $('addModel'),
@@ -196,6 +204,12 @@
     toolCancel: $('toolCancel'),
     toolModalBody: $('toolModalBody'),
     toolSave: $('toolSave'),
+    approvalModal: $('approvalModal'),
+    approvalSummary: $('approvalSummary'),
+    approvalCommand: $('approvalCommand'),
+    approvalHint: $('approvalHint'),
+    approvalAllow: $('approvalAllow'),
+    approvalDeny: $('approvalDeny'),
   }
 
   // ── utilities ───────────────────────────────────────────────────────────
@@ -944,6 +958,93 @@
   })
   el.nicknameInput?.addEventListener('blur', () => { saveNickname() })
 
+  // ── 助手名字 ───────────────────────────────────────────────────────────────
+  function applyAssistantName(name) {
+    const value = String(name || '').trim() || 'Jarvis'
+    state.assistantName = value
+    if (el.assistantName) el.assistantName.textContent = value
+    if (el.settingsAssistantName) el.settingsAssistantName.textContent = value
+    document.title = value
+  }
+
+  function openAssistantNameEditor() {
+    if (!el.assistantNameInput || !el.settingsAssistantName) return
+    el.assistantNameInput.value = state.assistantName || 'Jarvis'
+    el.assistantNameInput.classList.remove('hidden')
+    el.settingsAssistantName.classList.add('hidden')
+    if (el.editAssistantName) el.editAssistantName.classList.add('hidden')
+    el.assistantNameInput.focus()
+    try { el.assistantNameInput.select() } catch {}
+  }
+
+  function closeAssistantNameEditor() {
+    if (el.assistantNameInput) el.assistantNameInput.classList.add('hidden')
+    if (el.settingsAssistantName) el.settingsAssistantName.classList.remove('hidden')
+    if (el.editAssistantName) el.editAssistantName.classList.remove('hidden')
+  }
+
+  async function saveAssistantName() {
+    if (!el.assistantNameInput || el.assistantNameInput.classList.contains('hidden')) return
+    const name = (el.assistantNameInput.value || '').trim()
+    if (!name) { toast('助手名字不能为空'); el.assistantNameInput.focus(); return }
+    if (name === (state.assistantName || 'Jarvis')) { closeAssistantNameEditor(); return }
+    try {
+      const data = await api('/api/v1/settings', { method: 'PUT', body: { assistantName: name } })
+      if (state.settings && data.settings) state.settings.assistantName = data.settings.assistantName
+      applyAssistantName(name)
+      closeAssistantNameEditor()
+      toast('助手名字已更新')
+    } catch (err) {
+      toast(`修改失败：${err.message}`)
+    }
+  }
+
+  el.editAssistantName?.addEventListener('click', openAssistantNameEditor)
+  el.assistantNameInput?.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); el.assistantNameInput.blur() }
+    else if (event.key === 'Escape') { event.preventDefault(); closeAssistantNameEditor() }
+  })
+  el.assistantNameInput?.addEventListener('blur', () => { saveAssistantName() })
+
+  // ── 心情显示 ───────────────────────────────────────────────────────────────
+  function moodEmoji(mood) {
+    const m = Number(mood) || 0
+    if (m >= 5) return '😻'
+    if (m >= 3) return '😊'
+    if (m >= 1) return '🙂'
+    if (m >= 0) return '😐'
+    if (m >= -1) return '😒'
+    if (m >= -3) return '😤'
+    return '😠'
+  }
+
+  function moodLabel(mood) {
+    const m = Number(mood) || 0
+    if (m >= 5) return '超级开心'
+    if (m >= 3) return '开心'
+    if (m >= 1) return '平静愉快'
+    if (m >= 0) return '平静'
+    if (m >= -1) return '有点闷'
+    if (m >= -3) return '不爽'
+    return '生气'
+  }
+
+  async function loadMood() {
+    if (!state.token || !el.moodBadge) return
+    try {
+      const data = await api('/api/v1/mood')
+      const mood = Number(data.mood) || 0
+      const label = String(data.state || '').trim() || moodLabel(mood)
+      el.moodBadge.textContent = `${moodEmoji(mood)} ${label}`
+      el.moodBadge.title = `当前心情：${label}（${mood > 0 ? '+' + mood : mood}）`
+      el.moodBadge.classList.remove('hidden')
+    } catch {
+      // 心情只是装饰，失败不打扰
+    }
+  }
+
+  setInterval(() => { loadMood() }, 60 * 1000)
+
   // ── API ─────────────────────────────────────────────────────────────────
 
   async function api(path, opts = {}) {
@@ -1062,6 +1163,7 @@
       // WS 只负责实时；重连后从服务端补拉当前会话，避免漏消息。
       refreshCurrentSessionSoon()
       flushOutbox().catch(() => {})
+      refreshApprovals().catch(() => {})
       return
     }
     if (msg.type === 'context') {
@@ -1074,6 +1176,10 @@
     }
     if (msg.type === 'native_tool_call') {
       handleNativeToolCall(msg)
+      return
+    }
+    if (msg.type === 'approval_request' && msg.approval?.id) {
+      upsertApproval(msg.approval)
       return
     }
     if (msg.type === 'assistant' && msg.text) {
@@ -1154,7 +1260,195 @@
           }
         }
       } else if (tool === 'android_alarm') {
-        if (!bridge || typeof bridge.setAlarm !== 'function') {
+        const action = String(args.action || 'set')
+        if (action === 'probe') {
+          if (!bridge || typeof bridge.probeAlarm !== 'function') {
+            result = { ok: false, error: '需要更新 Android App 到 0.2.8 才能使用闹钟探针' }
+          } else {
+            let text = ''
+            try { text = String(bridge.probeAlarm() || '') } catch (err) { text = `error:${err?.message || 'bridge'}` }
+            let autoState = ''
+            try {
+              if (typeof bridge.isAlarmAutoConfirmEnabled === 'function') {
+                autoState = bridge.isAlarmAutoConfirmEnabled() ? '已开启' : '未开启'
+              }
+            } catch (err) {}
+            result = text.startsWith('error:')
+              ? { ok: false, error: `闹钟探针失败：${text.slice(6)}` }
+              : {
+                ok: true,
+                result: {
+                  delivered: true,
+                  text: (text || 'ok:empty') + (autoState ? `\n无障碍自动确认: ${autoState}` : ''),
+                },
+              }
+          }
+        } else if (action === 'dump_ui') {
+          if (!bridge || typeof bridge.dumpAlarmUi !== 'function') {
+            result = { ok: false, error: '需要更新 Android App 到 0.3.0 才能读取时钟界面结构' }
+          } else {
+            let text = ''
+            try { text = String(bridge.dumpAlarmUi() || '') } catch (err) { text = `error:${err?.message || 'bridge'}` }
+            if (text.startsWith('error:accessibility_not_running')) {
+              result = { ok: false, error: '无障碍自动确认服务未开启，请先在系统设置里开启 Jarvis 的无障碍服务' }
+            } else if (text.startsWith('error:')) {
+              result = { ok: false, error: '当前没有可读取的时钟窗口，请先让时钟界面弹出来' }
+            } else {
+              result = { ok: true, result: { delivered: true, text } }
+            }
+          }
+        } else if (action === 'inspect_manifest') {
+          if (!bridge || typeof bridge.inspectClockManifest !== 'function') {
+            result = { ok: false, error: '需要更新 Android App 到 0.3.1 才能读取时钟 manifest' }
+          } else {
+            let text = ''
+            try { text = String(bridge.inspectClockManifest() || '') } catch (err) { text = `error:${err?.message || 'bridge'}` }
+            result = text.startsWith('error:')
+              ? { ok: false, error: `读取时钟 manifest 失败：${text.slice(6)}` }
+              : { ok: true, result: { delivered: true, text } }
+          }
+        } else if (action === 'query_action') {
+          if (!bridge || typeof bridge.queryClockAction !== 'function') {
+            result = { ok: false, error: '需要更新 Android App 到 0.3.1 才能查询 action' }
+          } else {
+            const intentAction = String(args.intentAction || '')
+            if (!intentAction) {
+              result = { ok: false, error: '缺少 intentAction' }
+            } else {
+              let text = ''
+              try { text = String(bridge.queryClockAction(intentAction) || '') } catch (err) { text = `error:${err?.message || 'bridge'}` }
+              result = text.startsWith('error:')
+                ? { ok: false, error: `查询失败：${text.slice(6)}` }
+                : { ok: true, result: { delivered: true, text } }
+            }
+          }
+        } else if (action === 'send_broadcast') {
+          if (!bridge || typeof bridge.sendAlarmBroadcast !== 'function') {
+            result = { ok: false, error: '需要更新 Android App 到 0.3.1 才能发送广播' }
+          } else {
+            const intentAction = String(args.intentAction || '')
+            const hour = Number(args.hour)
+            const minute = Number(args.minute)
+            if (!intentAction) {
+              result = { ok: false, error: '缺少 intentAction' }
+            } else if (!Number.isInteger(hour) || hour < 0 || hour > 23
+              || !Number.isInteger(minute) || minute < 0 || minute > 59) {
+              result = { ok: false, error: '闹钟时间不合法' }
+            } else {
+              const label = String(args.label || 'Jarvis 闹钟').slice(0, 80)
+              const vibrate = args.vibrate !== false
+              let outcome = ''
+              try {
+                outcome = String(bridge.sendAlarmBroadcast(intentAction, hour, minute, label, vibrate) || '')
+              } catch (err) {
+                outcome = `error:${err?.message || 'bridge'}`
+              }
+              if (outcome.startsWith('ok')) {
+                result = {
+                  ok: true,
+                  result: { delivered: true, text: `已发送广播 ${intentAction}（目标：系统时钟）` },
+                }
+              } else {
+                const reason = outcome.startsWith('error:') ? outcome.slice(6) : outcome
+                result = { ok: false, error: `发送失败：${reason || '未知错误'}` }
+              }
+            }
+          }
+        } else if (action === 'inspect_permissions') {
+          if (!bridge || typeof bridge.inspectClockPermissions !== 'function') {
+            result = { ok: false, error: '需要更新 Android App 到 0.3.2 才能读取时钟权限' }
+          } else {
+            let text = ''
+            try { text = String(bridge.inspectClockPermissions() || '') } catch (err) { text = `error:${err?.message || 'bridge'}` }
+            result = text.startsWith('error:')
+              ? { ok: false, error: `读取权限失败：${text.slice(6)}` }
+              : { ok: true, result: { delivered: true, text } }
+          }
+        } else if (action === 'inspect_components') {
+          if (!bridge || typeof bridge.inspectClockComponents !== 'function') {
+            result = { ok: false, error: '需要更新 Android App 到 0.3.3 才能读取组件清单' }
+          } else {
+            let text = ''
+            try { text = String(bridge.inspectClockComponents() || '') } catch (err) { text = `error:${err?.message || 'bridge'}` }
+            result = text.startsWith('error:')
+              ? { ok: false, error: `读取组件清单失败：${text.slice(6)}` }
+              : { ok: true, result: { delivered: true, text } }
+          }
+        } else if (action === 'permission_info') {
+          if (!bridge || typeof bridge.clockPermissionInfo !== 'function') {
+            result = { ok: false, error: '需要更新 Android App 到 0.3.3 才能查询权限' }
+          } else {
+            const permission = String(args.permission || '')
+            if (!permission) {
+              result = { ok: false, error: '缺少 permission' }
+            } else {
+              let text = ''
+              try { text = String(bridge.clockPermissionInfo(permission) || '') } catch (err) { text = `error:${err?.message || 'bridge'}` }
+              result = text.startsWith('error:')
+                ? { ok: false, error: `查询权限失败：${text.slice(6)}` }
+                : { ok: true, result: { delivered: true, text } }
+            }
+          }
+        } else if (action === 'resolve_provider') {
+          if (!bridge || typeof bridge.resolveClockProvider !== 'function') {
+            result = { ok: false, error: '需要更新 Android App 到 0.3.2 才能查询时钟 provider' }
+          } else {
+            const authority = String(args.authority || '')
+            if (!authority) {
+              result = { ok: false, error: '缺少 authority' }
+            } else {
+              let text = ''
+              try { text = String(bridge.resolveClockProvider(authority) || '') } catch (err) { text = `error:${err?.message || 'bridge'}` }
+              result = text.startsWith('error:')
+                ? { ok: false, error: `查询 provider 失败：${text.slice(6)}` }
+                : { ok: true, result: { delivered: true, text } }
+            }
+          }
+        } else if (action === 'try_component') {
+          if (!bridge || typeof bridge.tryAlarmComponent !== 'function') {
+            result = { ok: false, error: '需要更新 Android App 到 0.2.8 才能定向尝试闹钟组件' }
+          } else {
+            const component = String(args.component || '')
+            const hour = Number(args.hour)
+            const minute = Number(args.minute)
+            if (!component.includes('/')) {
+              result = { ok: false, error: '缺少 component（格式：包名/Activity 全名）' }
+            } else if (!Number.isInteger(hour) || hour < 0 || hour > 23
+              || !Number.isInteger(minute) || minute < 0 || minute > 59) {
+              result = { ok: false, error: '闹钟时间不合法' }
+            } else {
+              const label = String(args.label || 'Jarvis 闹钟').slice(0, 80)
+              const vibrate = args.vibrate !== false
+              const skipUi = args.skipUi !== false
+              const skipUiMode = String(args.skipUiMode || 'boolean')
+              const customAction = String(args.intentAction || '')
+              let outcome = ''
+              try {
+                outcome = String(
+                  bridge.tryAlarmComponent(component, customAction, hour, minute, label, vibrate, skipUi, skipUiMode) || '',
+                )
+              } catch (err) {
+                outcome = `error:${err?.message || 'bridge'}`
+              }
+              if (outcome.startsWith('ok')) {
+                result = {
+                  ok: true,
+                  result: {
+                    delivered: true,
+                    text: `已把新建闹钟请求交给 ${component}（skipUi=${skipUi}，模式=${skipUiMode}）`,
+                  },
+                }
+              } else {
+                const reason = outcome.startsWith('error:') ? outcome.slice(6) : outcome
+                const message = reason === 'not_clock_package' ? '目标不是已知时钟包'
+                  : reason === 'bad_component' ? '组件名格式不对'
+                    : reason === 'invalid_time' ? '闹钟时间不合法'
+                      : `尝试失败：${reason || '未知错误'}`
+                result = { ok: false, error: message }
+              }
+            }
+          }
+        } else if (!bridge || typeof bridge.setAlarm !== 'function') {
           result = { ok: false, error: '需要更新 Android App 到 0.2.5 才能设置闹钟' }
         } else {
           const hour = Number(args.hour)
@@ -1201,6 +1495,54 @@
             }
           }
         }
+      } else if (tool === 'android_location') {
+        if (!bridge || typeof bridge.getLocationText !== 'function') {
+          result = { ok: false, error: '需要更新 Android App 到 0.3.4 才能获取手机定位' }
+        } else {
+          const fresh = args.fresh === true
+          let text = ''
+          try {
+            text = String(bridge.getLocationText(fresh) || '')
+          } catch (err) {
+            text = `error:${err?.message || 'bridge'}`
+          }
+          if (text.startsWith('error:')) {
+            const reason = text.slice(6)
+            const message = reason === 'permission_denied' ? '定位权限未授予，请打开 Jarvis App 并允许定位权限'
+              : reason === 'no_location' ? '暂时拿不到位置（定位服务可能关闭或没有信号）'
+                : reason === 'no_location_service' ? '系统定位服务不可用'
+                  : `获取定位失败：${reason || '未知错误'}`
+            result = { ok: false, error: message }
+          } else {
+            result = { ok: true, result: { delivered: true, text } }
+          }
+        }
+      } else if (tool === 'android_sms') {
+        if (!bridge || typeof bridge.listSms !== 'function') {
+          result = { ok: false, error: '需要更新 Android App 到 0.3.5 才能读取短信' }
+        } else {
+          const smsAction = String(args.action || 'list')
+          let text = ''
+          try {
+            if (smsAction === 'search') {
+              text = String(bridge.searchSms(String(args.keyword || ''), Number(args.limit) || 10) || '')
+            } else if (smsAction === 'read') {
+              text = String(bridge.readSms(Number(args.id) || 0) || '')
+            } else {
+              text = String(bridge.listSms(Number(args.limit) || 10, String(args.folder || '')) || '')
+            }
+          } catch (err) {
+            text = `error:${err?.message || 'bridge'}`
+          }
+          if (text.startsWith('error:')) {
+            const reason = text.slice(6)
+            const message = reason === 'permission_denied' ? '短信权限未授予，请打开 Jarvis App 并允许读取短信'
+              : `读取短信失败：${reason || '未知错误'}`
+            result = { ok: false, error: message }
+          } else {
+            result = { ok: true, result: { delivered: true, text } }
+          }
+        }
       } else {
         result = { ok: false, error: `不支持的原生工具：${tool}` }
       }
@@ -1209,6 +1551,70 @@
     }
 
     nativeToolResult(requestId, result)
+  }
+
+  // ── 管理员授权（远程审批） ────────────────────────────────────────────────
+
+  function upsertApproval(approval) {
+    if (!approval?.id) return
+    state.approvals.set(approval.id, approval)
+    renderApprovalModal()
+  }
+
+  function renderApprovalModal() {
+    if (!el.approvalModal) return
+    const now = Date.now()
+    for (const [id, item] of state.approvals) {
+      const exp = Date.parse(item?.expiresAt || '') || 0
+      if (exp && exp <= now) state.approvals.delete(id)
+    }
+    const next = [...state.approvals.values()]
+      .sort((a, b) => (Date.parse(a.expiresAt || '') || 0) - (Date.parse(b.expiresAt || '') || 0))[0]
+    if (!next) {
+      state.activeApprovalId = ''
+      el.approvalModal.classList.add('hidden')
+      return
+    }
+    state.activeApprovalId = next.id
+    el.approvalSummary.textContent = next.summary || '（未提供说明）'
+    el.approvalCommand.textContent = next.command || ''
+    el.approvalAllow.disabled = false
+    el.approvalDeny.disabled = false
+    el.approvalModal.classList.remove('hidden')
+  }
+
+  async function refreshApprovals() {
+    try {
+      const data = await api('/api/v1/admin/approvals')
+      const list = Array.isArray(data?.approvals) ? data.approvals : []
+      state.approvals.clear()
+      for (const item of list) {
+        if (item?.id) state.approvals.set(item.id, item)
+      }
+      renderApprovalModal()
+    } catch {}
+  }
+
+  async function decideApproval(decision) {
+    const id = state.activeApprovalId
+    if (!id || state.approvalBusy) return
+    state.approvalBusy = true
+    if (el.approvalAllow) el.approvalAllow.disabled = true
+    if (el.approvalDeny) el.approvalDeny.disabled = true
+    try {
+      await api(`/api/v1/admin/approvals/${encodeURIComponent(id)}/decide`, {
+        method: 'POST',
+        body: { decision },
+      })
+      state.approvals.delete(id)
+      toast(decision === 'allow' ? '已允许执行' : '已拒绝')
+    } catch (err) {
+      toast(`提交失败：${err.message}`)
+      await refreshApprovals()
+    } finally {
+      state.approvalBusy = false
+      renderApprovalModal()
+    }
   }
 
   // ── tabs ────────────────────────────────────────────────────────────────
@@ -2097,6 +2503,7 @@
       if (data.running) setRunStatus(data.running)
       else clearRunStatus()
       markReadSoon()
+      loadMood().catch(() => {})
     } catch (err) {
       try {
         const data = await api('/api/history')
@@ -3071,6 +3478,9 @@
     }
   }
 
+  el.approvalAllow?.addEventListener('click', () => decideApproval('allow'))
+  el.approvalDeny?.addEventListener('click', () => decideApproval('deny'))
+
   el.toolCancel.addEventListener('click', () => el.toolModal.classList.add('hidden'))
   el.toolSave.addEventListener('click', async () => {
     const tool = state.toolDetail
@@ -3520,6 +3930,7 @@
     try {
       const data = await api('/api/v1/settings')
       state.settings = data.settings
+      applyAssistantName(data.settings?.assistantName)
       state.models = Array.isArray(data.models) ? data.models : []
       renderModels()
       el.testModeToggle.checked = data.settings?.testMode !== false
@@ -3966,6 +4377,7 @@
     connect()
     loadMe()
     loadPersona()
+    loadMood().catch(() => {})
     loadSession().finally(nativePageReady)
   }
 })()
