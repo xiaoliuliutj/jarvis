@@ -176,5 +176,14 @@
     "version": "1.0.0",
     "ownerId": "user_1efb13a1ec",
     "summary": "获取当前所在城市"
+  },
+  {
+    "name": "admin_request",
+    "description": "申请管理员权限执行命令：桌面弹出授权弹窗，主人点「是」后以管理员权限执行并返回输出",
+    "enabled": true,
+    "createdAt": "2026-11-27T08:30:41.669Z",
+    "version": "1.0.0",
+    "summary": "申请管理员权限执行命令",
+    "access": "owner"
   }
 ]
