@@ -442,6 +442,7 @@ const cron = startCronManager({
     principalId: principal.id,
     prompt: task.prompt,
     source: 'cron',
+    taskLabel: task.id || '定时任务',
     emit: (event) => broadcast({
       ...event,
       sourceType: getPrimaryAccount(principal)?.sourceType,
@@ -483,6 +484,7 @@ const schedule = startScheduleManager({
         principalId: principal.id,
         prompt: `【日程提醒】现在是用户设置的日程提醒时间，请用符合你人设的语气给用户发一条简短的提醒。\n日程：${item.title}\n${item.notes ? `备注：${item.notes}\n` : ''}要求：口语化、简短（1-3 句）、保持你的人设，不用 Markdown。`,
         source: 'cron',
+        taskLabel: '日程提醒',
         emit: (event) => broadcast({
           ...event,
           principalId: principal.id,

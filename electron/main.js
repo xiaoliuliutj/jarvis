@@ -234,6 +234,7 @@ function startMainCron() {
       principalId: principal.id,
       prompt: task.prompt,
       source: 'cron',
+      taskLabel: task.id || '定时任务',
       emit: (event) => win?.webContents.send('cron-event', event),
     })),
     deliver: async (principal, task, result) => {

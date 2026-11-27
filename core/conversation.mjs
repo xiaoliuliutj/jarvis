@@ -75,7 +75,7 @@ function sanitizeForUser(principal, text) {
  * @param {(event: object) => void} opts.emit
  * @returns {Promise<{text, cost, turns, isError, sessionId}>}
  */
-export async function runTurn({ principalId, prompt, displayText = null, userAttachments = [], sessionId = null, forceNew = false, source = 'chat', emit = () => {}, roleOverride = null }) {
+export async function runTurn({ principalId, prompt, displayText = null, userAttachments = [], sessionId = null, forceNew = false, source = 'chat', taskLabel = null, emit = () => {}, roleOverride = null }) {
   const basePrincipal = getPrincipal(principalId)
   const principal = roleOverride
     ? {
@@ -315,7 +315,8 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
     const { run } = await import('../agents/agent.mjs')
     // 时间放在本轮用户消息的最前面（压缩交接之后），只动尾部，不动 system 前缀。
     // 定时任务加一个醒目标记；聊天回合在尾部带上最近一次 cron 结果，方便接话。
-    const cronPromptLabel = isCron ? '【定时任务｜只执行本轮】\n' : ''
+    const cronLabelText = String(taskLabel || '后台任务').replace(/\s+/g, ' ').trim().slice(0, 40) || '后台任务'
+    const cronPromptLabel = isCron ? `【定时任务｜${cronLabelText}｜只执行本轮】\n` : ''
     const lastCronResult = !isCron ? store.readLastCronResult(principalId) : null
     const recentCronBlock = lastCronResult?.text
       && (Date.now() - (Date.parse(lastCronResult.at) || 0)) < 2 * 60 * 60 * 1000
@@ -465,6 +466,19 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
           text,
           at: new Date().toISOString(),
           source,
+        })
+      } catch {}
+    }
+    // 每次 cron 运行都写一条 workspace/cron-history.md，静默/失败也留痕。
+    if (source === 'cron') {
+      try {
+        store.appendCronHistory(principalId, {
+          at: new Date().toISOString(),
+          task: taskLabel || '定时任务',
+          text: text || '',
+          silent: silentTurn,
+          isError: !!result.isError,
+          tools: toolRecords.map(record => record.name),
         })
       } catch {}
     }

@@ -228,6 +228,38 @@ export function writeLastCronResult(principalId, { text = '', at = new Date().to
   return data
 }
 
+// 定时任务执行历史：写进 workspace 的 Markdown，方便事后查看，也能被 Agent 直接 Read。
+export function appendCronHistory(principalId, {
+  at = new Date().toISOString(),
+  task = '定时任务',
+  text = '',
+  silent = false,
+  isError = false,
+  tools = [],
+} = {}) {
+  ensureUser(principalId)
+  const when = new Date(at)
+  const timeText = Number.isNaN(when.getTime())
+    ? String(at)
+    : when.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      })
+  const body = String(text || '').trim()
+    || (silent ? '（静默，无提醒）' : '（无输出）')
+  const toolLine = Array.isArray(tools) && tools.length
+    ? `\n- 工具：${tools.filter(Boolean).join(', ')}`
+    : ''
+  const section = `\n## ${timeText}｜${String(task || '定时任务').slice(0, 60)}\n- 状态：${isError ? '失败' : '成功'}${toolLine}\n\n${body}\n`
+  const file = path.join(workspaceDir(principalId), 'cron-history.md')
+  fs.appendFileSync(file, section, 'utf-8')
+  return file
+}
+
 export function readSessionDigestState(principalId, sessionId) {
   const file = path.join(sessionsDir(principalId), `${sessionId}.digest.json`)
   const data = readJson(file, null)

@@ -143,6 +143,7 @@ export function buildSystemPrompt({ principal, rules, persona, memory, toolProfi
     memory ? `# 当前用户长期记忆\n${memory}` : '',
     `# 工作区\n当前用户的工作目录是 ${workspaceDir(principal.id)}。默认在这里读写用户文件。`,
     `# 文件收发\n用户发来的文件保存在收件箱 ${inboxDir(principal.id)}（消息里会附带文件信息；txt/md/docx/pdf/xlsx 会自动解析内容）。要把文件发给用户时，把文件写进发件箱 ${outboxDir(principal.id)}，当前回合结束后系统会自动发送并归档，不需要做别的操作。图片（png/jpg/jpeg/gif/webp/bmp）会以图片消息发送，其他类型以文件发送。要生成文件（txt/md/docx/xlsx/pdf）用 file_builder 工具，支持结构化标题/段落/列表/表格，可直接发回给用户。收发目录不存在时会自动创建。收件箱和发送归档保留 30 天、截图 7 天后自动清理；用户要求「保存/留存」的正式文件必须放进工作区（永久保存），不要只留在收发目录里。`,
+    `# 定时任务历史\n定时任务的执行历史记录在 ${workspaceDir(principal.id)}/cron-history.md，需要查看时用 Read 读取。`,
     buildToolHint(toolProfile),
     `# API 无感\n不要向用户提及底层 API、模型供应商、API Key、token 或凭证文件。用户问起时，只说这是内部配置。`,
   ].filter(Boolean).join('\n\n')
