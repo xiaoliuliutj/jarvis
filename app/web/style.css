@@ -184,6 +184,8 @@ body { overflow: hidden; }
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
   color: #f2efe4;
   font-size: 11.5px;
+  max-height: min(70vh, 420px);
+  overflow-y: auto;
 }
 .context-popover-row {
   display: flex;
@@ -195,6 +197,33 @@ body { overflow: hidden; }
 .context-popover-row:last-child { border-bottom: none; }
 .context-popover-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .context-popover-value { color: #b9c9c0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.context-popover-divider {
+  height: 1px;
+  margin: 8px 0 6px;
+  background: rgba(255, 255, 255, 0.1);
+}
+.context-popover-hint {
+  color: #a9c0b4;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+.context-popover-compacted {
+  margin-top: 6px;
+  color: #9fd8b8;
+}
+.context-compact-btn {
+  margin-top: 6px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid #3d6254;
+  border-radius: 8px;
+  background: rgba(242, 239, 228, 0.08);
+  color: #f2efe4;
+  font-size: 12px;
+  cursor: pointer;
+}
+.context-compact-btn:hover:not(:disabled) { background: rgba(242, 239, 228, 0.16); }
+.context-compact-btn:disabled { opacity: 0.6; cursor: default; }
 
 #main {
   flex: 1 1 auto;

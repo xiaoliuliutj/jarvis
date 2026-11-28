@@ -33,6 +33,7 @@ import {
   appendUsage,
   setSessionContext,
   getSessionContext,
+  markSessionContextCompacted,
 } from './app-store.mjs'
 import { readTranscriptUsage } from './usage-transcript.mjs'
 import { compactSessionContext } from './context-compactor.mjs'
@@ -67,6 +68,72 @@ function sanitizeForUser(principal, text) {
   return text
 }
 
+/** App / 微信普通用户按 user 执行；带 owner token 时按 owner 执行。 */
+function buildEffectivePrincipal(principalId, roleOverride) {
+  const basePrincipal = getPrincipal(principalId)
+  if (!roleOverride) return basePrincipal
+  return {
+    ...basePrincipal,
+    role: roleOverride,
+    capabilities: {
+      ...basePrincipal.capabilities,
+      editJarvisCode: roleOverride === 'owner' || roleOverride === 'maintainer',
+      useGlobalModel: roleOverride === 'owner' || roleOverride === 'maintainer',
+    },
+  }
+}
+
+/**
+ * 解析对话模型凭证；runTurn 和手动压缩共用。
+ * 返回 { error } 或 { apiKey, baseUrl, authMode, activeModel, agentEnv }。
+ */
+function resolveChatModel({ principalId, principal }) {
+  const userModel = getChatRuntime(principalId)
+  const canUseGlobal = !!principal.capabilities?.useGlobalModel
+    || principal.role === 'owner'
+    || principal.role === 'maintainer'
+
+  // 普通用户没有自己的模型 Key 时，不能静默使用 owner 的全局 Key。
+  if (!userModel && !canUseGlobal) {
+    const hasChatConfig = listModels(principalId).some(m => m.capability === 'chat' && m.enabled !== false)
+    return {
+      error: hasChatConfig
+        ? '你的对话模型还没有配置 API Key，请在 App 设置 → 模型与能力里补上。'
+        : '当前账号还没有配置对话模型 API，请在 App 设置 → 模型与能力里添加自己的模型。',
+    }
+  }
+
+  let apiKey, baseUrl, authMode, activeModel, agentEnv
+  if (userModel?.rawConfig) {
+    // 用户整段配置：按 Claude Code settings 的同一套解析逻辑使用
+    const rawCreds = resolveAnthropicCredentials(userModel.rawConfig, {})
+    apiKey = rawCreds.apiKey
+    baseUrl = rawCreds.baseUrl
+    authMode = rawCreds.authMode
+    activeModel = resolveModel(userModel.rawConfig)
+    agentEnv = buildAgentEnv(userModel.rawConfig)
+  } else {
+    const globalCreds = canUseGlobal
+      ? getAnthropicCredentials()
+      : { apiKey: '', baseUrl: '', authMode: 'both' }
+    apiKey = userModel?.apiKey || globalCreds.apiKey
+    baseUrl = userModel?.baseUrl || (canUseGlobal ? globalCreds.baseUrl : '')
+    authMode = userModel?.authMode || (canUseGlobal ? globalCreds.authMode : 'both')
+    activeModel = userModel?.model || (canUseGlobal ? getModel() : '')
+    agentEnv = canUseGlobal ? getAgentEnv() : {}
+  }
+  // 上下文窗口按模型配置/模型能力决定，不在这里强制覆盖。
+  // 模型支持 1M 就用 1M；配置里没有就沿用模型/SDK 的默认值。
+  if (!apiKey) {
+    return {
+      error: userModel
+        ? '模型配置里没有可用的 API Key，请检查配置。'
+        : sanitizeForUser(principal, '未配置 API Key（config/agent.json 或 config/credentials.json）'),
+    }
+  }
+  return { apiKey, baseUrl, authMode, activeModel, agentEnv, provider: userModel?.provider || '' }
+}
+
 /**
  * @param {object} opts
  * @param {string} opts.principalId
@@ -77,18 +144,7 @@ function sanitizeForUser(principal, text) {
  * @returns {Promise<{text, cost, turns, isError, sessionId}>}
  */
 export async function runTurn({ principalId, prompt, displayText = null, userAttachments = [], sessionId = null, forceNew = false, source = 'chat', taskLabel = null, emit = () => {}, roleOverride = null }) {
-  const basePrincipal = getPrincipal(principalId)
-  const principal = roleOverride
-    ? {
-        ...basePrincipal,
-        role: roleOverride,
-        capabilities: {
-          ...basePrincipal.capabilities,
-          editJarvisCode: roleOverride === 'owner' || roleOverride === 'maintainer',
-          useGlobalModel: roleOverride === 'owner' || roleOverride === 'maintainer',
-        },
-      }
-    : basePrincipal
+  const principal = buildEffectivePrincipal(principalId, roleOverride)
 
   return withPrincipalLock(principalId, async () => {
     const turnStartedAt = Date.now()
@@ -111,63 +167,28 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
     let agentSessionId = isCron
       ? null
       : (forceNew ? null : (sessionRecord?.agentSessionId || displaySessionId || null))
-    let rotateAgent = false
-    let handoffBlock = ''
+    // 手动压缩（App 按钮）已完成：本回合换新 Agent 会话，并注入最近对话交接。
+    const pendingHandoff = !isCron && sessionRecord
+      && typeof sessionRecord.pendingHandoff === 'string'
+      ? sessionRecord.pendingHandoff
+      : null
+    let rotateAgent = pendingHandoff !== null
+    let handoffBlock = pendingHandoff || ''
 
     const persona = store.readPersona(principalId)
     const rules = store.readRulesText()
 
-    const userModel = getChatRuntime(principalId)
-    const canUseGlobal = !!principal.capabilities?.useGlobalModel
-      || principal.role === 'owner'
-      || principal.role === 'maintainer'
-
-    // 普通用户没有自己的模型 Key 时，不能静默使用 owner 的全局 Key。
-    if (!userModel && !canUseGlobal) {
-      const hasChatConfig = listModels(principalId).some(m => m.capability === 'chat' && m.enabled !== false)
+    const modelConfig = resolveChatModel({ principalId, principal })
+    if (modelConfig.error) {
       return {
-        text: hasChatConfig
-          ? '你的对话模型还没有配置 API Key，请在 App 设置 → 模型与能力里补上。'
-          : '当前账号还没有配置对话模型 API，请在 App 设置 → 模型与能力里添加自己的模型。',
+        text: modelConfig.error,
         cost: 0,
         turns: 0,
         isError: true,
         sessionId: resumeId,
       }
     }
-
-    let apiKey, baseUrl, authMode, activeModel, agentEnv
-    if (userModel?.rawConfig) {
-      // 用户整段配置：按 Claude Code settings 的同一套解析逻辑使用
-      const rawCreds = resolveAnthropicCredentials(userModel.rawConfig, {})
-      apiKey = rawCreds.apiKey
-      baseUrl = rawCreds.baseUrl
-      authMode = rawCreds.authMode
-      activeModel = resolveModel(userModel.rawConfig)
-      agentEnv = buildAgentEnv(userModel.rawConfig)
-    } else {
-      const globalCreds = canUseGlobal
-        ? getAnthropicCredentials()
-        : { apiKey: '', baseUrl: '', authMode: 'both' }
-      apiKey = userModel?.apiKey || globalCreds.apiKey
-      baseUrl = userModel?.baseUrl || (canUseGlobal ? globalCreds.baseUrl : '')
-      authMode = userModel?.authMode || (canUseGlobal ? globalCreds.authMode : 'both')
-      activeModel = userModel?.model || (canUseGlobal ? getModel() : '')
-      agentEnv = canUseGlobal ? getAgentEnv() : {}
-    }
-    // 上下文窗口按模型配置/模型能力决定，不在这里强制覆盖。
-    // 模型支持 1M 就用 1M；配置里没有就沿用模型/SDK 的默认值。
-    if (!apiKey) {
-      return {
-        text: userModel
-          ? '模型配置里没有可用的 API Key，请检查配置。'
-          : sanitizeForUser(principal, '未配置 API Key（config/agent.json 或 config/credentials.json）'),
-        cost: 0,
-        turns: 0,
-        isError: true,
-        sessionId: resumeId,
-      }
-    }
+    const { apiKey, baseUrl, authMode, activeModel, agentEnv, provider } = modelConfig
 
     // 长期记忆预算按当前上下文窗口的 2%-4% 计算：
     // 低于 4% 原样保留，超过 4% 压缩到 2%，保证摘要/偏好始终有一席之地。
@@ -223,10 +244,11 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
       toolChars,
     }
 
-    // 上下文达到窗口 75%（或手动请求、历史兜底）时，把较早对话压成长期记忆，
+    // 上下文达到窗口 75%（或历史兜底）时，把较早对话压成长期记忆，
     // 并换一个新的 Agent 会话；App 的显示会话保持不变，所以历史聊天记录不会消失。
+    // 手动压缩（App 按钮）已经在待命，本回合跳过重复压缩。
     // 定时任务走独立的共享会话，不参与聊天历史的压缩/换挡。
-    if (!isCron && !forceNew && displaySessionId && agentSessionId) {
+    if (pendingHandoff === null && !isCron && !forceNew && displaySessionId && agentSessionId) {
       const ratio = lastContext
         ? (Number(lastContext.percentage) || (
           Number(lastContext.maxTokens) > 0
@@ -234,13 +256,11 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
             : 0
         ))
         : 0
-      // 手动请求（session.compactRequested）：下一回合无条件压缩并换挡
-      const compactRequested = sessionRecord?.compactRequested === true
       // 首次启用压缩、还没有 context 数据时，用历史消息数量兜底，避免老会话一直不压缩。
       const bootCompact = !lastContext
         && displaySessionId
         && store.readMessages(principalId, displaySessionId).length >= 400
-      if (compactRequested || ratio >= 75 || bootCompact) {
+      if (ratio >= 75 || bootCompact) {
         const compacted = await compactSessionContext({
           principalId,
           displaySessionId,
@@ -252,7 +272,7 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
         if (compacted) {
           if (compacted.partial) {
             // 还有旧消息没压完：先不换 Agent 会话，避免最近那段未压缩消息被手交丢掉。
-            // 下一回合上下文仍超阈值，会从 compactedUpto 继续压（手动请求也保留）。
+            // 下一回合上下文仍超阈值，会从 compactedUpto 继续压。
             logInfo('context.compact.partial', '', {
               principalId,
               sessionId: displaySessionId,
@@ -260,7 +280,6 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
               compactedUpto: compacted.compactedUpto,
             })
           } else {
-            if (compactRequested) store.clearSessionCompactRequest(principalId, displaySessionId)
             rotateAgent = true
             handoffBlock = compacted.handoffBlock || ''
             memory = store.formatMemory(principalId, {
@@ -287,9 +306,6 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
               ratio: Math.round(ratio),
             })
           }
-        } else if (compactRequested) {
-          // 没有可压缩的内容（例如全是工具记录）：清掉请求，避免下回合反复空跑
-          store.clearSessionCompactRequest(principalId, displaySessionId)
         }
       }
     }
@@ -458,6 +474,10 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
     // cron 的 Agent 会话是一次性的，不能覆盖聊天会话的 agentSessionId。
     if (!isCron) {
       store.setSessionAgentId(principalId, finalSessionId, finalAgentSessionId)
+      // 手动压缩的交接已经进入新 Agent 会话，清掉暂存，避免下回合重复换挡。
+      if (pendingHandoff !== null) {
+        store.clearSessionPendingHandoff(principalId, finalSessionId)
+      }
     }
     if (memorySnapshotDirty) {
       const snapshotWriteId = isCron ? CRON_SNAPSHOT_ID : finalSessionId
@@ -581,8 +601,8 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
             messagePreview: callIndex === 0 ? messagePreview : '',
             source,
             capability: 'chat',
-            model: event.model || userModel?.model || activeModel,
-            provider: userModel?.provider || '',
+            model: event.model || activeModel,
+            provider,
             inputTokens: usage.input_tokens ?? usage.prompt_tokens ?? 0,
             outputTokens: usage.output_tokens ?? usage.completion_tokens ?? 0,
             cacheReadTokens: usage.cache_read_input_tokens ?? 0,
@@ -613,8 +633,8 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
           messagePreview,
           source,
           capability: 'chat',
-          model: userModel?.model || activeModel,
-          provider: userModel?.provider || '',
+          model: activeModel,
+          provider,
           inputTokens: result.usage?.input_tokens ?? result.usage?.prompt_tokens ?? 0,
           outputTokens: result.usage?.output_tokens ?? result.usage?.completion_tokens ?? 0,
           cacheReadTokens: result.usage?.cache_read_input_tokens ?? 0,
@@ -651,5 +671,65 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
     }
     emit({ type: 'result', principalId, sessionId: finalSessionId, ...finalResult })
     return finalResult
+  })
+}
+
+/**
+ * 手动压缩当前会话上下文（App 顶部上下文条的按钮）。
+ *
+ * 与自动压缩共用 compactSessionContext：把较早消息压成长期记忆摘要。
+ * 压缩完成后不立即换 Agent 会话，而是暂存「最近对话交接」；
+ * 下一回合由 runTurn 换新 Agent 会话并注入，App 的聊天历史保持不变。
+ *
+ * @returns {Promise<{ok: boolean, error?: string, partial?: boolean, compactedUpto?: number}>}
+ */
+export async function compactSessionNow({ principalId, roleOverride = null } = {}) {
+  if (!principalId) return { ok: false, error: '缺少用户信息' }
+  const principal = buildEffectivePrincipal(principalId, roleOverride)
+
+  return withPrincipalLock(principalId, async () => {
+    const current = store.getCurrentSession(principalId)
+    const displaySessionId = current?.sessionId || null
+    if (!displaySessionId) {
+      return { ok: false, error: '还没有会话，先发一条消息再来压缩喵' }
+    }
+    const modelConfig = resolveChatModel({ principalId, principal })
+    if (modelConfig.error) {
+      return { ok: false, error: modelConfig.error }
+    }
+    const compacted = await compactSessionContext({
+      principalId,
+      displaySessionId,
+      apiKey: modelConfig.apiKey,
+      baseUrl: modelConfig.baseUrl,
+      authMode: modelConfig.authMode,
+      model: modelConfig.activeModel,
+    })
+    if (!compacted) {
+      return { ok: false, error: '没有可压缩的内容（消息太少，或已经处理过了）' }
+    }
+    if (compacted.partial) {
+      // 旧消息还没压完：保留旧 Agent 会话，用户再点一次继续。
+      return { ok: true, partial: true, compactedUpto: compacted.compactedUpto }
+    }
+    // 丢弃旧快照，下一回合按含压缩摘要的最新长期记忆重建 system prompt。
+    store.clearPromptSnapshot(principalId, displaySessionId)
+    store.setSessionPendingHandoff(principalId, displaySessionId, compacted.handoffBlock || '')
+    // 上下文条跟着整理：压缩后旧历史会缩成交接块，先写一份预估快照，
+    // 下一轮回复拿到真实 usage 后自然覆盖。pendingCompact 用于 App 标出「压缩后」。
+    try {
+      markSessionContextCompacted(principalId, displaySessionId, {
+        handoffChars: String(compacted.handoffBlock || '').length,
+      })
+    } catch (err) {
+      logWarn('context.compact.snapshot.fail', err.message, { principalId })
+    }
+    logInfo('context.compact.manual', '', {
+      principalId,
+      sessionId: displaySessionId,
+      compactedUpto: compacted.compactedUpto,
+      handoffChars: (compacted.handoffBlock || '').length,
+    })
+    return { ok: true, partial: false, compactedUpto: compacted.compactedUpto }
   })
 }

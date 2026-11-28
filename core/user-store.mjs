@@ -168,22 +168,25 @@ export function setSessionAgentId(principalId, sessionId, agentSessionId) {
   return session
 }
 
-/** 请求下一回合强制压缩上下文并换挡（清理掉旧 Agent 上下文，保留 App 历史）。 */
-export function requestSessionCompact(principalId, sessionId) {
+/**
+ * 手动压缩完成：下一回合换新 Agent 会话，并把最近对话交接注入新上下文。
+ * 只暂存交接文本，不立即换 agentSessionId，避免压缩后还没发消息就丢掉旧会话。
+ */
+export function setSessionPendingHandoff(principalId, sessionId, handoffBlock = '') {
   const sessions = listSessions(principalId)
   const session = sessions.find(s => s.sessionId === sessionId)
   if (!session) return null
-  session.compactRequested = true
+  session.pendingHandoff = String(handoffBlock || '')
   writeJson(indexFile(principalId), sessions)
   return session
 }
 
-/** 压缩已完成（或无法压缩）后清掉强制压缩标记。 */
-export function clearSessionCompactRequest(principalId, sessionId) {
+/** 新 Agent 会话已创建：交接已注入，不再重复使用。 */
+export function clearSessionPendingHandoff(principalId, sessionId) {
   const sessions = listSessions(principalId)
   const session = sessions.find(s => s.sessionId === sessionId)
-  if (!session || !session.compactRequested) return
-  delete session.compactRequested
+  if (!session || typeof session.pendingHandoff !== 'string') return
+  delete session.pendingHandoff
   writeJson(indexFile(principalId), sessions)
 }
 
@@ -220,6 +223,12 @@ export function writePromptSnapshot(principalId, sessionId, { memoryText = '', a
   }
   writeJson(promptSnapshotFile(principalId, sessionId), snapshot)
   return snapshot
+}
+
+/** 手动压缩后丢弃旧快照，下一回合按最新长期记忆（含压缩摘要）重建 system prompt。 */
+export function clearPromptSnapshot(principalId, sessionId) {
+  if (!principalId || !sessionId) return
+  try { fs.unlinkSync(promptSnapshotFile(principalId, sessionId)) } catch {}
 }
 
 // ── 最近一次定时任务结果 ─────────────────────────────────────────────────────

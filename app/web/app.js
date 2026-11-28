@@ -68,6 +68,7 @@
     usageRequestKey: '',
     usageFetchedAt: 0,
     context: null,
+    compactRunning: false,
     editingModelId: null,
     updateInfo: null,
     approvals: new Map(),
@@ -496,6 +497,7 @@
       hint.className = 'context-popover-row'
       hint.textContent = '等待下一次回复后显示上下文明细'
       el.contextPopover.appendChild(hint)
+      appendContextActions()
       return
     }
 
@@ -526,7 +528,13 @@
     }
     el.contextBar.classList.toggle('empty', !visible.length)
     const percentage = Number(context.percentage) || (max ? total / max * 100 : 0)
-    el.contextValue.textContent = max ? `${formatTokens(max)} · ${Math.round(percentage)}%` : '—'
+    const compacted = !!context.pendingCompact
+    el.contextValue.textContent = max
+      ? `${formatTokens(max)} · ${Math.round(percentage)}%${compacted ? ' · 压缩后' : ''}`
+      : '—'
+    el.contextValue.title = compacted
+      ? '已压缩：这里按压缩后的预估占用显示，下一轮回复后更新为精确统计'
+      : ''
 
     for (const group of visible) {
       const item = document.createElement('span')
@@ -562,6 +570,67 @@
       rowEl.appendChild(value)
       el.contextPopover.appendChild(rowEl)
     }
+    if (compacted) {
+      const note = document.createElement('div')
+      note.className = 'context-popover-hint context-popover-compacted'
+      note.textContent = '已压缩：以上为压缩后的预估占用，下一轮回复后更新为精确统计'
+      el.contextPopover.appendChild(note)
+    }
+    appendContextActions()
+  }
+
+  /** 上下文弹层底部：主动压缩按钮（下一回合生效，不删除聊天记录）。 */
+  function appendContextActions() {
+    if (!el.contextPopover) return
+    const divider = document.createElement('div')
+    divider.className = 'context-popover-divider'
+    el.contextPopover.appendChild(divider)
+    const hint = document.createElement('div')
+    hint.className = 'context-popover-hint'
+    hint.textContent = '压缩后下一轮对话生效，不会删除聊天记录'
+    el.contextPopover.appendChild(hint)
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'context-compact-btn'
+    button.disabled = !!state.compactRunning
+    button.textContent = state.compactRunning ? '正在压缩上下文…' : '压缩上下文'
+    button.addEventListener('click', event => {
+      event.stopPropagation()
+      requestContextCompact(button)
+    })
+    el.contextPopover.appendChild(button)
+  }
+
+  async function requestContextCompact(button) {
+    if (state.compactRunning) return
+    if (state.runStatus.raw) {
+      toast('等这一轮回复完再压缩喵～')
+      return
+    }
+    state.compactRunning = true
+    button.disabled = true
+    button.textContent = '正在压缩上下文…'
+    let data = null
+    let failure = ''
+    try {
+      data = await api('/api/v1/session/compact', { method: 'POST', body: {} })
+    } catch (err) {
+      failure = err.message
+    } finally {
+      state.compactRunning = false
+    }
+    if (failure) {
+      toast(`压缩失败：${failure}`)
+      renderContext(state.context)
+      return
+    }
+    if (data.partial) {
+      toast('旧消息比较多，已经压了一部分，再点一次继续喵')
+    } else {
+      toast('压缩完成喵～上下文条已按压缩后整理')
+    }
+    // 弹层保持打开：刷新后直接能看到压缩后的明细和更短的彩条。
+    await refreshContext()
   }
 
   if (el.contextBar) {

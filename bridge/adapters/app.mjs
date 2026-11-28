@@ -10,6 +10,7 @@
  *   GET  /                   内置移动端聊天页（PWA，可直接加到桌面）
  *   GET  /health             健康检查（无需鉴权）
  *   POST /api/message        { text, attachments?: [{ fileName, kind, dataBase64 }] }
+ *   POST /api/v1/session/compact  手动压缩当前会话上下文（下一回合换新 Agent 会话）
  *   GET  /api/file/:id       下载 Jarvis 发出的文件（token 走 query）
  *   WS   /ws?token=&device=  接收回复 / 文件 / 通知
  *
@@ -37,6 +38,7 @@ import { PERSONA_PRESETS } from '../../core/persona-presets.mjs'
 import * as appStore from '../../core/app-store.mjs'
 import * as authStore from '../../core/auth-store.mjs'
 import { listCatalog, getTool as getCatalogTool } from '../../core/tool-catalog.mjs'
+import { compactSessionNow } from '../../core/conversation.mjs'
 import { resolveAnthropicCredentials } from '../../core/config.mjs'
 import { verifyOwnerToken } from '../../core/owner-token.mjs'
 import { queryOr } from '../../core/query-client.mjs'
@@ -941,6 +943,23 @@ function buildServer() {
   }))
 
   app.post('/api/v1/session/message', auth, handleIncomingMessage)
+
+  /**
+   * 手动压缩上下文：立即把较早对话压成长期记忆摘要，下一回合换新 Agent 会话。
+   * 聊天历史不受影响；压缩本身可能耗时几十秒，前端需要显示进行中状态。
+   */
+  app.post('/api/v1/session/compact', auth, asyncRoute(async (req, res) => {
+    const { principal } = appPrincipalFor(req)
+    const owner = ownerTokenOk(req)
+    const result = await compactSessionNow({
+      principalId: principal.id,
+      roleOverride: owner ? 'owner' : 'user',
+    })
+    if (!result.ok) {
+      return res.status(400).json({ ok: false, error: result.error || '压缩失败' })
+    }
+    res.json(result)
+  }))
 
   app.post('/api/v1/upload', auth, express.raw({ type: () => true, limit: '60mb' }), (req, res) => {
     const { deviceId, principal } = appPrincipalFor(req)
