@@ -75,7 +75,14 @@ Bridge 只绑定 `127.0.0.1`，HTTP `7779` / WS `7780`，`/health` 可做存活�
 ### 手机端
 
 1. 在 `config/bridge.json` 中开启 `adapters.app`（默认端口 `17779`）。
-2. 重启 Bridge 后，令牌在 `userdata/app-adapter/owner-token.txt`（自动生成，勿外传）。
+2. 首次部署需要**手动生成** owner 令牌（不会自动生成）：
+
+   ```bash
+   mkdir -p userdata/app-adapter
+   node -e "console.log(require('crypto').randomBytes(24).toString('hex'))" > userdata/app-adapter/owner-token.txt
+   ```
+
+   令牌文件在 `userdata/app-adapter/owner-token.txt`，勿外传。
 3. 手机与电脑同一局域网，浏览器打开 `http://<电脑IP>:17779`，在「设置」里填地址和令牌。
 4. 或用 Android Studio 打开 `app/android` 构建安装（当前版本 0.3.5）。
 

@@ -37,7 +37,9 @@ ConversationService / 工具链 / 记忆 / 工作区
    "app": { "enabled": true, "accounts": ["default"], "port": 17779, "host": "0.0.0.0" }
    ```
 2. 重启 Bridge（**会短暂中断当前微信会话**，建议没在聊天时操作）。
-3. 查看访问令牌：`userdata/app-adapter/owner-token.txt`（首次启动自动生成，勿外传）。
+3. 首次部署需要**手动生成** owner 令牌（不会自动生成）：
+   `mkdir -p userdata/app-adapter && node -e "console.log(require('crypto').randomBytes(24).toString('hex'))" > userdata/app-adapter/owner-token.txt`
+   令牌文件在 `userdata/app-adapter/owner-token.txt`，勿外传。
 4. 手机和电脑连同一个 Wi-Fi，浏览器打开：
    `http://<电脑局域网IP>:17779`
    - Windows 防火墙需要放行 17779（首次运行 Bridge 时可能弹窗，选择允许）。
