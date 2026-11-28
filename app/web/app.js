@@ -737,17 +737,12 @@
       const fresh = []
       for (const m of incoming) {
         if (!m || !m.id || known.has(m.id)) continue
-        // 本地乐观消息没有 seq；服务端回显后用服务端版本替换，避免同一句话出现两次
-        if (m.role === 'user') {
-          const idx = state.messages.findIndex(x => x.role === 'user'
-            && !Number.isInteger(x.seq)
-            && String(x.text || '').trim() === String(m.text || '').trim()
-            && Math.abs((Date.parse(x.ts) || 0) - (Date.parse(m.ts) || 0)) < 120000)
-          if (idx >= 0) {
-            state.messages[idx] = m
-            known.add(m.id)
-            continue
-          }
+        // 本地乐观消息 / WS 实时消息没有存储 id；用服务端版本替换，避免重复
+        const idx = state.messages.findIndex(x => messagesLookSame(x, m))
+        if (idx >= 0) {
+          state.messages[idx] = m
+          known.add(m.id)
+          continue
         }
         fresh.push(m)
       }
@@ -1292,6 +1287,35 @@
   }, 25000)
 
   // 同一条 WS 事件可能从多条残留连接重复到达；以 id / 时间戳+正文去重。
+  // WS 的 assistant/file 事件不带存储消息的 id，增量同步带回的版本 id 不同；
+  // 合并时按「角色 + 正文/文件 + 时间近似」去重，避免同一回复出现两次。
+  function messagesLookSame(a, b) {
+    if (!a || !b) return false
+    if (a.id && b.id && a.id === b.id) return true
+    // 两条都已经是服务端持久化消息（都有 seq）时，同文也可能是不同时段的重复回复，
+    // 不能只凭正文判重；只处理「本地临时消息 vs 服务端版本」这一种情况。
+    if (Number.isInteger(a.seq) && Number.isInteger(b.seq)) return false
+    const af = a.file || null
+    const bf = b.file || null
+    if (af || bf) {
+      if (!af || !bf) return false
+      if (af.id && bf.id && af.id === bf.id) return true
+      if (af.url && bf.url && af.url === bf.url) return true
+      const aKey = `${af.name || ''}|${af.size || ''}`
+      const bKey = `${bf.name || ''}|${bf.size || ''}`
+      if (aKey !== '|' && aKey === bKey) {
+        return Math.abs((Date.parse(a.ts || '') || 0) - (Date.parse(b.ts || '') || 0)) < 120000
+      }
+      return false
+    }
+    const at = String(a.text || '').trim()
+    const bt = String(b.text || '').trim()
+    if (!at || at !== bt) return false
+    if (a.role !== b.role) return false
+    const gap = Math.abs((Date.parse(a.ts || '') || 0) - (Date.parse(b.ts || '') || 0))
+    return gap < 120000
+  }
+
   function isDuplicateWsEvent(key) {
     if (!key) return false
     if (state.wsSeen.has(key)) return true
@@ -1336,7 +1360,10 @@
         : (msg.timestamp ? `assistant:${msg.timestamp}|${msg.text}` : '')
       if (isDuplicateWsEvent(key)) return
       clearTyping()
-      appendMessage({ role: 'bot', text: msg.text, ts: msg.timestamp || new Date().toISOString() })
+      const ts = msg.timestamp || new Date().toISOString()
+      // 增量同步可能已经把同一条回复写进列表，这里再兜一层
+      if (state.messages.some(m => messagesLookSame(m, { role: 'bot', text: msg.text, ts }))) return
+      appendMessage({ role: 'bot', text: msg.text, ts })
       refreshContext()
       if (state.tab === 'chat' && document.visibilityState === 'visible') markReadSoon()
       else setUnread(state.unread + 1)
@@ -1357,6 +1384,7 @@
         size: msg.size,
       }
       const ts = msg.timestamp || new Date().toISOString()
+      if (state.messages.some(m => messagesLookSame(m, { role: 'bot', file, ts }))) return
       rememberLocalFile({ ...file, ts })
       appendMessage({ role: 'bot', file, ts })
       if (state.tab === 'chat' && document.visibilityState === 'visible') markReadSoon()
