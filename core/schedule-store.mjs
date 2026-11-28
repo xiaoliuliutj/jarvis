@@ -19,6 +19,7 @@ import path from 'path'
 import { randomUUID } from 'crypto'
 import { schedulesFile, ensureDir } from './paths.mjs'
 import { ensureUser } from './user-store.mjs'
+import { recordScheduleEvent } from './daily-record.mjs'
 
 const MAX_REMIND_MINUTES = 7 * 24 * 60
 const STATUSES = new Set(['pending', 'done', 'cancelled'])
@@ -162,6 +163,12 @@ export function updateSchedule(principalId, id, updates) {
   schedule.updatedAt = new Date().toISOString()
 
   writeSchedules(principalId, schedules)
+  // 完成/取消立即写进当天的日常记录（按需检索，不进长期记忆）；重复更新原地替换
+  try {
+    recordScheduleEvent(principalId, schedule)
+  } catch {
+    // 日常记录写失败不影响日程本身
+  }
   return schedule
 }
 

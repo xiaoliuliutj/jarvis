@@ -3,7 +3,8 @@
  *
  * 设计：
  *   - 一条日程对应一条记忆，ref = `schedule:<id>`，按 ref 更新，绝不重复追加
- *   - 只保留近期/未来的日程：待办保留过去 7 天到未来 45 天；已完成/已取消保留 7 天
+ *   - 「日程」区只放待办：待办保留过去 7 天到未来 45 天
+ *   - 完成/取消的日程立即写进 workspace/日常记录/YYYY-MM-DD.md，按需检索，不进长期记忆
  *   - 日程被删除或超出窗口时，对应记忆条目一并移除；更久远的记录只留在 schedules.json
  *   - 只在上下文压缩时同步（日程增删改不即时写入）；内容不变时不写盘
  */
@@ -51,12 +52,10 @@ export function scheduleMemoryContent(schedule) {
 function selectRelevant(schedules, now) {
   return schedules
     .filter(item => {
+      // 完成/取消的已进日常记录，长期记忆只维护待办
+      if (item.status !== 'pending') return false
       const start = Date.parse(item.startAt) || 0
-      if (item.status === 'pending') {
-        return start >= now - KEEP_PAST_DAYS * DAY_MS && start <= now + KEEP_FUTURE_DAYS * DAY_MS
-      }
-      const ref = Date.parse(item.doneAt || item.startAt) || 0
-      return now - ref <= KEEP_PAST_DAYS * DAY_MS
+      return start >= now - KEEP_PAST_DAYS * DAY_MS && start <= now + KEEP_FUTURE_DAYS * DAY_MS
     })
     .sort((a, b) => (Date.parse(a.startAt) || 0) - (Date.parse(b.startAt) || 0))
     .slice(0, MAX_ENTRIES)
