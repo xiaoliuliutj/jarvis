@@ -21,6 +21,7 @@
  */
 
 import fs from 'fs'
+import path from 'path'
 import {
   AGENT_CONFIG_FILE,
   BRIDGE_CONFIG_FILE,
@@ -28,8 +29,25 @@ import {
   RULES_FILE,
 } from './paths.mjs'
 
+// 缺配置时给出可执行的提示。新部署最容易踩这个坑：
+// 只有 *.example.* 模板就启动，Bridge 直接抛原始 ENOENT，手机端只看到白屏。
 function readJson(file) {
-  return JSON.parse(fs.readFileSync(file, 'utf-8'))
+  let raw
+  try {
+    raw = fs.readFileSync(file, 'utf-8')
+  } catch (err) {
+    if (err?.code === 'ENOENT') {
+      const base = path.basename(file)
+      const example = base.replace(/\.json$/, '.example.json')
+      throw new Error(`缺少配置文件 ${file}。请先复制 config/${example} 为 config/${base} 并填写后再启动。`)
+    }
+    throw err
+  }
+  try {
+    return JSON.parse(raw)
+  } catch (err) {
+    throw new Error(`配置文件 JSON 格式错误：${file}（${err.message}）`)
+  }
 }
 
 export function loadAgentSettings() {
@@ -142,5 +160,12 @@ export function getAgentEnv() {
 }
 
 export function readRules() {
-  return fs.readFileSync(RULES_FILE, 'utf-8')
+  try {
+    return fs.readFileSync(RULES_FILE, 'utf-8')
+  } catch (err) {
+    if (err?.code === 'ENOENT') {
+      throw new Error(`缺少全局规则文件 ${RULES_FILE}。请先复制 config/rules.example.md 为 config/rules.md。`)
+    }
+    throw err
+  }
 }

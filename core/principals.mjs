@@ -13,7 +13,14 @@ import { createHash } from 'crypto'
 import { PRINCIPALS_FILE, PC_MAIN_ID } from './paths.mjs'
 
 function readRegistry() {
-  return JSON.parse(fs.readFileSync(PRINCIPALS_FILE, 'utf-8'))
+  try {
+    return JSON.parse(fs.readFileSync(PRINCIPALS_FILE, 'utf-8'))
+  } catch (err) {
+    if (err?.code === 'ENOENT') {
+      throw new Error(`缺少身份注册表 ${PRINCIPALS_FILE}。请先复制 config/principals.example.json 为 config/principals.json 并按文档填写。`)
+    }
+    throw err
+  }
 }
 
 function writeRegistry(registry) {
