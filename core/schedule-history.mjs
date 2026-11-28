@@ -13,8 +13,8 @@ const HISTORY_NAME = '日程历史.md'
 const HEADER = [
   '# 日程历史',
   '',
-  '| 日程时间 | 标题 | 完成时间 | 结果/备注 |',
-  '| --- | --- | --- | --- |',
+  '| 日程时间 | 标题 | 状态 | 结束时间 | 结果/备注 |',
+  '| --- | --- | --- | --- | --- |',
 ]
 
 function pad(n) {
@@ -35,12 +35,14 @@ function formatRow(schedule) {
   const title = cleanCell(schedule.title)
   const outcome = cleanCell(schedule.outcome)
   const notes = cleanCell(schedule.notes)
+  const cancelled = schedule.status === 'cancelled'
   const detail = [
-    outcome ? `结果：${outcome}` : '',
+    !cancelled && outcome ? `结果：${outcome}` : '',
     notes ? `备注：${notes}` : '',
   ].filter(Boolean).join('；')
   const tag = schedule.id ? ` <!-- schedule:${schedule.id} -->` : ''
-  return `| ${formatWhen(schedule.startAt)} | ${title}${tag} | ${formatWhen(schedule.doneAt)} | ${detail} |`
+  const status = cancelled ? '已取消' : '已完成'
+  return `| ${formatWhen(schedule.startAt)} | ${title}${tag} | ${status} | ${formatWhen(schedule.doneAt)} | ${detail} |`
 }
 
 /**

@@ -153,7 +153,7 @@ export async function compactSessionContext({
   const scheduleLines = listArchivedScheduleLines(principalId)
   if (scheduleLines.length) {
     scheduleNote = [
-      '【以下已完成日程已单独归档（长期记忆「日程」区或日程历史），摘要中不要重复罗列（可保留与之相关的偏好/决定）】',
+      '【以下终态日程（已完成/已取消）已单独归档（长期记忆「日程」区或日程历史），摘要中不要重复罗列（可保留与之相关的偏好/决定）】',
       ...scheduleLines.map(line => `- ${line}`),
     ].join('\n')
   }

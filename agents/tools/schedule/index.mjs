@@ -57,7 +57,7 @@ server.tool(
 
 server.tool(
   'schedule__list',
-  '列出当前用户自己的日程。默认只看未完成的未来日程；includePast=true 看历史，includeDone=true 包含已完成，includeCancelled=true 包含已取消。完成状态以日程的 status 字段为准，不要依赖长期记忆。',
+  '列出当前用户自己还活着的日程（schedules.json）。默认只看未完成的未来日程；includePast=true 看历史，includeDone=true 包含已完成，includeCancelled=true 包含已取消。已归档的完成/取消记录不在这里：最近 30 条在长期记忆「日程」区，更早的在当前用户工作区「日程历史.md」。',
   {
     includePast: z.boolean().optional().describe('是否包含已经开始的日程，默认 false'),
     includeDone: z.boolean().optional().describe('是否包含已完成（status=done）的日程，默认 false'),

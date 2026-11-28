@@ -5,12 +5,12 @@
  *   1. 活着的日程：userdata/<id>/schedules.json
  *      - 还没归档的日程都在这，跟完成状态无关；定时任务/提醒扫描只读这里
  *   2. 长期记忆「日程」区
- *      - 只放已完成的日程，最多保留最近完成的 30 条
+ *      - 只放终态日程（已完成 / 已取消，之后不会再变化），最多保留最近 30 条
  *      - 内容随压缩更新，不在日程增删改时即时写入
  *   3. 日程历史：workspace/日程历史.md
- *      - 长期记忆超限后挤出来的完整记录（标题/备注/结果都在）
+ *      - 长期记忆超限后挤出来的完整记录（标题/状态/备注/结果都在）
  *
- * 走法：完成 → 留在日程表 → 压缩时进入长期记忆（并从日程表移出）
+ * 走法：完成/取消 → 留在日程表 → 压缩时进入长期记忆（并从日程表移出）
  *       → 长期记忆超限 → 最老的移进日程历史（并从长期记忆移出）
  */
 
@@ -19,8 +19,13 @@ import { readSchedules, writeSchedules } from './schedule-store.mjs'
 import { readMemoryEntries, writeMemoryEntries } from './user-store.mjs'
 import { appendScheduleHistory } from './schedule-history.mjs'
 
-// 长期记忆「日程」区上限：默认保留最近完成的 30 条
+// 长期记忆「日程」区上限：默认保留最近 30 条终态日程
 const MAX_ENTRIES = 30
+
+/** 终态：完成/取消后不会再变化，可以归档进长期记忆 */
+function isSettled(item) {
+  return item?.status === 'done' || item?.status === 'cancelled'
+}
 
 function formatWhen(iso) {
   const date = new Date(iso)
@@ -57,15 +62,15 @@ function pickData(schedule) {
     doneAt: schedule.doneAt || null,
     outcome: schedule.outcome || '',
     priority: schedule.priority || 'normal',
-    status: 'done',
+    status: schedule.status === 'cancelled' ? 'cancelled' : 'done',
   }
 }
 
-/** 本次压缩会归档的已完成日程行（供压缩摘要去重，避免摘要里重复罗列）。 */
+/** 本次压缩会归档的终态日程行（供压缩摘要去重，避免摘要里重复罗列）。 */
 export function listArchivedScheduleLines(principalId) {
   try {
     return readSchedules(principalId)
-      .filter(item => item.status === 'done')
+      .filter(isSettled)
       .sort((a, b) => doneTime(b) - doneTime(a))
       .map(scheduleMemoryContent)
   } catch {
@@ -97,10 +102,10 @@ export function syncScheduleMemory(principalId, { now = Date.now() } = {}) {
   const archived = scheduleEntries.filter(entry => entry.data && entry.data.id)
   const archivedIds = new Set(archived.map(entry => entry.data.id))
 
-  // 日程表里已完成、本次要归档的
-  const doneFromTable = schedules.filter(item => item.status === 'done' && !archivedIds.has(item.id))
+  // 日程表里已终态（完成/取消）、本次要归档的
+  const doneFromTable = schedules.filter(item => isSettled(item) && !archivedIds.has(item.id))
 
-  // 合并成归档池，按完成时间从新到旧排
+  // 合并成归档池，按结束时间从新到旧排
   const pool = [
     ...doneFromTable.map(schedule => ({
       schedule,
@@ -132,9 +137,9 @@ export function syncScheduleMemory(principalId, { now = Date.now() } = {}) {
     writeMemoryEntries(principalId, next)
   }
 
-  // 完成的都从日程表移出（已在长期记忆或日程历史），保证三区不重复
-  if (schedules.some(item => item.status === 'done')) {
-    writeSchedules(principalId, schedules.filter(item => item.status !== 'done'))
+  // 终态的（完成/取消）都从日程表移出（已在长期记忆或日程历史），保证三区不重复
+  if (schedules.some(isSettled)) {
+    writeSchedules(principalId, schedules.filter(item => !isSettled(item)))
   }
 
   return nextScheduleEntries.length
