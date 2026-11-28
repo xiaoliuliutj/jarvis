@@ -4,8 +4,8 @@
  * 设计：
  *   - 一条日程对应一条记忆，ref = `schedule:<id>`，按 ref 更新，绝不重复追加
  *   - 只保留近期/未来的日程：待办保留过去 7 天到未来 45 天；已完成/已取消保留 7 天
- *   - 日程被删除或超出窗口时，对应记忆条目一并移除
- *   - 由上下文压缩和日程工具调用后触发；内容不变时不写盘
+ *   - 日程被删除或超出窗口时，对应记忆条目一并移除；更久远的记录只留在 schedules.json
+ *   - 只在上下文压缩时同步（日程增删改不即时写入）；内容不变时不写盘
  */
 
 import { randomUUID } from 'crypto'
@@ -60,6 +60,15 @@ function selectRelevant(schedules, now) {
     })
     .sort((a, b) => (Date.parse(a.startAt) || 0) - (Date.parse(b.startAt) || 0))
     .slice(0, MAX_ENTRIES)
+}
+
+/** 当前会出现在长期记忆「日程」区的行（不含列表前缀），供压缩摘要去重使用。 */
+export function listScheduleMemoryLines(principalId, { now = Date.now() } = {}) {
+  try {
+    return selectRelevant(readSchedules(principalId), now).map(scheduleMemoryContent)
+  } catch {
+    return []
+  }
 }
 
 /** 同步当前用户的日程记忆；返回保留的日程条数。 */

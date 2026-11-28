@@ -20,13 +20,6 @@ import {
   formatDateTime,
   formatAdvance,
 } from '../../../core/schedule-store.mjs'
-import { syncScheduleMemory } from '../../../core/schedule-memory.mjs'
-
-function syncScheduleMemorySafe() {
-  try {
-    syncScheduleMemory(principalId)
-  } catch {}
-}
 
 const principalId = process.env.JARVIS_PRINCIPAL_ID
 if (!principalId) throw new Error('缺少 JARVIS_PRINCIPAL_ID')
@@ -50,7 +43,6 @@ server.tool(
   async ({ title, startAt, remindBeforeMinutes = 0, notes, priority = 'normal' }) => {
     try {
       const item = addSchedule(principalId, { title, startAt, remindBeforeMinutes, notes, priority })
-      syncScheduleMemorySafe()
       return {
         content: [{
           type: 'text',
@@ -103,7 +95,6 @@ server.tool(
   async ({ id, ...updates } = {}) => {
     try {
       const item = updateSchedule(principalId, id, updates)
-      syncScheduleMemorySafe()
       return { content: [{ type: 'text', text: `✅ 已更新日程：${item.title}\n${formatScheduleLine(item)}` }] }
     } catch (err) {
       return fail(err)
@@ -120,7 +111,6 @@ server.tool(
   async ({ id }) => {
     try {
       const item = deleteSchedule(principalId, id)
-      syncScheduleMemorySafe()
       return { content: [{ type: 'text', text: `✅ 已删除日程：${item.title}` }] }
     } catch (err) {
       return fail(err)
