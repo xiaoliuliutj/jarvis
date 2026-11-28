@@ -48,7 +48,8 @@
     settings: null,
     me: null,
     usageGranularity: 'day',
-    usageAnchor: todayKey(),
+    usageFrom: todayKey(),
+    usageTo: todayKey(),
     usageSummary: null,
     usageError: '',
     usagePricing: null,
@@ -117,7 +118,8 @@
     toolScope: $('toolScope'),
     toolList: $('toolList'),
     usageGranularity: $('usageGranularity'),
-    usageDate: $('usageDate'),
+    usageFrom: $('usageFrom'),
+    usageTo: $('usageTo'),
     usagePrev: $('usagePrev'),
     usageNext: $('usageNext'),
     usageToday: $('usageToday'),
@@ -257,45 +259,43 @@
     next.setHours(0, 0, 0, 0)
     return next
   }
-  function usagePeriodRange(granularity, anchorKey) {
+  // 区间选择：state.usageFrom / usageTo 是「含首含尾」的日期键，
+  // 请求时把结束日 +1 天变成半开区间。
+  function usageRangeFromKeys(fromKey, toKey) {
+    const from = parseLocalDateKey(fromKey)
+    const endDay = parseLocalDateKey(toKey || fromKey)
+    const to = endDay.getTime() >= from.getTime() ? addDays(endDay, 1) : addDays(from, 1)
+    return { from, to }
+  }
+  function currentUsageRange() {
+    return usageRangeFromKeys(state.usageFrom, state.usageTo)
+  }
+  function usagePresetKeys(granularity, anchorKey) {
     const anchor = parseLocalDateKey(anchorKey)
-    if (granularity === 'day') {
-      const from = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate())
-      return { from, to: addDays(from, 1) }
-    }
     if (granularity === 'week') {
-      const from = startOfWeek(anchor)
-      return { from, to: addDays(from, 7) }
+      const start = startOfWeek(anchor)
+      return { fromKey: localDateKey(start), toKey: localDateKey(addDays(start, 6)) }
     }
-    const from = new Date(anchor.getFullYear(), anchor.getMonth(), 1)
-    return { from, to: new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1) }
-  }
-  function usageSnapAnchor(granularity, anchorKey) {
-    const { from } = usagePeriodRange(granularity, anchorKey)
-    return localDateKey(from)
-  }
-  function usageShiftAnchor(granularity, anchorKey, delta) {
-    const date = parseLocalDateKey(anchorKey)
-    if (granularity === 'day') {
-      date.setDate(date.getDate() + delta)
-    } else if (granularity === 'week') {
-      date.setDate(date.getDate() + delta * 7)
-    } else {
-      date.setDate(1)
-      date.setMonth(date.getMonth() + delta)
+    if (granularity === 'month') {
+      const start = new Date(anchor.getFullYear(), anchor.getMonth(), 1)
+      const end = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0)
+      return { fromKey: localDateKey(start), toKey: localDateKey(end) }
     }
-    return localDateKey(date)
+    return { fromKey: localDateKey(anchor), toKey: localDateKey(anchor) }
   }
   function usagePeriodLabel(granularity, from, to) {
     const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+    const last = addDays(to, -1)
     if (granularity === 'day') {
       return `${from.getFullYear()}年${from.getMonth() + 1}月${from.getDate()}日 ${weekdays[from.getDay()]}`
     }
     if (granularity === 'week') {
-      const last = addDays(to, -1)
       return `${from.getFullYear()}年${from.getMonth() + 1}月${from.getDate()}日 - ${last.getMonth() + 1}月${last.getDate()}日`
     }
-    return `${from.getFullYear()}年${from.getMonth() + 1}月`
+    if (granularity === 'month') {
+      return `${from.getFullYear()}年${from.getMonth() + 1}月`
+    }
+    return `${from.getFullYear()}.${from.getMonth() + 1}.${from.getDate()} - ${last.getFullYear()}.${last.getMonth() + 1}.${last.getDate()}`
   }
 
   function read(key, fallback) {
@@ -3686,34 +3686,56 @@
 
   // ── usage ───────────────────────────────────────────────────────────────
 
-  state.usageAnchor = usageSnapAnchor(state.usageGranularity, state.usageAnchor)
-  el.usageDate.value = state.usageAnchor
-  for (const button of el.usageGranularity.querySelectorAll('button')) {
-    button.classList.toggle('active', button.dataset.granularity === state.usageGranularity)
+  function syncUsageInputs() {
+    if (el.usageFrom) el.usageFrom.value = state.usageFrom
+    if (el.usageTo) el.usageTo.value = state.usageTo
   }
+
+  function setActiveGranularity() {
+    for (const button of el.usageGranularity.querySelectorAll('button')) {
+      button.classList.toggle('active', button.dataset.granularity === state.usageGranularity)
+    }
+  }
+
+  syncUsageInputs()
+  setActiveGranularity()
 
   el.usageGranularity.addEventListener('click', event => {
     const button = event.target.closest('button[data-granularity]')
     if (!button) return
     state.usageGranularity = button.dataset.granularity
-    state.usageAnchor = usageSnapAnchor(state.usageGranularity, state.usageAnchor)
-    el.usageDate.value = state.usageAnchor
-    for (const item of el.usageGranularity.querySelectorAll('button')) {
-      item.classList.toggle('active', item === button)
-    }
+    const { fromKey, toKey } = usagePresetKeys(state.usageGranularity, state.usageFrom || todayKey())
+    state.usageFrom = fromKey
+    state.usageTo = toKey
+    syncUsageInputs()
+    setActiveGranularity()
     resetUsagePeriod()
   })
 
-  el.usageDate.addEventListener('change', () => {
-    state.usageAnchor = el.usageDate.value || todayKey()
+  function onUsageRangeChange() {
+    const fromKey = el.usageFrom?.value || todayKey()
+    let toKey = el.usageTo?.value || fromKey
+    if (toKey < fromKey) toKey = fromKey
+    state.usageFrom = fromKey
+    state.usageTo = toKey
+    // 手动改日期 = 自定义区间，取消预设按钮的选中态
+    state.usageGranularity = 'custom'
+    syncUsageInputs()
+    setActiveGranularity()
     resetUsagePeriod()
-  })
+  }
+
+  el.usageFrom?.addEventListener('change', onUsageRangeChange)
+  el.usageTo?.addEventListener('change', onUsageRangeChange)
 
   el.usagePrev.addEventListener('click', () => shiftUsagePeriod(-1))
   el.usageNext.addEventListener('click', () => shiftUsagePeriod(1))
   el.usageToday.addEventListener('click', () => {
-    state.usageAnchor = todayKey()
-    el.usageDate.value = state.usageAnchor
+    state.usageGranularity = 'day'
+    state.usageFrom = todayKey()
+    state.usageTo = state.usageFrom
+    syncUsageInputs()
+    setActiveGranularity()
     resetUsagePeriod()
   })
   el.usageDetailsToggle.addEventListener('click', () => {
@@ -3752,8 +3774,27 @@
   }
 
   function shiftUsagePeriod(delta) {
-    state.usageAnchor = usageShiftAnchor(state.usageGranularity, state.usageAnchor, delta)
-    el.usageDate.value = state.usageAnchor
+    const { from, to } = currentUsageRange()
+    if (state.usageGranularity === 'month') {
+      const start = new Date(from.getFullYear(), from.getMonth() + delta, 1)
+      const end = new Date(start.getFullYear(), start.getMonth() + 1, 0)
+      state.usageFrom = localDateKey(start)
+      state.usageTo = localDateKey(end)
+    } else if (state.usageGranularity === 'week') {
+      const start = addDays(from, delta * 7)
+      state.usageFrom = localDateKey(start)
+      state.usageTo = localDateKey(addDays(start, 6))
+    } else if (state.usageGranularity === 'day') {
+      const day = addDays(from, delta)
+      state.usageFrom = localDateKey(day)
+      state.usageTo = state.usageFrom
+    } else {
+      const span = Math.max(1, Math.round((to.getTime() - from.getTime()) / 86400000))
+      const start = addDays(from, delta * span)
+      state.usageFrom = localDateKey(start)
+      state.usageTo = localDateKey(addDays(start, span - 1))
+    }
+    syncUsageInputs()
     resetUsagePeriod()
   }
 
@@ -3882,7 +3923,7 @@
     if (!state.token) return
     loadUsagePricing().catch(() => {})
     if (!state.usageSummary) renderUsage()
-    const { from, to } = usagePeriodRange(state.usageGranularity, state.usageAnchor)
+    const { from, to } = currentUsageRange()
     // 首屏只取统计 + 最近 20 轮（点开明细直接显示）；更早的用分页接口再拉
     const query = new URLSearchParams({
       from: from.toISOString(),
@@ -3918,7 +3959,7 @@
     const s = state.usageSummary
     const data = s || {}
     const pricing = data.pricing || state.usagePricing
-    const { from, to } = usagePeriodRange(state.usageGranularity, state.usageAnchor)
+    const { from, to } = currentUsageRange()
     el.usagePeriodLabel.textContent = usagePeriodLabel(state.usageGranularity, from, to)
 
     el.usageCards.textContent = ''
@@ -4036,7 +4077,7 @@
       state.usageMessagesError = ''
     }
     renderUsageMessages()
-    const { from, to } = usagePeriodRange(state.usageGranularity, state.usageAnchor)
+    const { from, to } = currentUsageRange()
     const query = new URLSearchParams({
       from: from.toISOString(),
       to: to.toISOString(),

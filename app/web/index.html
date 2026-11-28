@@ -91,7 +91,9 @@
           </div>
           <div class="usage-period-nav">
             <button id="usagePrev" class="ghost-btn compact usage-nav-btn" type="button" aria-label="上一期">‹</button>
-            <input id="usageDate" class="month-input" type="date" />
+            <input id="usageFrom" class="month-input" type="date" aria-label="开始日期" />
+            <span class="usage-range-sep">–</span>
+            <input id="usageTo" class="month-input" type="date" aria-label="结束日期" />
             <button id="usageNext" class="ghost-btn compact usage-nav-btn" type="button" aria-label="下一期">›</button>
             <button id="usageToday" class="ghost-btn compact" type="button">今天</button>
           </div>
