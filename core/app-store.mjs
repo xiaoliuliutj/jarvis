@@ -103,6 +103,8 @@ export function setSessionContext(principalId, sessionId, context) {
     rawMaxTokens: Number(context.rawMaxTokens) || 0,
     percentage: Number(context.percentage) || 0,
     estimated: !!context.estimated,
+    // 手动压缩后写入的预估快照：标出「压缩后」，下一轮真实 usage 写入时自然清掉。
+    pendingCompact: !!context.pendingCompact,
     categories: Array.isArray(context.categories)
       ? context.categories.map(item => ({
           id: item?.id || '',
@@ -124,6 +126,46 @@ export function getSessionContext(principalId, sessionId) {
   if (!data || !Array.isArray(data.categories)) return null
   if (sessionId && data.sessionId && data.sessionId !== sessionId) return null
   return data
+}
+
+/**
+ * 手动压缩完成后整理上下文快照：旧历史会缩成交接块，
+ * 这里的 messages 按交接块字符数估算，标 pendingCompact；
+ * 下一轮回复写入真实 usage 时 pendingCompact 自然清掉。
+ * 没有旧快照时返回 null（前端继续显示「等待下一次回复」）。
+ */
+export function markSessionContextCompacted(principalId, sessionId, { handoffChars = 0 } = {}) {
+  const previous = getSessionContext(principalId, sessionId)
+  if (!previous || !Array.isArray(previous.categories) || !previous.categories.length) {
+    return null
+  }
+  // 中文约 2.5 字符 ≈ 1 token，最低按 80 tokens 计。
+  const handoffTokens = Math.max(80, Math.round((Number(handoffChars) || 0) / 2.5))
+  const categories = previous.categories.map(item => {
+    if (!item) return item
+    if (item.id === 'messages' || item.name === 'messages') {
+      return { ...item, tokens: handoffTokens }
+    }
+    return item
+  })
+  const maxTokens = Number(previous.maxTokens) || Number(previous.rawMaxTokens) || 0
+  const usedTokens = categories
+    .filter(item => item && item.kind !== 'free' && item.kind !== 'deferred')
+    .reduce((sum, item) => sum + (Number(item.tokens) || 0), 0)
+  for (const item of categories) {
+    if (item && (item.id === 'free_space' || item.kind === 'free')) {
+      item.tokens = Math.max(0, maxTokens - usedTokens)
+    }
+  }
+  return setSessionContext(principalId, sessionId, {
+    categories,
+    totalTokens: usedTokens,
+    maxTokens,
+    rawMaxTokens: previous.rawMaxTokens,
+    percentage: maxTokens ? (usedTokens / maxTokens) * 100 : 0,
+    estimated: true,
+    pendingCompact: true,
+  })
 }
 
 // ── secrets ──────────────────────────────────────────────────────────────────

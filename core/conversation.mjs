@@ -33,6 +33,7 @@ import {
   appendUsage,
   setSessionContext,
   getSessionContext,
+  markSessionContextCompacted,
 } from './app-store.mjs'
 import { readTranscriptUsage } from './usage-transcript.mjs'
 import { compactSessionContext } from './context-compactor.mjs'
@@ -714,6 +715,15 @@ export async function compactSessionNow({ principalId, roleOverride = null } = {
     // 丢弃旧快照，下一回合按含压缩摘要的最新长期记忆重建 system prompt。
     store.clearPromptSnapshot(principalId, displaySessionId)
     store.setSessionPendingHandoff(principalId, displaySessionId, compacted.handoffBlock || '')
+    // 上下文条跟着整理：压缩后旧历史会缩成交接块，先写一份预估快照，
+    // 下一轮回复拿到真实 usage 后自然覆盖。pendingCompact 用于 App 标出「压缩后」。
+    try {
+      markSessionContextCompacted(principalId, displaySessionId, {
+        handoffChars: String(compacted.handoffBlock || '').length,
+      })
+    } catch (err) {
+      logWarn('context.compact.snapshot.fail', err.message, { principalId })
+    }
     logInfo('context.compact.manual', '', {
       principalId,
       sessionId: displaySessionId,

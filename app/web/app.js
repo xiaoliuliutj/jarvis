@@ -528,7 +528,13 @@
     }
     el.contextBar.classList.toggle('empty', !visible.length)
     const percentage = Number(context.percentage) || (max ? total / max * 100 : 0)
-    el.contextValue.textContent = max ? `${formatTokens(max)} · ${Math.round(percentage)}%` : '—'
+    const compacted = !!context.pendingCompact
+    el.contextValue.textContent = max
+      ? `${formatTokens(max)} · ${Math.round(percentage)}%${compacted ? ' · 压缩后' : ''}`
+      : '—'
+    el.contextValue.title = compacted
+      ? '已压缩：这里按压缩后的预估占用显示，下一轮回复后更新为精确统计'
+      : ''
 
     for (const group of visible) {
       const item = document.createElement('span')
@@ -564,6 +570,12 @@
       rowEl.appendChild(value)
       el.contextPopover.appendChild(rowEl)
     }
+    if (compacted) {
+      const note = document.createElement('div')
+      note.className = 'context-popover-hint context-popover-compacted'
+      note.textContent = '已压缩：以上为压缩后的预估占用，下一轮回复后更新为精确统计'
+      el.contextPopover.appendChild(note)
+    }
     appendContextActions()
   }
 
@@ -598,24 +610,27 @@
     state.compactRunning = true
     button.disabled = true
     button.textContent = '正在压缩上下文…'
+    let data = null
+    let failure = ''
     try {
-      const data = await api('/api/v1/session/compact', { method: 'POST', body: {} })
-      if (data.partial) {
-        toast('旧消息比较多，已经压了一部分，再点一次继续喵')
-      } else {
-        toast('压缩完成喵～下一轮对话会带着摘要继续')
-        el.contextPopover.classList.add('hidden')
-        await refreshContext()
-      }
+      data = await api('/api/v1/session/compact', { method: 'POST', body: {} })
     } catch (err) {
-      toast(`压缩失败：${err.message}`)
+      failure = err.message
     } finally {
       state.compactRunning = false
-      if (button.isConnected) {
-        button.disabled = false
-        button.textContent = '压缩上下文'
-      }
     }
+    if (failure) {
+      toast(`压缩失败：${failure}`)
+      renderContext(state.context)
+      return
+    }
+    if (data.partial) {
+      toast('旧消息比较多，已经压了一部分，再点一次继续喵')
+    } else {
+      toast('压缩完成喵～上下文条已按压缩后整理')
+    }
+    // 弹层保持打开：刷新后直接能看到压缩后的明细和更短的彩条。
+    await refreshContext()
   }
 
   if (el.contextBar) {

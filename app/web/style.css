@@ -207,6 +207,10 @@ body { overflow: hidden; }
   font-size: 10.5px;
   line-height: 1.4;
 }
+.context-popover-compacted {
+  margin-top: 6px;
+  color: #9fd8b8;
+}
 .context-compact-btn {
   margin-top: 6px;
   width: 100%;
