@@ -1142,11 +1142,19 @@ function buildServer() {
       ...item,
       sessionName: names.get(item.sessionId) || '',
     }))
-    res.json({ ok: true, summary })
+    let presets = null
+    if (req.query.presets === '1') {
+      presets = await queryOr('usagePresets', {
+        principalId: principal.id,
+        pricing,
+      }, () => appStore.usagePresetSummaries(principal.id, { pricing }))
+    }
+    res.json({ ok: true, summary, presets })
     logInfo('usage.timing', 'summary', {
       principalId: principal.id,
       messageLimit,
       messages: summary.messages.length,
+      presets: presets ? Object.keys(presets).length : 0,
       ms: Date.now() - started,
     })
   }))

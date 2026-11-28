@@ -12,6 +12,7 @@
     localFiles: 'jarvis.app.localFiles',
     sessionCache: 'jarvis.app.sessionCache.v1',
     usageCache: 'jarvis.app.usageCache.v1',
+    usagePresets: 'jarvis.app.usagePresets.v1',
   }
   const MAX_ATTACHMENTS = 3
   const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
@@ -3955,6 +3956,33 @@
     } catch {}
   }
 
+  function loadUsagePresetCache() {
+    try {
+      const raw = read(KEYS.usagePresets, '')
+      if (!raw) return null
+      const data = JSON.parse(raw)
+      if (!data || data.v !== 1 || data.url !== state.url || data.dateKey !== todayKey()) return null
+      if (!data.presets || typeof data.presets !== 'object') return null
+      return data.presets
+    } catch {
+      return null
+    }
+  }
+
+  function saveUsagePresetCache(presets) {
+    if (!presets || typeof presets !== 'object') return
+    try {
+      const prev = loadUsagePresetCache() || {}
+      write(KEYS.usagePresets, JSON.stringify({
+        v: 1,
+        url: state.url,
+        dateKey: todayKey(),
+        presets: { ...prev, ...presets },
+        savedAt: new Date().toISOString(),
+      }))
+    } catch {}
+  }
+
   function adoptUsageMessagesFromSummary(summary) {
     if (state.usageMessagesLoaded) return
     const first = Array.isArray(summary?.messages) ? summary.messages : []
@@ -3970,12 +3998,16 @@
     if (!state.token) return
     const { from, to } = currentUsageRange()
     // 首屏只取统计 + 最近 20 轮（点开明细直接显示）；更早的用分页接口再拉
-    const query = new URLSearchParams({
+    const baseQuery = new URLSearchParams({
       from: from.toISOString(),
       to: to.toISOString(),
       messageLimit: '20',
     })
-    const requestKey = query.toString()
+    const requestKey = baseQuery.toString()
+    const presetKey = ['today', 'week', 'month', 'all'].includes(state.usageGranularity)
+      ? state.usageGranularity
+      : ''
+    const presetCache = loadUsagePresetCache()
 
     // 先渲染本地缓存，网络请求在后台进行（Tailscale 慢也不阻塞首屏）
     const cached = loadUsageCache(requestKey)
@@ -3985,24 +4017,39 @@
       if (cached.pricing) applyUsagePricing(cached.pricing)
       adoptUsageMessagesFromSummary(cached)
       renderUsage()
+    } else if (presetKey && presetCache?.[presetKey]) {
+      const preset = presetCache[presetKey]
+      state.usageSummary = preset
+      state.usageError = ''
+      if (preset.pricing) applyUsagePricing(preset.pricing)
+      adoptUsageMessagesFromSummary(preset)
+      renderUsage()
     } else if (!state.usageSummary || state.usageRequestKey !== requestKey) {
       state.usageSummary = null
       renderUsage()
     }
-    if (!state.usagePricing && !cached?.pricing) loadUsagePricing().catch(() => {})
+    if (!state.usagePricing && !cached?.pricing && !presetCache?.[presetKey]?.pricing) {
+      loadUsagePricing().catch(() => {})
+    }
 
     // 同一区间 30 秒内刚拉过就跳过重复请求
     if (state.usageRequestKey === requestKey && Date.now() - (state.usageFetchedAt || 0) < 30000) return
 
+    // 当天第一次打开时，一次把四个预设的总量都带回来，之后切换零等待
+    const fetchQuery = new URLSearchParams(baseQuery)
+    if (!presetCache) fetchQuery.set('presets', '1')
+
     state.usageRequestKey = requestKey
     try {
-      const data = await api(`/api/v1/usage/summary?${requestKey}`)
+      const data = await api(`/api/v1/usage/summary?${fetchQuery.toString()}`)
       if (state.usageRequestKey !== requestKey) return
       state.usageSummary = data.summary
       state.usageError = ''
       state.usageFetchedAt = Date.now()
       if (data.summary?.pricing) applyUsagePricing(data.summary.pricing)
       adoptUsageMessagesFromSummary(data.summary)
+      if (data.presets) saveUsagePresetCache(data.presets)
+      if (presetKey) saveUsagePresetCache({ [presetKey]: data.summary })
       saveUsageCache(requestKey, data.summary)
       renderUsage()
     } catch (err) {

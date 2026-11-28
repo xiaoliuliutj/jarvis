@@ -1094,6 +1094,31 @@ export function usageSummary(principalId, { month = monthKey() } = {}) {
   return summary
 }
 
+/** 一次算出四个固定预设（今天/本周/本月/全量）的总量，供 App 首次打开用量页时缓存。 */
+export function usagePresetSummaries(principalId, { pricing = null } = {}) {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = now.getMonth()
+  const d = now.getDate()
+  const todayStart = new Date(y, m, d)
+  const tomorrow = new Date(y, m, d + 1)
+  const weekStart = new Date(y, m, d - ((now.getDay() + 6) % 7))
+  const monthStart = new Date(y, m, 1)
+  const allStart = new Date(2000, 0, 1)
+  const make = (from, to) => usageSummaryRange(principalId, {
+    from: from.toISOString(),
+    to: to.toISOString(),
+    messageLimit: 0,
+    pricing,
+  })
+  return {
+    today: make(todayStart, tomorrow),
+    week: make(weekStart, tomorrow),
+    month: make(monthStart, tomorrow),
+    all: make(allStart, tomorrow),
+  }
+}
+
 // ── devices ──────────────────────────────────────────────────────────────────
 
 function normalizeDevices(devices = {}) {
