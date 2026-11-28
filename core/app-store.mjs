@@ -763,6 +763,9 @@ function summarizeRows(rows, { from = null, to = null, messageLimit = 200, prici
   }
 
   summary.avgLatencyMs = latencyCount ? Math.round(latencySum / latencyCount) : 0
+  // 保留求和项，供每日 rollup 合并时重新计算平均耗时
+  summary.latencySum = latencySum
+  summary.latencyCount = latencyCount
   summary.activeDays = days.size
   for (const sess of Object.values(summary.bySession)) {
     sess.totalTokens = sess.inputTokens + sess.outputTokens + sess.cacheReadTokens + sess.cacheWriteTokens
@@ -819,6 +822,191 @@ function pruneUsageCache(dir) {
   } catch {}
 }
 
+// ── 每日 rollup ─────────────────────────────────────────────────────────────
+// 先按天聚合一次并落盘；任意区间只需把天加起来，不用每次扫全量 jsonl。
+const ROLLUP_VERSION = 1
+
+function rollupDir(principalId) {
+  return path.join(usageDir(principalId), 'rollup')
+}
+
+function rollupFile(principalId, month) {
+  return path.join(rollupDir(principalId), `${month}.json`)
+}
+
+function localDayKeyOf(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function localDayStart(dayKey) {
+  const [y, m, d] = String(dayKey).split('-').map(Number)
+  return new Date(y || 1970, (m || 1) - 1, d || 1)
+}
+
+function monthFileStamp(principalId, month) {
+  try {
+    const stat = fs.statSync(usageFile(principalId, month))
+    return { size: stat.size, mtimeMs: stat.mtimeMs }
+  } catch {
+    return null
+  }
+}
+
+function buildMonthRollup(principalId, month) {
+  const stamp = monthFileStamp(principalId, month)
+  if (!stamp) return { v: ROLLUP_VERSION, month, stamp: null, days: {} }
+  const file = rollupFile(principalId, month)
+  try {
+    const cached = JSON.parse(fs.readFileSync(file, 'utf-8'))
+    if (cached?.v === ROLLUP_VERSION && cached.stamp?.size === stamp.size && cached.stamp?.mtimeMs === stamp.mtimeMs) {
+      return cached
+    }
+  } catch {}
+
+  const rows = readUsageRows(usageFile(principalId, month))
+    .map(row => ({ ...row, level: row.level === 'call' ? 'call' : 'turn' }))
+  const byDay = new Map()
+  for (const row of rows) {
+    const ts = Date.parse(row.ts)
+    if (!Number.isFinite(ts)) continue
+    const key = localDayKeyOf(new Date(ts))
+    if (!byDay.has(key)) byDay.set(key, [])
+    byDay.get(key).push(row)
+  }
+  const days = {}
+  for (const [key, dayRows] of byDay) {
+    days[key] = summarizeRows(dayRows, { messageLimit: 5000, pricing: null })
+  }
+  const data = { v: ROLLUP_VERSION, month, stamp, days }
+  try {
+    ensureDir(rollupDir(principalId))
+    const tmp = `${file}.tmp-${process.pid}-${crypto.randomBytes(3).toString('hex')}`
+    fs.writeFileSync(tmp, JSON.stringify(data), 'utf-8')
+    fs.renameSync(tmp, file)
+  } catch {}
+  return data
+}
+
+function mergeDaySummaries(daySummaries, { from, to, messageLimit, pricing }) {
+  const summary = {
+    from: from ? new Date(from).toISOString() : null,
+    to: to ? new Date(to).toISOString() : null,
+    calls: 0,
+    sessionCount: 0,
+    messageTotal: 0,
+    llmCalls: 0,
+    callRecords: 0,
+    legacyTurns: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    errors: 0,
+    activeDays: 0,
+    avgLatencyMs: 0,
+    estimatedCost: 0,
+    pricing: pricing || null,
+    byModel: {},
+    byCapability: {},
+    bySource: {},
+    bySession: {},
+    messages: [],
+    latencySum: 0,
+    latencyCount: 0,
+  }
+  const includeMessages = Number(messageLimit) !== 0
+  const messageList = []
+  const sessionIds = new Set()
+
+  for (const day of daySummaries) {
+    summary.calls += day.calls || 0
+    summary.llmCalls += day.llmCalls || 0
+    summary.callRecords += day.callRecords || 0
+    summary.legacyTurns += day.legacyTurns || 0
+    summary.inputTokens += day.inputTokens || 0
+    summary.outputTokens += day.outputTokens || 0
+    summary.cacheReadTokens += day.cacheReadTokens || 0
+    summary.cacheWriteTokens += day.cacheWriteTokens || 0
+    summary.errors += day.errors || 0
+    summary.activeDays += day.activeDays || 0
+    summary.latencySum += day.latencySum || 0
+    summary.latencyCount += day.latencyCount || 0
+    summary.messageTotal += day.messageTotal || 0
+    if (includeMessages) {
+      for (const message of day.messages || []) messageList.push(message)
+    }
+    for (const [modelKey, item] of Object.entries(day.byModel || {})) {
+      const target = summary.byModel[modelKey] || (summary.byModel[modelKey] = {
+        calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, estimatedCost: 0,
+      })
+      target.calls += item.calls || 0
+      target.inputTokens += item.inputTokens || 0
+      target.outputTokens += item.outputTokens || 0
+      target.cacheReadTokens += item.cacheReadTokens || 0
+      target.cacheWriteTokens += item.cacheWriteTokens || 0
+    }
+    for (const [cap, item] of Object.entries(day.byCapability || {})) {
+      if (!summary.byCapability[cap]) summary.byCapability[cap] = { calls: 0 }
+      summary.byCapability[cap].calls += item.calls || 0
+    }
+    for (const [src, item] of Object.entries(day.bySource || {})) {
+      if (!summary.bySource[src]) summary.bySource[src] = { calls: 0, inputTokens: 0, outputTokens: 0, estimatedCost: 0 }
+      summary.bySource[src].calls += item.calls || 0
+      summary.bySource[src].inputTokens += item.inputTokens || 0
+      summary.bySource[src].outputTokens += item.outputTokens || 0
+    }
+    for (const [sid, sess] of Object.entries(day.bySession || {})) {
+      sessionIds.add(sid)
+      const target = summary.bySession[sid] || (summary.bySession[sid] = {
+        sessionId: sid,
+        calls: 0,
+        turnRecords: 0,
+        legacyTurns: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        estimatedCost: 0,
+        firstTs: null,
+        lastTs: null,
+      })
+      target.calls += sess.calls || 0
+      target.turnRecords += sess.turnRecords || 0
+      target.legacyTurns += sess.legacyTurns || 0
+      target.inputTokens += sess.inputTokens || 0
+      target.outputTokens += sess.outputTokens || 0
+      target.cacheReadTokens += sess.cacheReadTokens || 0
+      target.cacheWriteTokens += sess.cacheWriteTokens || 0
+      if (sess.firstTs && (!target.firstTs || sess.firstTs < target.firstTs)) target.firstTs = sess.firstTs
+      if (sess.lastTs && (!target.lastTs || sess.lastTs > target.lastTs)) target.lastTs = sess.lastTs
+    }
+  }
+
+  const costOf = rec => (pricing ? usageCost(rec, pricing) : 0)
+  summary.sessionCount = sessionIds.size
+  summary.avgLatencyMs = summary.latencyCount ? Math.round(summary.latencySum / summary.latencyCount) : 0
+  summary.estimatedCost = costOf(summary)
+  for (const item of Object.values(summary.byModel)) item.estimatedCost = costOf(item)
+  for (const item of Object.values(summary.bySource)) item.estimatedCost = costOf(item)
+  for (const sess of Object.values(summary.bySession)) {
+    sess.totalTokens = sess.inputTokens + sess.outputTokens + sess.cacheReadTokens + sess.cacheWriteTokens
+    sess.llmCalls = sess.calls + (sess.legacyTurns || sess.turnRecords)
+    sess.estimatedCost = costOf(sess)
+  }
+
+  if (includeMessages) {
+    messageList.sort((a, b) => String(b.firstTs || '').localeCompare(String(a.firstTs || '')))
+    const limit = Math.max(1, Math.min(5000, Number(messageLimit) || 200))
+    const page = messageList.slice(0, limit)
+    if (pricing) {
+      for (const message of page) message.estimatedCost = usageCost(message, pricing)
+    }
+    summary.messages = page
+    summary.messageTotal = messageList.length
+  }
+  return summary
+}
+
 export function usageSummaryRange(principalId, { from, to, messageLimit = 200, pricing = null, skipCache = false } = {}) {
   const now = new Date()
   const fallback = monthBounds(monthKey(now))
@@ -849,8 +1037,23 @@ export function usageSummaryRange(principalId, { from, to, messageLimit = 200, p
     } catch {}
   }
 
-  const rows = readUsageRowsInRange(principalId, { from: fromDate, to: toDate })
-  const summary = summarizeRows(rows, { from: fromDate, to: toDate, messageLimit, pricing: rate })
+  let summary
+  try {
+    const months = monthKeysBetween(fromDate, toDate)
+    const daySummaries = []
+    for (const month of months) {
+      const rollup = buildMonthRollup(principalId, month)
+      for (const [dayKey, daySummary] of Object.entries(rollup?.days || {})) {
+        const dayStart = localDayStart(dayKey)
+        if (dayStart >= fromDate && dayStart < toDate) daySummaries.push(daySummary)
+      }
+    }
+    summary = mergeDaySummaries(daySummaries, { from: fromDate, to: toDate, messageLimit, pricing: rate })
+  } catch {
+    // rollup 失败时回退全量扫描，保证统计不中断
+    const rows = readUsageRowsInRange(principalId, { from: fromDate, to: toDate })
+    summary = summarizeRows(rows, { from: fromDate, to: toDate, messageLimit, pricing: rate })
+  }
   summary.generatedAt = new Date().toISOString()
 
   try {

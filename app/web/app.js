@@ -47,7 +47,7 @@
     models: [],
     settings: null,
     me: null,
-    usageGranularity: 'day',
+    usageGranularity: 'today',
     usageFrom: todayKey(),
     usageTo: todayKey(),
     usageSummary: null,
@@ -120,9 +120,6 @@
     usageGranularity: $('usageGranularity'),
     usageFrom: $('usageFrom'),
     usageTo: $('usageTo'),
-    usagePrev: $('usagePrev'),
-    usageNext: $('usageNext'),
-    usageToday: $('usageToday'),
     usagePeriodLabel: $('usagePeriodLabel'),
     usageCards: $('usageCards'),
     usageMeta: $('usageMeta'),
@@ -270,30 +267,32 @@
   function currentUsageRange() {
     return usageRangeFromKeys(state.usageFrom, state.usageTo)
   }
-  function usagePresetKeys(granularity, anchorKey) {
-    const anchor = parseLocalDateKey(anchorKey)
+  // 预设都按自然周期、从 0 点起算：今天=今天 0 点，本周=周一 0 点，本月=1 日 0 点，全量=全部记录
+  function usagePresetKeys(granularity) {
+    const today = new Date()
+    const todayK = localDateKey(today)
+    if (granularity === 'all') return { fromKey: '2000-01-01', toKey: todayK }
     if (granularity === 'week') {
-      const start = startOfWeek(anchor)
-      return { fromKey: localDateKey(start), toKey: localDateKey(addDays(start, 6)) }
+      return { fromKey: localDateKey(startOfWeek(today)), toKey: todayK }
     }
     if (granularity === 'month') {
-      const start = new Date(anchor.getFullYear(), anchor.getMonth(), 1)
-      const end = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0)
-      return { fromKey: localDateKey(start), toKey: localDateKey(end) }
+      const start = new Date(today.getFullYear(), today.getMonth(), 1)
+      return { fromKey: localDateKey(start), toKey: todayK }
     }
-    return { fromKey: localDateKey(anchor), toKey: localDateKey(anchor) }
+    return { fromKey: todayK, toKey: todayK }
   }
   function usagePeriodLabel(granularity, from, to) {
     const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
     const last = addDays(to, -1)
-    if (granularity === 'day') {
+    if (granularity === 'all') return '全部数据'
+    if (granularity === 'today') {
       return `${from.getFullYear()}年${from.getMonth() + 1}月${from.getDate()}日 ${weekdays[from.getDay()]}`
     }
     if (granularity === 'week') {
-      return `${from.getFullYear()}年${from.getMonth() + 1}月${from.getDate()}日 - ${last.getMonth() + 1}月${last.getDate()}日`
+      return `本周 ${from.getMonth() + 1}月${from.getDate()}日 - ${last.getMonth() + 1}月${last.getDate()}日`
     }
     if (granularity === 'month') {
-      return `${from.getFullYear()}年${from.getMonth() + 1}月`
+      return `本月 ${from.getFullYear()}年${from.getMonth() + 1}月1日 - ${last.getMonth() + 1}月${last.getDate()}日`
     }
     return `${from.getFullYear()}.${from.getMonth() + 1}.${from.getDate()} - ${last.getFullYear()}.${last.getMonth() + 1}.${last.getDate()}`
   }
@@ -3732,7 +3731,7 @@
     const button = event.target.closest('button[data-granularity]')
     if (!button) return
     state.usageGranularity = button.dataset.granularity
-    const { fromKey, toKey } = usagePresetKeys(state.usageGranularity, state.usageFrom || todayKey())
+    const { fromKey, toKey } = usagePresetKeys(state.usageGranularity)
     state.usageFrom = fromKey
     state.usageTo = toKey
     syncUsageInputs()
@@ -3756,16 +3755,6 @@
   el.usageFrom?.addEventListener('change', onUsageRangeChange)
   el.usageTo?.addEventListener('change', onUsageRangeChange)
 
-  el.usagePrev.addEventListener('click', () => shiftUsagePeriod(-1))
-  el.usageNext.addEventListener('click', () => shiftUsagePeriod(1))
-  el.usageToday.addEventListener('click', () => {
-    state.usageGranularity = 'day'
-    state.usageFrom = todayKey()
-    state.usageTo = state.usageFrom
-    syncUsageInputs()
-    setActiveGranularity()
-    resetUsagePeriod()
-  })
   el.usageDetailsToggle.addEventListener('click', () => {
     state.usageDetailsOpen = !state.usageDetailsOpen
     if (state.usageDetailsOpen && !state.usageMessagesLoaded) {
@@ -3799,31 +3788,6 @@
     state.usageMessageTotal = 0
     renderUsage()
     loadUsage()
-  }
-
-  function shiftUsagePeriod(delta) {
-    const { from, to } = currentUsageRange()
-    if (state.usageGranularity === 'month') {
-      const start = new Date(from.getFullYear(), from.getMonth() + delta, 1)
-      const end = new Date(start.getFullYear(), start.getMonth() + 1, 0)
-      state.usageFrom = localDateKey(start)
-      state.usageTo = localDateKey(end)
-    } else if (state.usageGranularity === 'week') {
-      const start = addDays(from, delta * 7)
-      state.usageFrom = localDateKey(start)
-      state.usageTo = localDateKey(addDays(start, 6))
-    } else if (state.usageGranularity === 'day') {
-      const day = addDays(from, delta)
-      state.usageFrom = localDateKey(day)
-      state.usageTo = state.usageFrom
-    } else {
-      const span = Math.max(1, Math.round((to.getTime() - from.getTime()) / 86400000))
-      const start = addDays(from, delta * span)
-      state.usageFrom = localDateKey(start)
-      state.usageTo = localDateKey(addDays(start, span - 1))
-    }
-    syncUsageInputs()
-    resetUsagePeriod()
   }
 
   function usageEmpty(target, text) {
