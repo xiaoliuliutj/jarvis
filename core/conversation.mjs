@@ -223,8 +223,8 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
       toolChars,
     }
 
-    // 上下文达到窗口 75% 时，把较早对话压成长期记忆，并换一个新的 Agent 会话；
-    // App 的显示会话保持不变，所以历史聊天记录不会消失。
+    // 上下文达到窗口 75%（或手动请求、历史兜底）时，把较早对话压成长期记忆，
+    // 并换一个新的 Agent 会话；App 的显示会话保持不变，所以历史聊天记录不会消失。
     // 定时任务走独立的共享会话，不参与聊天历史的压缩/换挡。
     if (!isCron && !forceNew && displaySessionId && agentSessionId) {
       const ratio = lastContext
@@ -234,11 +234,13 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
             : 0
         ))
         : 0
+      // 手动请求（session.compactRequested）：下一回合无条件压缩并换挡
+      const compactRequested = sessionRecord?.compactRequested === true
       // 首次启用压缩、还没有 context 数据时，用历史消息数量兜底，避免老会话一直不压缩。
       const bootCompact = !lastContext
         && displaySessionId
         && store.readMessages(principalId, displaySessionId).length >= 400
-      if (ratio >= 75 || bootCompact) {
+      if (compactRequested || ratio >= 75 || bootCompact) {
         const compacted = await compactSessionContext({
           principalId,
           displaySessionId,
@@ -250,7 +252,7 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
         if (compacted) {
           if (compacted.partial) {
             // 还有旧消息没压完：先不换 Agent 会话，避免最近那段未压缩消息被手交丢掉。
-            // 下一回合上下文仍超阈值，会从 compactedUpto 继续压。
+            // 下一回合上下文仍超阈值，会从 compactedUpto 继续压（手动请求也保留）。
             logInfo('context.compact.partial', '', {
               principalId,
               sessionId: displaySessionId,
@@ -258,6 +260,7 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
               compactedUpto: compacted.compactedUpto,
             })
           } else {
+            if (compactRequested) store.clearSessionCompactRequest(principalId, displaySessionId)
             rotateAgent = true
             handoffBlock = compacted.handoffBlock || ''
             memory = store.formatMemory(principalId, {
@@ -284,6 +287,9 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
               ratio: Math.round(ratio),
             })
           }
+        } else if (compactRequested) {
+          // 没有可压缩的内容（例如全是工具记录）：清掉请求，避免下回合反复空跑
+          store.clearSessionCompactRequest(principalId, displaySessionId)
         }
       }
     }

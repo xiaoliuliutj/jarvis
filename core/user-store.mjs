@@ -168,6 +168,25 @@ export function setSessionAgentId(principalId, sessionId, agentSessionId) {
   return session
 }
 
+/** 请求下一回合强制压缩上下文并换挡（清理掉旧 Agent 上下文，保留 App 历史）。 */
+export function requestSessionCompact(principalId, sessionId) {
+  const sessions = listSessions(principalId)
+  const session = sessions.find(s => s.sessionId === sessionId)
+  if (!session) return null
+  session.compactRequested = true
+  writeJson(indexFile(principalId), sessions)
+  return session
+}
+
+/** 压缩已完成（或无法压缩）后清掉强制压缩标记。 */
+export function clearSessionCompactRequest(principalId, sessionId) {
+  const sessions = listSessions(principalId)
+  const session = sessions.find(s => s.sessionId === sessionId)
+  if (!session || !session.compactRequested) return
+  delete session.compactRequested
+  writeJson(indexFile(principalId), sessions)
+}
+
 // ── 会话提示词快照 ────────────────────────────────────────────────────────────
 // system prompt 里的长期记忆在会话内冻结：
 //   - 记忆写入照常落库（appendMemory）
