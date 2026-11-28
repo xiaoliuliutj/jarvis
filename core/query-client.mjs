@@ -73,7 +73,8 @@ export function callQuery(op, args, { timeoutMs = 20000 } = {}) {
 export async function queryOr(op, args, fallback, options) {
   try {
     return await callQuery(op, args, options)
-  } catch {
+  } catch (err) {
+    console.warn(`[query] ${op} 回退主线程：${err.message}`)
     return await fallback()
   }
 }

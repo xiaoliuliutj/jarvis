@@ -75,11 +75,13 @@ jarvis-query（只读：会话快照与切片、用量汇总；独立线程或�
 - 新增 `/api/v1/usage/messages`：展开「对话明细」才拉第一页（20 轮），上滑用 `before` 加载更早
 - 单轮 LLM 调用详情仍保持点击后才加载
 
-### 7. 用量汇总定期落盘（`core/app-store.mjs`）
+### 7. 用量汇总定期落盘 + 每日 rollup（`core/app-store.mjs`）
 
-- 汇总结果按 (时间范围, messageLimit, 价格表) 生成 key，写入 `userdata/<id>/app/usage/cache/`
-- TTL 3 分钟：期间直接读缓存；页面显示「统计截至 HH:mm」，允许几分钟延迟
-- 价格变化会生成新 key，不会读到旧价格的结果；缓存文件 7 天自动清理
+- **每日 rollup**：先按「天」聚合一次写入 `userdata/<id>/app/usage/rollup/<YYYY-MM>.json`
+  （按月份文件 size+mtime 失效）；任意区间只需把天相加，不再每次扫描全量 jsonl
+- 汇总结果再按 (时间范围, messageLimit, 价格表) 缓存到 `usage/cache/`，TTL 3 分钟
+- 页面显示「统计截至 HH:mm」，允许几分钟延迟；价格变化会生成新 key
+- 缓存文件 7 天自动清理；rollup 构建失败时回退全量扫描
 
 ### 8. 会话尾部快照（`core/read-model.mjs`）
 

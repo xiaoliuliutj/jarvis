@@ -11,6 +11,8 @@
     outbox: 'jarvis.app.outbox',
     localFiles: 'jarvis.app.localFiles',
     sessionCache: 'jarvis.app.sessionCache.v1',
+    usageCache: 'jarvis.app.usageCache.v1',
+    usagePresets: 'jarvis.app.usagePresets.v1',
   }
   const MAX_ATTACHMENTS = 3
   const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
@@ -47,8 +49,9 @@
     models: [],
     settings: null,
     me: null,
-    usageGranularity: 'day',
-    usageAnchor: todayKey(),
+    usageGranularity: 'today',
+    usageFrom: todayKey(),
+    usageTo: todayKey(),
     usageSummary: null,
     usageError: '',
     usagePricing: null,
@@ -63,6 +66,7 @@
     usageMessagesError: '',
     usageMessageTotal: 0,
     usageRequestKey: '',
+    usageFetchedAt: 0,
     context: null,
     editingModelId: null,
     updateInfo: null,
@@ -117,10 +121,8 @@
     toolScope: $('toolScope'),
     toolList: $('toolList'),
     usageGranularity: $('usageGranularity'),
-    usageDate: $('usageDate'),
-    usagePrev: $('usagePrev'),
-    usageNext: $('usageNext'),
-    usageToday: $('usageToday'),
+    usageFrom: $('usageFrom'),
+    usageTo: $('usageTo'),
     usagePeriodLabel: $('usagePeriodLabel'),
     usageCards: $('usageCards'),
     usageMeta: $('usageMeta'),
@@ -257,45 +259,45 @@
     next.setHours(0, 0, 0, 0)
     return next
   }
-  function usagePeriodRange(granularity, anchorKey) {
-    const anchor = parseLocalDateKey(anchorKey)
-    if (granularity === 'day') {
-      const from = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate())
-      return { from, to: addDays(from, 1) }
-    }
+  // 区间选择：state.usageFrom / usageTo 是「含首含尾」的日期键，
+  // 请求时把结束日 +1 天变成半开区间。
+  function usageRangeFromKeys(fromKey, toKey) {
+    const from = parseLocalDateKey(fromKey)
+    const endDay = parseLocalDateKey(toKey || fromKey)
+    const to = endDay.getTime() >= from.getTime() ? addDays(endDay, 1) : addDays(from, 1)
+    return { from, to }
+  }
+  function currentUsageRange() {
+    return usageRangeFromKeys(state.usageFrom, state.usageTo)
+  }
+  // 预设都按自然周期、从 0 点起算：今天=今天 0 点，本周=周一 0 点，本月=1 日 0 点，全量=全部记录
+  function usagePresetKeys(granularity) {
+    const today = new Date()
+    const todayK = localDateKey(today)
+    if (granularity === 'all') return { fromKey: '2000-01-01', toKey: todayK }
     if (granularity === 'week') {
-      const from = startOfWeek(anchor)
-      return { from, to: addDays(from, 7) }
+      return { fromKey: localDateKey(startOfWeek(today)), toKey: todayK }
     }
-    const from = new Date(anchor.getFullYear(), anchor.getMonth(), 1)
-    return { from, to: new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1) }
-  }
-  function usageSnapAnchor(granularity, anchorKey) {
-    const { from } = usagePeriodRange(granularity, anchorKey)
-    return localDateKey(from)
-  }
-  function usageShiftAnchor(granularity, anchorKey, delta) {
-    const date = parseLocalDateKey(anchorKey)
-    if (granularity === 'day') {
-      date.setDate(date.getDate() + delta)
-    } else if (granularity === 'week') {
-      date.setDate(date.getDate() + delta * 7)
-    } else {
-      date.setDate(1)
-      date.setMonth(date.getMonth() + delta)
+    if (granularity === 'month') {
+      const start = new Date(today.getFullYear(), today.getMonth(), 1)
+      return { fromKey: localDateKey(start), toKey: todayK }
     }
-    return localDateKey(date)
+    return { fromKey: todayK, toKey: todayK }
   }
   function usagePeriodLabel(granularity, from, to) {
     const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
-    if (granularity === 'day') {
+    const last = addDays(to, -1)
+    if (granularity === 'all') return '全部数据'
+    if (granularity === 'today') {
       return `${from.getFullYear()}年${from.getMonth() + 1}月${from.getDate()}日 ${weekdays[from.getDay()]}`
     }
     if (granularity === 'week') {
-      const last = addDays(to, -1)
-      return `${from.getFullYear()}年${from.getMonth() + 1}月${from.getDate()}日 - ${last.getMonth() + 1}月${last.getDate()}日`
+      return `本周 ${from.getMonth() + 1}月${from.getDate()}日 - ${last.getMonth() + 1}月${last.getDate()}日`
     }
-    return `${from.getFullYear()}年${from.getMonth() + 1}月`
+    if (granularity === 'month') {
+      return `本月 ${from.getFullYear()}年${from.getMonth() + 1}月1日 - ${last.getMonth() + 1}月${last.getDate()}日`
+    }
+    return `${from.getFullYear()}.${from.getMonth() + 1}.${from.getDate()} - ${last.getFullYear()}.${last.getMonth() + 1}.${last.getDate()}`
   }
 
   function read(key, fallback) {
@@ -322,7 +324,7 @@
         cursor: state.syncCursor || 0,
         oldestSeq: state.oldestSeq || 0,
         hasMore: !!state.hasMore,
-        messages: state.messages.slice(-SESSION_CACHE_MAX),
+        messages: dedupeMessageList(state.messages).slice(-SESSION_CACHE_MAX),
         savedAt: new Date().toISOString(),
       }))
     } catch {}
@@ -345,6 +347,15 @@
   }
 
   /** 首屏先渲染本地缓存，网络同步失败也不会白屏。 */
+  // 清掉旧版本缓存里可能残留的重复消息（同一条回复曾经存了两次）
+  function dedupeMessageList(list) {
+    const out = []
+    for (const item of Array.isArray(list) ? list : []) {
+      if (!out.some(existing => messagesLookSame(existing, item))) out.push(item)
+    }
+    return out
+  }
+
   function restoreSessionCache() {
     const cached = loadSessionCache()
     if (!cached) return null
@@ -352,7 +363,7 @@
     state.syncCursor = Number(cached.cursor || 0)
     state.oldestSeq = Number(cached.oldestSeq || 0)
     state.hasMore = !!cached.hasMore
-    state.messages = cached.messages
+    state.messages = dedupeMessageList(cached.messages)
     renderMessages(state.messages)
     nativePageReady()
     return cached
@@ -737,22 +748,18 @@
       const fresh = []
       for (const m of incoming) {
         if (!m || !m.id || known.has(m.id)) continue
-        // 本地乐观消息没有 seq；服务端回显后用服务端版本替换，避免同一句话出现两次
-        if (m.role === 'user') {
-          const idx = state.messages.findIndex(x => x.role === 'user'
-            && !Number.isInteger(x.seq)
-            && String(x.text || '').trim() === String(m.text || '').trim()
-            && Math.abs((Date.parse(x.ts) || 0) - (Date.parse(m.ts) || 0)) < 120000)
-          if (idx >= 0) {
-            state.messages[idx] = m
-            known.add(m.id)
-            continue
-          }
+        // 本地乐观消息 / WS 实时消息没有存储 id；用服务端版本替换，避免重复
+        const idx = state.messages.findIndex(x => messagesLookSame(x, m))
+        if (idx >= 0) {
+          state.messages[idx] = m
+          known.add(m.id)
+          continue
         }
         fresh.push(m)
       }
       if (fresh.length) {
         state.messages.push(...fresh)
+        state.messages = dedupeMessageList(state.messages)
         sortChatMessages(state.messages)
         renderMessages(state.messages)
         scheduleSessionCacheSave(400)
@@ -1292,6 +1299,35 @@
   }, 25000)
 
   // 同一条 WS 事件可能从多条残留连接重复到达；以 id / 时间戳+正文去重。
+  // WS 的 assistant/file 事件不带存储消息的 id，增量同步带回的版本 id 不同；
+  // 合并时按「角色 + 正文/文件 + 时间近似」去重，避免同一回复出现两次。
+  function messagesLookSame(a, b) {
+    if (!a || !b) return false
+    if (a.id && b.id && a.id === b.id) return true
+    // 两条都已经是服务端持久化消息（都有 seq）时，同文也可能是不同时段的重复回复，
+    // 不能只凭正文判重；只处理「本地临时消息 vs 服务端版本」这一种情况。
+    if (Number.isInteger(a.seq) && Number.isInteger(b.seq)) return false
+    const af = a.file || null
+    const bf = b.file || null
+    if (af || bf) {
+      if (!af || !bf) return false
+      if (af.id && bf.id && af.id === bf.id) return true
+      if (af.url && bf.url && af.url === bf.url) return true
+      const aKey = `${af.name || ''}|${af.size || ''}`
+      const bKey = `${bf.name || ''}|${bf.size || ''}`
+      if (aKey !== '|' && aKey === bKey) {
+        return Math.abs((Date.parse(a.ts || '') || 0) - (Date.parse(b.ts || '') || 0)) < 120000
+      }
+      return false
+    }
+    const at = String(a.text || '').trim()
+    const bt = String(b.text || '').trim()
+    if (!at || at !== bt) return false
+    if (a.role !== b.role) return false
+    const gap = Math.abs((Date.parse(a.ts || '') || 0) - (Date.parse(b.ts || '') || 0))
+    return gap < 120000
+  }
+
   function isDuplicateWsEvent(key) {
     if (!key) return false
     if (state.wsSeen.has(key)) return true
@@ -1336,7 +1372,10 @@
         : (msg.timestamp ? `assistant:${msg.timestamp}|${msg.text}` : '')
       if (isDuplicateWsEvent(key)) return
       clearTyping()
-      appendMessage({ role: 'bot', text: msg.text, ts: msg.timestamp || new Date().toISOString() })
+      const ts = msg.timestamp || new Date().toISOString()
+      // 增量同步可能已经把同一条回复写进列表，这里再兜一层
+      if (state.messages.some(m => messagesLookSame(m, { role: 'bot', text: msg.text, ts }))) return
+      appendMessage({ role: 'bot', text: msg.text, ts })
       refreshContext()
       if (state.tab === 'chat' && document.visibilityState === 'visible') markReadSoon()
       else setUnread(state.unread + 1)
@@ -1357,6 +1396,7 @@
         size: msg.size,
       }
       const ts = msg.timestamp || new Date().toISOString()
+      if (state.messages.some(m => messagesLookSame(m, { role: 'bot', file, ts }))) return
       rememberLocalFile({ ...file, ts })
       appendMessage({ role: 'bot', file, ts })
       if (state.tab === 'chat' && document.visibilityState === 'visible') markReadSoon()
@@ -3686,36 +3726,48 @@
 
   // ── usage ───────────────────────────────────────────────────────────────
 
-  state.usageAnchor = usageSnapAnchor(state.usageGranularity, state.usageAnchor)
-  el.usageDate.value = state.usageAnchor
-  for (const button of el.usageGranularity.querySelectorAll('button')) {
-    button.classList.toggle('active', button.dataset.granularity === state.usageGranularity)
+  function syncUsageInputs() {
+    if (el.usageFrom) el.usageFrom.value = state.usageFrom
+    if (el.usageTo) el.usageTo.value = state.usageTo
   }
+
+  function setActiveGranularity() {
+    for (const button of el.usageGranularity.querySelectorAll('button')) {
+      button.classList.toggle('active', button.dataset.granularity === state.usageGranularity)
+    }
+  }
+
+  syncUsageInputs()
+  setActiveGranularity()
 
   el.usageGranularity.addEventListener('click', event => {
     const button = event.target.closest('button[data-granularity]')
     if (!button) return
     state.usageGranularity = button.dataset.granularity
-    state.usageAnchor = usageSnapAnchor(state.usageGranularity, state.usageAnchor)
-    el.usageDate.value = state.usageAnchor
-    for (const item of el.usageGranularity.querySelectorAll('button')) {
-      item.classList.toggle('active', item === button)
-    }
+    const { fromKey, toKey } = usagePresetKeys(state.usageGranularity)
+    state.usageFrom = fromKey
+    state.usageTo = toKey
+    syncUsageInputs()
+    setActiveGranularity()
     resetUsagePeriod()
   })
 
-  el.usageDate.addEventListener('change', () => {
-    state.usageAnchor = el.usageDate.value || todayKey()
+  function onUsageRangeChange() {
+    const fromKey = el.usageFrom?.value || todayKey()
+    let toKey = el.usageTo?.value || fromKey
+    if (toKey < fromKey) toKey = fromKey
+    state.usageFrom = fromKey
+    state.usageTo = toKey
+    // 手动改日期 = 自定义区间，取消预设按钮的选中态
+    state.usageGranularity = 'custom'
+    syncUsageInputs()
+    setActiveGranularity()
     resetUsagePeriod()
-  })
+  }
 
-  el.usagePrev.addEventListener('click', () => shiftUsagePeriod(-1))
-  el.usageNext.addEventListener('click', () => shiftUsagePeriod(1))
-  el.usageToday.addEventListener('click', () => {
-    state.usageAnchor = todayKey()
-    el.usageDate.value = state.usageAnchor
-    resetUsagePeriod()
-  })
+  el.usageFrom?.addEventListener('change', onUsageRangeChange)
+  el.usageTo?.addEventListener('change', onUsageRangeChange)
+
   el.usageDetailsToggle.addEventListener('click', () => {
     state.usageDetailsOpen = !state.usageDetailsOpen
     if (state.usageDetailsOpen && !state.usageMessagesLoaded) {
@@ -3747,14 +3799,9 @@
     state.usageMessagesBefore = null
     state.usageMessagesError = ''
     state.usageMessageTotal = 0
+    state.usageFetchedAt = 0
     renderUsage()
     loadUsage()
-  }
-
-  function shiftUsagePeriod(delta) {
-    state.usageAnchor = usageShiftAnchor(state.usageGranularity, state.usageAnchor, delta)
-    el.usageDate.value = state.usageAnchor
-    resetUsagePeriod()
   }
 
   function usageEmpty(target, text) {
@@ -3871,6 +3918,9 @@
     try {
       const data = await api('/api/v1/usage/pricing', { method: 'PUT', body })
       applyUsagePricing(data.pricing)
+      // 价格变了，旧的费用结果作废
+      remove(KEYS.usageCache)
+      state.usageFetchedAt = 0
       if (el.usagePriceStatus) el.usagePriceStatus.textContent = '已保存'
       await loadUsage()
     } catch (err) {
@@ -3878,38 +3928,137 @@
     }
   }
 
+  const USAGE_CACHE_TTL_MS = 6 * 3600 * 1000
+
+  function loadUsageCache(requestKey) {
+    try {
+      const raw = read(KEYS.usageCache, '')
+      if (!raw) return null
+      const data = JSON.parse(raw)
+      if (!data || data.v !== 1 || data.url !== state.url || data.key !== requestKey) return null
+      if (!data.summary) return null
+      if (Date.now() - (Date.parse(data.savedAt) || 0) > USAGE_CACHE_TTL_MS) return null
+      return data.summary
+    } catch {
+      return null
+    }
+  }
+
+  function saveUsageCache(requestKey, summary) {
+    try {
+      write(KEYS.usageCache, JSON.stringify({
+        v: 1,
+        url: state.url,
+        key: requestKey,
+        summary,
+        savedAt: new Date().toISOString(),
+      }))
+    } catch {}
+  }
+
+  function loadUsagePresetCache() {
+    try {
+      const raw = read(KEYS.usagePresets, '')
+      if (!raw) return null
+      const data = JSON.parse(raw)
+      if (!data || data.v !== 1 || data.url !== state.url || data.dateKey !== todayKey()) return null
+      if (!data.presets || typeof data.presets !== 'object') return null
+      return data.presets
+    } catch {
+      return null
+    }
+  }
+
+  function saveUsagePresetCache(presets) {
+    if (!presets || typeof presets !== 'object') return
+    try {
+      const prev = loadUsagePresetCache() || {}
+      write(KEYS.usagePresets, JSON.stringify({
+        v: 1,
+        url: state.url,
+        dateKey: todayKey(),
+        presets: { ...prev, ...presets },
+        savedAt: new Date().toISOString(),
+      }))
+    } catch {}
+  }
+
+  function adoptUsageMessagesFromSummary(summary) {
+    if (state.usageMessagesLoaded) return
+    const first = Array.isArray(summary?.messages) ? summary.messages : []
+    const total = Number(summary?.messageTotal || 0)
+    state.usageMessages = first
+    state.usageMessagesLoaded = first.length > 0 || total === 0
+    state.usageMessagesMore = total > first.length
+    state.usageMessagesBefore = first.length ? (first[first.length - 1].firstTs || null) : null
+    state.usageMessageTotal = total
+  }
+
   async function loadUsage() {
     if (!state.token) return
-    loadUsagePricing().catch(() => {})
-    if (!state.usageSummary) renderUsage()
-    const { from, to } = usagePeriodRange(state.usageGranularity, state.usageAnchor)
+    const { from, to } = currentUsageRange()
     // 首屏只取统计 + 最近 20 轮（点开明细直接显示）；更早的用分页接口再拉
-    const query = new URLSearchParams({
+    const baseQuery = new URLSearchParams({
       from: from.toISOString(),
       to: to.toISOString(),
       messageLimit: '20',
     })
-    const requestKey = query.toString()
+    const requestKey = baseQuery.toString()
+    const presetKey = ['today', 'week', 'month', 'all'].includes(state.usageGranularity)
+      ? state.usageGranularity
+      : ''
+    const presetCache = loadUsagePresetCache()
+
+    // 先渲染本地缓存，网络请求在后台进行（Tailscale 慢也不阻塞首屏）
+    const cached = loadUsageCache(requestKey)
+    if (cached) {
+      state.usageSummary = cached
+      state.usageError = ''
+      if (cached.pricing) applyUsagePricing(cached.pricing)
+      adoptUsageMessagesFromSummary(cached)
+      renderUsage()
+    } else if (presetKey && presetCache?.[presetKey]) {
+      const preset = presetCache[presetKey]
+      state.usageSummary = preset
+      state.usageError = ''
+      if (preset.pricing) applyUsagePricing(preset.pricing)
+      adoptUsageMessagesFromSummary(preset)
+      renderUsage()
+    } else if (!state.usageSummary || state.usageRequestKey !== requestKey) {
+      state.usageSummary = null
+      renderUsage()
+    }
+    if (!state.usagePricing && !cached?.pricing && !presetCache?.[presetKey]?.pricing) {
+      loadUsagePricing().catch(() => {})
+    }
+
+    // 同一区间 30 秒内刚拉过就跳过重复请求
+    if (state.usageRequestKey === requestKey && Date.now() - (state.usageFetchedAt || 0) < 30000) return
+
+    // 当天第一次打开时，一次把四个预设的总量都带回来，之后切换零等待
+    const fetchQuery = new URLSearchParams(baseQuery)
+    if (!presetCache) fetchQuery.set('presets', '1')
+
     state.usageRequestKey = requestKey
     try {
-      const data = await api(`/api/v1/usage/summary?${requestKey}`)
+      const data = await api(`/api/v1/usage/summary?${fetchQuery.toString()}`)
       if (state.usageRequestKey !== requestKey) return
       state.usageSummary = data.summary
       state.usageError = ''
-      if (!state.usageMessagesLoaded) {
-        const first = Array.isArray(data.summary?.messages) ? data.summary.messages : []
-        const total = Number(data.summary?.messageTotal || 0)
-        state.usageMessages = first
-        state.usageMessagesLoaded = first.length > 0 || total === 0
-        state.usageMessagesMore = total > first.length
-        state.usageMessagesBefore = first.length ? (first[first.length - 1].firstTs || null) : null
-        state.usageMessageTotal = total
-      }
+      state.usageFetchedAt = Date.now()
+      if (data.summary?.pricing) applyUsagePricing(data.summary.pricing)
+      adoptUsageMessagesFromSummary(data.summary)
+      if (data.presets) saveUsagePresetCache(data.presets)
+      if (presetKey) saveUsagePresetCache({ [presetKey]: data.summary })
+      saveUsageCache(requestKey, data.summary)
       renderUsage()
     } catch (err) {
       if (state.usageRequestKey !== requestKey) return
-      state.usageSummary = null
-      state.usageError = err.message
+      // 有本地缓存时保留旧画面，不因网络失败清空
+      if (!cached) {
+        state.usageSummary = null
+        state.usageError = err.message
+      }
       renderUsage()
     }
   }
@@ -3918,7 +4067,7 @@
     const s = state.usageSummary
     const data = s || {}
     const pricing = data.pricing || state.usagePricing
-    const { from, to } = usagePeriodRange(state.usageGranularity, state.usageAnchor)
+    const { from, to } = currentUsageRange()
     el.usagePeriodLabel.textContent = usagePeriodLabel(state.usageGranularity, from, to)
 
     el.usageCards.textContent = ''
@@ -4036,7 +4185,7 @@
       state.usageMessagesError = ''
     }
     renderUsageMessages()
-    const { from, to } = usagePeriodRange(state.usageGranularity, state.usageAnchor)
+    const { from, to } = currentUsageRange()
     const query = new URLSearchParams({
       from: from.toISOString(),
       to: to.toISOString(),

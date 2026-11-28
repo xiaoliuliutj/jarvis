@@ -909,13 +909,15 @@ body.viewer-open { overflow: hidden; }
 .usage-meta { margin-top: 8px; font-size: 11.5px; color: var(--muted); line-height: 1.6; }
 .usage-controls {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
   gap: 8px;
   margin-bottom: 6px;
 }
-.usage-period-nav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.usage-controls .segmented { align-self: flex-start; }
+.usage-period-nav { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+.usage-period-nav .month-input { flex: 1 1 0; min-width: 0; }
+.usage-range-sep { color: var(--muted); font-size: 12px; flex: 0 0 auto; }
 .usage-nav-btn { min-width: 30px; text-align: center; font-size: 16px; padding: 3px 8px; }
 .usage-period-label { font-size: 12.5px; color: var(--muted); margin: 2px 2px 12px; }
 .usage-details-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

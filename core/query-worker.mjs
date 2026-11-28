@@ -25,6 +25,7 @@ const OPS = {
   }),
   usageByTurn: a => appStore.listUsageByTurn(a.principalId, a.turnId, a.pricing),
   usageMessages: a => appStore.usageMessagesPage(a.principalId, a),
+  usagePresets: a => appStore.usagePresetSummaries(a.principalId, { pricing: a.pricing }),
 }
 
 parentPort.on('message', msg => {
