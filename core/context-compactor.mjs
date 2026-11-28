@@ -10,6 +10,7 @@ import {
   writeSessionDigestState,
   upsertSessionSummary,
 } from './user-store.mjs'
+import { syncScheduleMemory } from './schedule-memory.mjs'
 import { logInfo, logWarn } from './logger.mjs'
 
 const RECENT_TAIL = 6
@@ -198,6 +199,12 @@ export async function compactSessionContext({
   }
 
   upsertSessionSummary(principalId, displaySessionId, `【会话压缩摘要】\n${digest}`)
+  // 压缩时顺带同步「日程」概念：按 schedule:<id> 去重更新，不重复追加
+  try {
+    syncScheduleMemory(principalId)
+  } catch (err) {
+    logWarn('schedule.memory.sync.fail', err.message, { principalId })
+  }
   writeSessionDigestState(principalId, displaySessionId, {
     digest,
     compactedUpto: cursor,

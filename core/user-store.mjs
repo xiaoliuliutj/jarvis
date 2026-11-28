@@ -375,6 +375,16 @@ export function appendMemory(principalId, { content, type = 'fact', refs = [] })
   return entry
 }
 
+/** 覆盖写长期记忆文件（供按 ref 去重/同步的模块使用）。 */
+export function writeMemoryEntries(principalId, entries) {
+  ensureUser(principalId)
+  fs.writeFileSync(
+    memoryFile(principalId),
+    entries.map(item => JSON.stringify(item)).join('\n') + (entries.length ? '\n' : ''),
+    'utf-8',
+  )
+}
+
 /** 每个显示会话只保留一条压缩摘要，避免长期记忆无限膨胀。 */
 export function upsertSessionSummary(principalId, sessionId, content) {
   ensureUser(principalId)
@@ -419,6 +429,8 @@ const MEMORY_SECTIONS = [
   ['session_summary', '历史会话摘要'],
   ['fact', '记录的事实'],
   ['project_file', '近期文件操作'],
+  // 日程放最后：内容会随状态变化，尽量不影响前面的缓存前缀
+  ['schedule', '日程'],
 ]
 
 export function estimateMemoryTokens(text) {
@@ -497,6 +509,7 @@ function compressMemorySections(sections, targetTokens, maxProjectFiles = MAX_PR
     session_summary: dedupeEntries(sections.session_summary || []),
     preference: dedupeEntries(sections.preference || []),
     fact: dedupeEntries(sections.fact || []),
+    schedule: dedupeEntries(sections.schedule || []),
     project_file: [],
   }
   const baseText = renderMemorySections(important)
@@ -553,15 +566,16 @@ export function formatMemory(principalId, options = {}) {
       .sort((a, b) => b.weight - a.weight)
   }
 
-  const sections = { project_file: [], preference: [], session_summary: [], fact: [] }
+  const sections = { project_file: [], preference: [], session_summary: [], fact: [], schedule: [] }
   for (const e of ordered) {
     const key = sections[e.type] ? e.type : 'fact'
     sections[key].push(e)
   }
-  // 相同内容的偏好/事实/摘要只保留一条，避免重复条目占 prompt。
+  // 相同内容的偏好/事实/摘要/日程只保留一条，避免重复条目占 prompt。
   sections.preference = dedupeEntries(sections.preference)
   sections.session_summary = dedupeEntries(sections.session_summary)
   sections.fact = dedupeEntries(sections.fact)
+  sections.schedule = dedupeEntries(sections.schedule)
   // 文件操作只保留最近 N 个唯一文件，避免 1600 条记录塞满 prompt。
   sections.project_file = dedupeProjectFiles(sections.project_file).slice(0, maxProjectFiles)
   if (!MEMORY_SECTIONS.some(([key]) => sections[key].length)) return ''
