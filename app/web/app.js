@@ -3883,11 +3883,11 @@
     loadUsagePricing().catch(() => {})
     if (!state.usageSummary) renderUsage()
     const { from, to } = usagePeriodRange(state.usageGranularity, state.usageAnchor)
-    // 首屏只取统计，不带明细；展开「对话明细」时再分页加载
+    // 首屏只取统计 + 最近 20 轮（点开明细直接显示）；更早的用分页接口再拉
     const query = new URLSearchParams({
       from: from.toISOString(),
       to: to.toISOString(),
-      messageLimit: '0',
+      messageLimit: '20',
     })
     const requestKey = query.toString()
     state.usageRequestKey = requestKey
@@ -3896,6 +3896,15 @@
       if (state.usageRequestKey !== requestKey) return
       state.usageSummary = data.summary
       state.usageError = ''
+      if (!state.usageMessagesLoaded) {
+        const first = Array.isArray(data.summary?.messages) ? data.summary.messages : []
+        const total = Number(data.summary?.messageTotal || 0)
+        state.usageMessages = first
+        state.usageMessagesLoaded = first.length > 0 || total === 0
+        state.usageMessagesMore = total > first.length
+        state.usageMessagesBefore = first.length ? (first[first.length - 1].firstTs || null) : null
+        state.usageMessageTotal = total
+      }
       renderUsage()
     } catch (err) {
       if (state.usageRequestKey !== requestKey) return
@@ -3997,15 +4006,21 @@
     }
 
     const total = Number(data.messageTotal || state.usageMessageTotal || 0)
-    const loadedCount = state.usageMessages.length
-    const messageNote = state.usageDetailsOpen && loadedCount && total > loadedCount
-      ? ` · 已加载最近 ${loadedCount} 轮`
-      : ''
-    el.usageMessageCount.textContent = s ? `共 ${total} 轮${messageNote}` : ''
+    updateUsageMessageHead()
     el.usageDetailsToggle.textContent = state.usageDetailsOpen ? '收起' : '查看详情'
     el.usageDetailsToggle.disabled = !s || !total
     el.usageMessages.classList.toggle('hidden', !state.usageDetailsOpen)
     renderUsageMessages()
+  }
+
+  function updateUsageMessageHead() {
+    const data = state.usageSummary
+    const total = Number(data?.messageTotal || state.usageMessageTotal || 0)
+    const loadedCount = state.usageMessages.length
+    const note = state.usageDetailsOpen && loadedCount && total > loadedCount
+      ? ` · 已加载最近 ${loadedCount} 轮`
+      : ''
+    el.usageMessageCount.textContent = data ? `共 ${total} 轮${note}` : ''
   }
 
   /** 对话明细分页：reset=true 拉第一页，否则用 before 加载更早。 */
@@ -4044,7 +4059,9 @@
       }
     } finally {
       state.usageMessagesLoading = false
-      renderUsage()
+      // 只更新明细列表和计数，避免每次翻页都重绘统计卡片与图表
+      updateUsageMessageHead()
+      renderUsageMessages()
     }
   }
 
