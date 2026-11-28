@@ -1,36 +1,32 @@
 /**
- * 把日程状态同步进长期记忆（作为「日程」概念区）。
+ * 日程三区同步（只在上下文压缩时触发）。
  *
- * 设计：
- *   - 一条日程对应一条记忆，ref = `schedule:<id>`，按 ref 更新，绝不重复追加
- *   - 「日程」区只放待办：待办保留过去 7 天到未来 45 天
- *   - 完成/取消的日程立即写进 workspace/日常记录/YYYY-MM-DD.md，按需检索，不进长期记忆
- *   - 日程被删除或超出窗口时，对应记忆条目一并移除；更久远的记录只留在 schedules.json
- *   - 只在上下文压缩时同步（日程增删改不即时写入）；内容不变时不写盘
+ * 三区（同一条日程任一时刻只在一个区）：
+ *   1. 活着的日程：userdata/<id>/schedules.json
+ *      - 还没归档的日程都在这，跟完成状态无关；定时任务/提醒扫描只读这里
+ *   2. 长期记忆「日程」区
+ *      - 只放已完成的日程，最多保留最近完成的 30 条
+ *      - 内容随压缩更新，不在日程增删改时即时写入
+ *   3. 日程历史：workspace/日程历史.md
+ *      - 长期记忆超限后挤出来的完整记录（标题/备注/结果都在）
+ *
+ * 走法：完成 → 留在日程表 → 压缩时进入长期记忆（并从日程表移出）
+ *       → 长期记忆超限 → 最老的移进日程历史（并从长期记忆移出）
  */
 
 import { randomUUID } from 'crypto'
-import { readSchedules } from './schedule-store.mjs'
+import { readSchedules, writeSchedules } from './schedule-store.mjs'
 import { readMemoryEntries, writeMemoryEntries } from './user-store.mjs'
+import { appendScheduleHistory } from './schedule-history.mjs'
 
-const KEEP_PAST_DAYS = 7
-const KEEP_FUTURE_DAYS = 45
+// 长期记忆「日程」区上限：默认保留最近完成的 30 条
 const MAX_ENTRIES = 30
-const DAY_MS = 24 * 3600 * 1000
 
 function formatWhen(iso) {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return String(iso || '')
   const pad = n => String(n).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
-
-function formatAdvance(minutes = 0) {
-  const n = Number(minutes) || 0
-  if (!n) return ''
-  if (n % 1440 === 0) return `${n / 1440}天`
-  if (n % 60 === 0) return `${n / 60}小时`
-  return `${n}分钟`
 }
 
 export function scheduleMemoryContent(schedule) {
@@ -44,84 +40,102 @@ export function scheduleMemoryContent(schedule) {
   if (schedule.status === 'cancelled') {
     return `${when} ${title}（已取消）`
   }
-  const advance = formatAdvance(schedule.remindBeforeMinutes)
-  const priority = schedule.priority === 'high' ? '，高优先级' : ''
-  return `${when} ${title}（待办${advance ? `，提前${advance}提醒` : ''}${priority}）`
+  return `${when} ${title}（待办）`
 }
 
-function selectRelevant(schedules, now) {
-  return schedules
-    .filter(item => {
-      // 完成/取消的已进日常记录，长期记忆只维护待办
-      if (item.status !== 'pending') return false
-      const start = Date.parse(item.startAt) || 0
-      return start >= now - KEEP_PAST_DAYS * DAY_MS && start <= now + KEEP_FUTURE_DAYS * DAY_MS
-    })
-    .sort((a, b) => (Date.parse(a.startAt) || 0) - (Date.parse(b.startAt) || 0))
-    .slice(0, MAX_ENTRIES)
+function doneTime(schedule) {
+  return Date.parse(schedule.doneAt || schedule.startAt) || 0
 }
 
-/** 当前会出现在长期记忆「日程」区的行（不含列表前缀），供压缩摘要去重使用。 */
-export function listScheduleMemoryLines(principalId, { now = Date.now() } = {}) {
+/** 归档到记忆/历史时保留的完整记录（历史表要用） */
+function pickData(schedule) {
+  return {
+    id: schedule.id,
+    title: schedule.title,
+    notes: schedule.notes || '',
+    startAt: schedule.startAt,
+    doneAt: schedule.doneAt || null,
+    outcome: schedule.outcome || '',
+    priority: schedule.priority || 'normal',
+    status: 'done',
+  }
+}
+
+/** 本次压缩会归档的已完成日程行（供压缩摘要去重，避免摘要里重复罗列）。 */
+export function listArchivedScheduleLines(principalId) {
   try {
-    return selectRelevant(readSchedules(principalId), now).map(scheduleMemoryContent)
+    return readSchedules(principalId)
+      .filter(item => item.status === 'done')
+      .sort((a, b) => doneTime(b) - doneTime(a))
+      .map(scheduleMemoryContent)
   } catch {
     return []
   }
 }
 
-/** 同步当前用户的日程记忆；返回保留的日程条数。 */
+function hasScheduleRef(entry) {
+  return entry.type === 'schedule'
+    || (Array.isArray(entry.refs) && entry.refs.some(ref => String(ref).startsWith('schedule:')))
+}
+
+/**
+ * 压缩时同步日程三区；返回长期记忆里保留的日程条数。
+ * 重复执行安全（内容没变不写盘，历史按 id 去重）。
+ */
 export function syncScheduleMemory(principalId, { now = Date.now() } = {}) {
-  let schedules = []
+  let schedules
   try {
     schedules = readSchedules(principalId)
   } catch {
     return 0
   }
-  const relevant = selectRelevant(schedules, now)
-  const wanted = new Map(relevant.map(item => [`schedule:${item.id}`, item]))
   const entries = readMemoryEntries(principalId)
-  const next = []
-  const seen = new Set()
-  let changed = false
+  const scheduleEntries = entries.filter(hasScheduleRef)
+  const otherEntries = entries.filter(entry => !hasScheduleRef(entry))
 
-  for (const entry of entries) {
-    const refs = Array.isArray(entry.refs) ? entry.refs : []
-    const ref = refs.find(item => String(item).startsWith('schedule:'))
-    if (entry.type === 'schedule' || ref) {
-      const schedule = ref ? wanted.get(ref) : null
-      if (!schedule || seen.has(ref)) {
-        changed = true
-        continue
-      }
-      seen.add(ref)
-      const content = scheduleMemoryContent(schedule)
-      if (entry.content !== content || entry.type !== 'schedule') {
-        next.push({ ...entry, type: 'schedule', refs: [ref], content, lastMentioned: new Date(now).toISOString() })
-        changed = true
-      } else {
-        next.push(entry)
-      }
-      continue
-    }
-    next.push(entry)
+  // 之前已归档进记忆的（对应日程已从日程表移出）
+  const archived = scheduleEntries.filter(entry => entry.data && entry.data.id)
+  const archivedIds = new Set(archived.map(entry => entry.data.id))
+
+  // 日程表里已完成、本次要归档的
+  const doneFromTable = schedules.filter(item => item.status === 'done' && !archivedIds.has(item.id))
+
+  // 合并成归档池，按完成时间从新到旧排
+  const pool = [
+    ...doneFromTable.map(schedule => ({
+      schedule,
+      entry: scheduleEntries.find(entry => (entry.refs || []).includes(`schedule:${schedule.id}`)),
+    })),
+    ...archived.map(entry => ({ schedule: entry.data, entry })),
+  ].sort((a, b) => doneTime(b.schedule) - doneTime(a.schedule))
+
+  const keep = pool.slice(0, MAX_ENTRIES)
+  const overflow = pool.slice(MAX_ENTRIES)
+
+  // 超出上限的完整记录落进日程历史
+  appendScheduleHistory(principalId, overflow.map(item => item.schedule))
+
+  const iso = new Date(now).toISOString()
+  const nextScheduleEntries = keep.map(({ schedule, entry }) => ({
+    id: entry?.id || randomUUID(),
+    type: 'schedule',
+    refs: [`schedule:${schedule.id}`],
+    content: scheduleMemoryContent(schedule),
+    data: pickData(schedule),
+    mentions: entry?.mentions || 1,
+    lastMentioned: entry?.lastMentioned || iso,
+    createdAt: entry?.createdAt || iso,
+  }))
+
+  const next = [...otherEntries, ...nextScheduleEntries]
+  if (JSON.stringify(next) !== JSON.stringify(entries)) {
+    writeMemoryEntries(principalId, next)
   }
 
-  for (const [ref, schedule] of wanted) {
-    if (seen.has(ref)) continue
-    const iso = new Date(now).toISOString()
-    next.push({
-      id: randomUUID(),
-      type: 'schedule',
-      refs: [ref],
-      content: scheduleMemoryContent(schedule),
-      mentions: 1,
-      lastMentioned: iso,
-      createdAt: iso,
-    })
-    changed = true
+  // 完成的都从日程表移出（已在长期记忆或日程历史），保证三区不重复
+  if (schedules.some(item => item.status === 'done')) {
+    writeSchedules(principalId, schedules.filter(item => item.status !== 'done'))
   }
 
-  if (changed) writeMemoryEntries(principalId, next)
-  return relevant.length
+  return nextScheduleEntries.length
 }

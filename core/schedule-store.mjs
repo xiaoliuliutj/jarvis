@@ -8,9 +8,12 @@
  *     startAt,              ISO 时间
  *     remindBeforeMinutes,  提前多少分钟提醒（0-10080）
  *     reminderSentAt,       已提醒时间；null 表示待提醒
+ *     status, doneAt, outcome, priority,
  *     createdAt, updatedAt
  *   }
  *
+ * 这里只放「活着的日程」（提醒扫描只看这里）；已完成的日程在上下文压缩时
+ * 由 core/schedule-memory.mjs 移进长期记忆「日程」区（超限再进日程历史）。
  * 日程只属于当前 principal；工具没有跨用户参数。
  */
 
@@ -19,7 +22,6 @@ import path from 'path'
 import { randomUUID } from 'crypto'
 import { schedulesFile, ensureDir } from './paths.mjs'
 import { ensureUser } from './user-store.mjs'
-import { recordScheduleEvent } from './daily-record.mjs'
 
 const MAX_REMIND_MINUTES = 7 * 24 * 60
 const STATUSES = new Set(['pending', 'done', 'cancelled'])
@@ -122,7 +124,7 @@ export function addSchedule(principalId, input) {
     startAt: parseStartAt(input.startAt),
     remindBeforeMinutes: normalizeRemindBefore(input.remindBeforeMinutes),
     reminderSentAt: null,
-    // 日程状态与结果只存在日程本身，不写入长期记忆
+    // 完成状态先留在日程本身，压缩时再归档进长期记忆
     status: 'pending',
     doneAt: null,
     outcome: '',
@@ -163,12 +165,6 @@ export function updateSchedule(principalId, id, updates) {
   schedule.updatedAt = new Date().toISOString()
 
   writeSchedules(principalId, schedules)
-  // 完成/取消立即写进当天的日常记录（按需检索，不进长期记忆）；重复更新原地替换
-  try {
-    recordScheduleEvent(principalId, schedule)
-  } catch {
-    // 日常记录写失败不影响日程本身
-  }
   return schedule
 }
 

@@ -81,7 +81,7 @@ server.tool(
 
 server.tool(
   'schedule__update',
-  '修改当前用户自己的日程。修改时间或提前提醒后会重新等待提醒。用户说“做完了/完成了”时把 status 设为 done，并可在 outcome 里记一句结果（会自动写进当天的日常记录）；不要为此写长期记忆。',
+  '修改当前用户自己的日程。修改时间或提前提醒后会重新等待提醒。用户说“做完了/完成了”时把 status 设为 done，并可在 outcome 里记一句结果；不要为此写长期记忆。',
   {
     id: z.string().describe('日程 id，先用 schedule__list 查看'),
     title: z.string().optional(),

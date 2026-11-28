@@ -10,7 +10,7 @@ import {
   writeSessionDigestState,
   upsertSessionSummary,
 } from './user-store.mjs'
-import { syncScheduleMemory, listScheduleMemoryLines } from './schedule-memory.mjs'
+import { syncScheduleMemory, listArchivedScheduleLines } from './schedule-memory.mjs'
 import { logInfo, logWarn } from './logger.mjs'
 
 const RECENT_TAIL = 6
@@ -148,13 +148,12 @@ export async function compactSessionContext({
   if (end <= 0) return null
 
   const handoffBlock = formatHandoff(allMessages.slice(end))
-  // 日程由长期记忆「日程」区单独维护：摘要里不再重复罗列，避免同一条日程存两份。
-  // 更久远的日程只留在磁盘（schedules.json），不进 prompt。
+  // 已完成日程会单独归档（长期记忆「日程」区 / 日程历史）：摘要里不再重复罗列。
   let scheduleNote = ''
-  const scheduleLines = listScheduleMemoryLines(principalId)
+  const scheduleLines = listArchivedScheduleLines(principalId)
   if (scheduleLines.length) {
     scheduleNote = [
-      '【已由长期记忆「日程」区单独维护的日程，摘要中不要重复罗列（可保留与之相关的偏好/决定）】',
+      '【以下已完成日程已单独归档（长期记忆「日程」区或日程历史），摘要中不要重复罗列（可保留与之相关的偏好/决定）】',
       ...scheduleLines.map(line => `- ${line}`),
     ].join('\n')
   }
@@ -210,7 +209,7 @@ export async function compactSessionContext({
   }
 
   upsertSessionSummary(principalId, displaySessionId, `【会话压缩摘要】\n${digest}`)
-  // 只在压缩时同步「日程」概念：按 schedule:<id> 去重更新；日程增删改不即时写入
+  // 只在压缩时同步日程三区：完成 → 长期记忆（30 条上限）→ 超限 → 日程历史
   try {
     syncScheduleMemory(principalId)
   } catch (err) {
