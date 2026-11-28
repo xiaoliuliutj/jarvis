@@ -24,6 +24,7 @@ const OPS = {
     pricing: a.pricing,
   }),
   usageByTurn: a => appStore.listUsageByTurn(a.principalId, a.turnId, a.pricing),
+  usageMessages: a => appStore.usageMessagesPage(a.principalId, a),
 }
 
 parentPort.on('message', msg => {

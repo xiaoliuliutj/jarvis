@@ -1115,7 +1115,10 @@ function buildServer() {
 
   app.get('/api/v1/usage/summary', auth, asyncRoute(async (req, res) => {
     const { principal } = appPrincipalFor(req)
-    const messageLimit = Math.min(500, Math.max(20, Number(req.query.messageLimit) || 200))
+    // messageLimit=0：只要总量统计，不带明细（App 端首屏用，明细按需分页拉）
+    const messageLimit = req.query.messageLimit === '0'
+      ? 0
+      : Math.min(500, Math.max(20, Number(req.query.messageLimit) || 200))
     const pricing = appStore.readUsagePricing(principal.id)
     const summary = await queryOr('usageSummary', {
       principalId: principal.id,
@@ -1138,6 +1141,23 @@ function buildServer() {
       sessionName: names.get(item.sessionId) || '',
     }))
     res.json({ ok: true, summary })
+  }))
+
+  /** 对话明细分页：展开时才拉，滚动到底用 nextBefore 加载更早。 */
+  app.get('/api/v1/usage/messages', auth, asyncRoute(async (req, res) => {
+    const { principal } = appPrincipalFor(req)
+    const pricing = appStore.readUsagePricing(principal.id)
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20))
+    const args = {
+      principalId: principal.id,
+      from: req.query.from,
+      to: req.query.to,
+      before: req.query.before || null,
+      limit,
+      pricing,
+    }
+    const data = await queryOr('usageMessages', args, () => appStore.usageMessagesPage(principal.id, args))
+    res.json({ ok: true, ...data })
   }))
 
   app.get('/api/v1/usage/message', auth, asyncRoute(async (req, res) => {

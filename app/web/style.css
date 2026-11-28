@@ -920,6 +920,7 @@ body.viewer-open { overflow: hidden; }
 .usage-period-label { font-size: 12.5px; color: var(--muted); margin: 2px 2px 12px; }
 .usage-details-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .usage-message-list { display: flex; flex-direction: column; gap: 8px; }
+.usage-more-hint { font-size: 11px; color: var(--muted); text-align: center; padding: 10px 0 4px; }
 .usage-message {
   background: var(--card);
   border: 1px solid var(--line);

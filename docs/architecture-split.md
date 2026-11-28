@@ -62,6 +62,31 @@ jarvis-query（只读：会话快照与切片、用量汇总；独立线程或�
 - `app.js` / `style.css` / `index.html`：`no-store` → `no-cache`（ETag 校验，未变返回 304）
 - 冷启动仍会拿新版本，热加载不再重复传 173KB 的 app.js
 
+### 5. 客户端离线缓存 + 增量同步（`app/web/app.js`）
+
+- 最近 120 条 UI 消息 + cursor + sessionId 缓存到 localStorage（按服务器地址隔离，退出登录清理）
+- 冷启动先渲染缓存（毫秒级），同时后台连 WS；连上后用 `/api/v1/sync?after=cursor` 只拉新增
+- 服务端回显的用户消息会替换本地乐观消息，避免同一句话出现两次
+- 网络失败时保留缓存视图，不再清空成白屏
+
+### 6. 用量明细懒加载 + 分页
+
+- `/api/v1/usage/summary?messageLimit=0` 只返回总量统计，不带明细
+- 新增 `/api/v1/usage/messages`：展开「对话明细」才拉第一页（20 轮），上滑用 `before` 加载更早
+- 单轮 LLM 调用详情仍保持点击后才加载
+
+### 7. 用量汇总定期落盘（`core/app-store.mjs`）
+
+- 汇总结果按 (时间范围, messageLimit, 价格表) 生成 key，写入 `userdata/<id>/app/usage/cache/`
+- TTL 3 分钟：期间直接读缓存；页面显示「统计截至 HH:mm」，允许几分钟延迟
+- 价格变化会生成新 key，不会读到旧价格的结果；缓存文件 7 天自动清理
+
+### 8. 会话尾部快照（`core/read-model.mjs`）
+
+- 把最近 200 条 UI 消息写入 `sessions/<id>.ui-snapshot.json`（约 200KB，含 stamp）
+- `tailUiMessages` / `afterUiMessages` / `uiReadInfo` 优先读快照，冷启动不再解析 5MB 全量文件
+- 快照按 `size + mtime` 校验，过期自动回退全量并重建；写入节流 10 秒、异步落盘
+
 ## 实测
 
 | 项目 | 结果 |
@@ -70,14 +95,15 @@ jarvis-query（只读：会话快照与切片、用量汇总；独立线程或�
 | worker `uiTail` 缓存命中 | ~1ms |
 | worker `usageSummary` | ~43ms |
 | 主线程回退一致性 | 与 worker 结果逐字段一致 |
-| 增量缓存 | 追加 1/2/3 条后 seq 连续且不重解析 |
+| 用量汇总缓存 | 首次 18ms → 命中 1ms，明细分页连续 |
+| 会话尾部快照 | 冷启动 29ms → 快照读取 2ms（跨进程） |
+| 快照结果一致性 | tail / after / readInfo 与全量结果逐字段一致 |
 
 ## 待做
 
-1. **前端增量同步**：WS 重连后改用 `/api/v1/sync?after=<cursor>` 只拉新消息，
-   不再整页 `loadSession()`（服务端接口已就绪，前端尚未接入）
-2. **工具记录拆分存储**：`tool` 记录占会话文件 ~91%，单独存 `tools.jsonl`，
+1. **工具记录拆分存储**：`tool` 记录占会话文件 ~91%，单独存 `tools.jsonl`，
    会话文件可降到百 KB 级
-3. **executor 独立进程**（阶段 3）：Bridge 收缩为网关，执行与查询彻底分进程；
+2. **executor 独立进程**（阶段 3）：Bridge 收缩为网关，执行与查询彻底分进程；
    崩溃隔离、独立重启
+3. **Tailscale 体验**：手机端建议「始终开启 VPN」+ 电池不受限制；可增加局域网/隧道地址自动探测
 4. 真·多机微服务：仅在公网/多设备场景再考虑，当前不做
