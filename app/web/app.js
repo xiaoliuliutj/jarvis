@@ -321,7 +321,7 @@
         cursor: state.syncCursor || 0,
         oldestSeq: state.oldestSeq || 0,
         hasMore: !!state.hasMore,
-        messages: state.messages.slice(-SESSION_CACHE_MAX),
+        messages: dedupeMessageList(state.messages).slice(-SESSION_CACHE_MAX),
         savedAt: new Date().toISOString(),
       }))
     } catch {}
@@ -344,6 +344,15 @@
   }
 
   /** 首屏先渲染本地缓存，网络同步失败也不会白屏。 */
+  // 清掉旧版本缓存里可能残留的重复消息（同一条回复曾经存了两次）
+  function dedupeMessageList(list) {
+    const out = []
+    for (const item of Array.isArray(list) ? list : []) {
+      if (!out.some(existing => messagesLookSame(existing, item))) out.push(item)
+    }
+    return out
+  }
+
   function restoreSessionCache() {
     const cached = loadSessionCache()
     if (!cached) return null
@@ -351,7 +360,7 @@
     state.syncCursor = Number(cached.cursor || 0)
     state.oldestSeq = Number(cached.oldestSeq || 0)
     state.hasMore = !!cached.hasMore
-    state.messages = cached.messages
+    state.messages = dedupeMessageList(cached.messages)
     renderMessages(state.messages)
     nativePageReady()
     return cached
@@ -747,6 +756,7 @@
       }
       if (fresh.length) {
         state.messages.push(...fresh)
+        state.messages = dedupeMessageList(state.messages)
         sortChatMessages(state.messages)
         renderMessages(state.messages)
         scheduleSessionCacheSave(400)
