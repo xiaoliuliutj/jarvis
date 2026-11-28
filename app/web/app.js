@@ -11,6 +11,7 @@
     outbox: 'jarvis.app.outbox',
     localFiles: 'jarvis.app.localFiles',
     sessionCache: 'jarvis.app.sessionCache.v1',
+    usageCache: 'jarvis.app.usageCache.v1',
   }
   const MAX_ATTACHMENTS = 3
   const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
@@ -64,6 +65,7 @@
     usageMessagesError: '',
     usageMessageTotal: 0,
     usageRequestKey: '',
+    usageFetchedAt: 0,
     context: null,
     editingModelId: null,
     updateInfo: null,
@@ -3796,6 +3798,7 @@
     state.usageMessagesBefore = null
     state.usageMessagesError = ''
     state.usageMessageTotal = 0
+    state.usageFetchedAt = 0
     renderUsage()
     loadUsage()
   }
@@ -3914,6 +3917,9 @@
     try {
       const data = await api('/api/v1/usage/pricing', { method: 'PUT', body })
       applyUsagePricing(data.pricing)
+      // 价格变了，旧的费用结果作废
+      remove(KEYS.usageCache)
+      state.usageFetchedAt = 0
       if (el.usagePriceStatus) el.usagePriceStatus.textContent = '已保存'
       await loadUsage()
     } catch (err) {
@@ -3921,10 +3927,47 @@
     }
   }
 
+  const USAGE_CACHE_TTL_MS = 6 * 3600 * 1000
+
+  function loadUsageCache(requestKey) {
+    try {
+      const raw = read(KEYS.usageCache, '')
+      if (!raw) return null
+      const data = JSON.parse(raw)
+      if (!data || data.v !== 1 || data.url !== state.url || data.key !== requestKey) return null
+      if (!data.summary) return null
+      if (Date.now() - (Date.parse(data.savedAt) || 0) > USAGE_CACHE_TTL_MS) return null
+      return data.summary
+    } catch {
+      return null
+    }
+  }
+
+  function saveUsageCache(requestKey, summary) {
+    try {
+      write(KEYS.usageCache, JSON.stringify({
+        v: 1,
+        url: state.url,
+        key: requestKey,
+        summary,
+        savedAt: new Date().toISOString(),
+      }))
+    } catch {}
+  }
+
+  function adoptUsageMessagesFromSummary(summary) {
+    if (state.usageMessagesLoaded) return
+    const first = Array.isArray(summary?.messages) ? summary.messages : []
+    const total = Number(summary?.messageTotal || 0)
+    state.usageMessages = first
+    state.usageMessagesLoaded = first.length > 0 || total === 0
+    state.usageMessagesMore = total > first.length
+    state.usageMessagesBefore = first.length ? (first[first.length - 1].firstTs || null) : null
+    state.usageMessageTotal = total
+  }
+
   async function loadUsage() {
     if (!state.token) return
-    loadUsagePricing().catch(() => {})
-    if (!state.usageSummary) renderUsage()
     const { from, to } = currentUsageRange()
     // 首屏只取统计 + 最近 20 轮（点开明细直接显示）；更早的用分页接口再拉
     const query = new URLSearchParams({
@@ -3933,26 +3976,42 @@
       messageLimit: '20',
     })
     const requestKey = query.toString()
+
+    // 先渲染本地缓存，网络请求在后台进行（Tailscale 慢也不阻塞首屏）
+    const cached = loadUsageCache(requestKey)
+    if (cached) {
+      state.usageSummary = cached
+      state.usageError = ''
+      if (cached.pricing) applyUsagePricing(cached.pricing)
+      adoptUsageMessagesFromSummary(cached)
+      renderUsage()
+    } else if (!state.usageSummary || state.usageRequestKey !== requestKey) {
+      state.usageSummary = null
+      renderUsage()
+    }
+    if (!state.usagePricing && !cached?.pricing) loadUsagePricing().catch(() => {})
+
+    // 同一区间 30 秒内刚拉过就跳过重复请求
+    if (state.usageRequestKey === requestKey && Date.now() - (state.usageFetchedAt || 0) < 30000) return
+
     state.usageRequestKey = requestKey
     try {
       const data = await api(`/api/v1/usage/summary?${requestKey}`)
       if (state.usageRequestKey !== requestKey) return
       state.usageSummary = data.summary
       state.usageError = ''
-      if (!state.usageMessagesLoaded) {
-        const first = Array.isArray(data.summary?.messages) ? data.summary.messages : []
-        const total = Number(data.summary?.messageTotal || 0)
-        state.usageMessages = first
-        state.usageMessagesLoaded = first.length > 0 || total === 0
-        state.usageMessagesMore = total > first.length
-        state.usageMessagesBefore = first.length ? (first[first.length - 1].firstTs || null) : null
-        state.usageMessageTotal = total
-      }
+      state.usageFetchedAt = Date.now()
+      if (data.summary?.pricing) applyUsagePricing(data.summary.pricing)
+      adoptUsageMessagesFromSummary(data.summary)
+      saveUsageCache(requestKey, data.summary)
       renderUsage()
     } catch (err) {
       if (state.usageRequestKey !== requestKey) return
-      state.usageSummary = null
-      state.usageError = err.message
+      // 有本地缓存时保留旧画面，不因网络失败清空
+      if (!cached) {
+        state.usageSummary = null
+        state.usageError = err.message
+      }
       renderUsage()
     }
   }
