@@ -32,14 +32,15 @@ import { WebSocketServer } from 'ws'
 import { ROOT } from '../../core/paths.mjs'
 import { logInfo, logWarn, logError } from '../../core/logger.mjs'
 import { getPrincipal } from '../../core/principals.mjs'
-import { getCurrentSession, readMessages, appendMessage, touchSession, listSessions, readPersona, writePersona } from '../../core/user-store.mjs'
+import { getCurrentSession, appendMessage, touchSession, listSessions, readPersona, writePersona } from '../../core/user-store.mjs'
 import { PERSONA_PRESETS } from '../../core/persona-presets.mjs'
 import * as appStore from '../../core/app-store.mjs'
 import * as authStore from '../../core/auth-store.mjs'
 import { listCatalog, getTool as getCatalogTool } from '../../core/tool-catalog.mjs'
 import { resolveAnthropicCredentials } from '../../core/config.mjs'
-import { isSilentText } from '../../core/text-filter.mjs'
 import { verifyOwnerToken } from '../../core/owner-token.mjs'
+import { queryOr } from '../../core/query-client.mjs'
+import { tailUiMessages, beforeUiMessages, afterUiMessages, uiReadInfo, historyTexts } from '../../core/read-model.mjs'
 import { listPendingApprovals, decideApproval } from '../../core/admin-approvals.mjs'
 
 export const id = 'app'
@@ -686,20 +687,17 @@ function buildServer() {
   })
 
   // 历史消息：与微信共用同一个 principal / 当前会话
-  app.get('/api/history', auth, (req, res) => {
+  app.get('/api/history', auth, async (req, res) => {
     const { deviceId, principal } = appPrincipalFor(req)
     const owner = ownerTokenOk(req)
     try {
       const session = getCurrentSession(principal.id)
       if (!session) return res.json({ ok: true, messages: [], owner })
-      const messages = readMessages(principal.id, session.sessionId)
-        .filter(r => (r.type === 'user' || r.type === 'assistant') && typeof r.text === 'string' && r.text.trim())
-        .slice(-80)
-        .map(r => ({
-          role: r.type === 'user' ? 'user' : 'bot',
-          text: r.text,
-          ts: r.timestamp || '',
-        }))
+      const messages = await queryOr('history', {
+        principalId: principal.id,
+        sessionId: session.sessionId,
+        limit: 80,
+      }, () => historyTexts(principal.id, session.sessionId, 80))
       res.json({ ok: true, messages, owner })
     } catch (err) {
       logError('app.history.fail', err.message, { deviceId })
@@ -817,60 +815,7 @@ function buildServer() {
     }
   })
 
-  function uiMessages(principalId, sessionId) {
-    return readMessages(principalId, sessionId)
-      .map(r => {
-        if (r.type === 'file' && r.fileId) {
-          return {
-            id: r.id,
-            seq: r.seq,
-            role: 'bot',
-            file: {
-              id: r.fileId,
-              name: r.fileName,
-              kind: r.kind || 'file',
-              isImage: !!r.isImage,
-              size: r.size,
-            },
-            ts: r.timestamp || '',
-          }
-        }
-        if (r.type === 'user' && (typeof r.text === 'string' && r.text.trim() || Array.isArray(r.attachments) && r.attachments.length)) {
-          return {
-            id: r.id,
-            seq: r.seq,
-            role: 'user',
-            text: typeof r.text === 'string' ? r.text : '',
-            attachments: (r.attachments || []).map(a => ({
-              mediaId: a.id,
-              fileName: a.fileName,
-              name: a.fileName,
-              kind: a.kind || 'file',
-              mime: a.mime || '',
-              size: a.size,
-            })),
-            ts: r.timestamp || '',
-          }
-        }
-        if (r.type === 'assistant' && typeof r.text === 'string' && r.text.trim()) {
-          const trimmed = r.text.trim()
-          // 历史 silent 控制标记不要当正文展示；正常聊天里提到 silent 不受影响。
-          if (r.source === 'cron' && isSilentText(trimmed)) return null
-          if (/^[\[【(（]\s*silent\b[^\]】)）]*[\]】)）]$/i.test(trimmed)) return null
-          return {
-            id: r.id,
-            seq: r.seq,
-            role: 'bot',
-            text: r.text,
-            ts: r.timestamp || '',
-          }
-        }
-        return null
-      })
-      .filter(Boolean)
-  }
-
-  app.get('/api/v1/session/current', auth, (req, res) => {
+  app.get('/api/v1/session/current', auth, async (req, res) => {
     const { principal } = appPrincipalFor(req)
     const owner = ownerTokenOk(req)
     const session = getCurrentSession(principal.id)
@@ -886,41 +831,51 @@ function buildServer() {
         running: getTurnStatus(principal.id),
       })
     }
-    const all = uiMessages(principal.id, session.sessionId)
-    const messages = all.slice(-120)
     const readCursor = appStore.getReadCursor(principal.id, session.sessionId)
+    const data = await queryOr('uiTail', {
+      principalId: principal.id,
+      sessionId: session.sessionId,
+      limit: 120,
+      readCursor,
+    }, () => tailUiMessages(principal.id, session.sessionId, 120, readCursor))
+    const messages = data.messages
     res.json({
       ok: true,
       session,
       messages,
       owner,
       cursor: messages.length ? messages[messages.length - 1].seq + 1 : 0,
-      oldestSeq: messages.length ? messages[0].seq : 0,
-      hasMore: all.length > messages.length,
+      oldestSeq: data.oldestSeq,
+      hasMore: data.hasMore,
       readCursor,
-      unread: all.filter(m => m.seq >= readCursor).length,
+      unread: data.unread,
       context: appStore.getSessionContext(principal.id, session.sessionId),
       running: getTurnStatus(principal.id),
     })
   })
 
   /** 向上翻历史：before 是当前最老消息的 seq，返回更早的一页。 */
-  app.get('/api/v1/session/history', auth, (req, res) => {
+  app.get('/api/v1/session/history', auth, async (req, res) => {
     const { principal } = appPrincipalFor(req)
     const session = getCurrentSession(principal.id)
     if (!session) return res.json({ ok: true, session: null, messages: [], hasMore: false, oldestSeq: 0 })
-    const all = uiMessages(principal.id, session.sessionId)
-    const before = Math.max(0, Number(req.query.before) || all.length)
+    const before = req.query.before === undefined || req.query.before === ''
+      ? null
+      : Math.max(0, Number(req.query.before) || 0)
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 120))
-    const eligible = all.filter(m => m.seq < before)
-    const messages = eligible.slice(-limit)
+    const data = await queryOr('uiBefore', {
+      principalId: principal.id,
+      sessionId: session.sessionId,
+      before,
+      limit,
+    }, () => beforeUiMessages(principal.id, session.sessionId, before, limit))
     res.json({
       ok: true,
       session,
       sessionId: session.sessionId,
-      messages,
-      hasMore: eligible.length > messages.length,
-      oldestSeq: messages.length ? messages[0].seq : before,
+      messages: data.messages,
+      hasMore: data.hasMore,
+      oldestSeq: data.oldestSeq,
     })
   })
 
@@ -928,44 +883,50 @@ function buildServer() {
    * App 增量同步：WebSocket 只负责实时提醒，断线/重连后以这里为准。
    * after 是上一次看到的 seq+1；返回 sessionId、消息和新的 cursor。
    */
-  app.get('/api/v1/sync', auth, (req, res) => {
+  app.get('/api/v1/sync', auth, async (req, res) => {
     const { principal } = appPrincipalFor(req)
     const session = getCurrentSession(principal.id)
     if (!session) return res.json({ ok: true, session: null, sessionId: null, messages: [], cursor: 0, readCursor: 0, unread: 0 })
-    const all = uiMessages(principal.id, session.sessionId)
     const readCursor = appStore.getReadCursor(principal.id, session.sessionId)
     const after = Math.max(0, Number(req.query.after) || 0)
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100))
-    const messages = all.filter(m => m.seq >= after).slice(0, limit)
-    const cursor = messages.length ? messages[messages.length - 1].seq + 1 : after
+    const data = await queryOr('uiAfter', {
+      principalId: principal.id,
+      sessionId: session.sessionId,
+      after,
+      limit,
+      readCursor,
+    }, () => afterUiMessages(principal.id, session.sessionId, after, limit, readCursor))
     res.json({
       ok: true,
       session,
       sessionId: session.sessionId,
-      messages,
-      cursor,
+      messages: data.messages,
+      cursor: data.cursor,
       readCursor,
-      unread: all.filter(m => m.seq >= readCursor).length,
-      lastSeq: all.length,
+      unread: data.unread,
+      lastSeq: data.lastSeq,
       serverTime: new Date().toISOString(),
     })
   })
 
-  app.post('/api/v1/read', auth, (req, res) => {
+  app.post('/api/v1/read', auth, async (req, res) => {
     const { principal } = appPrincipalFor(req)
     const session = getCurrentSession(principal.id)
     if (!session) return res.json({ ok: true, readCursor: 0, unread: 0 })
-    const all = uiMessages(principal.id, session.sessionId)
-    // 游标必须是消息 seq，而不是消息条数：uiMessages 的 seq 来自全局消息序号，
+    // 游标必须是消息 seq，而不是消息条数：UI 消息的 seq 来自全局消息序号，
     // 用条数会导致 unread 永远算不平（表现为 99+）。
-    const latestCursor = all.length ? all[all.length - 1].seq + 1 : 0
-    const requested = req.body?.cursor === undefined ? latestCursor : Number(req.body.cursor)
-    const cursor = Math.min(latestCursor, Math.max(0, Number.isFinite(requested) ? requested : latestCursor))
-    const readCursor = appStore.markRead(principal.id, session.sessionId, cursor)
+    const requested = req.body?.cursor === undefined ? null : Number(req.body.cursor)
+    const info = await queryOr('readInfo', {
+      principalId: principal.id,
+      sessionId: session.sessionId,
+      cursor: requested,
+    }, () => uiReadInfo(principal.id, session.sessionId, requested))
+    const readCursor = appStore.markRead(principal.id, session.sessionId, info.readCursor)
     res.json({
       ok: true,
       readCursor,
-      unread: all.filter(m => m.seq >= readCursor).length,
+      unread: info.unread,
     })
   })
 
@@ -1142,16 +1103,22 @@ function buildServer() {
     })
   })
 
-  app.get('/api/v1/usage/summary', auth, (req, res) => {
+  app.get('/api/v1/usage/summary', auth, async (req, res) => {
     const { principal } = appPrincipalFor(req)
     const messageLimit = Math.min(500, Math.max(20, Number(req.query.messageLimit) || 200))
     const pricing = appStore.readUsagePricing(principal.id)
-    const summary = appStore.usageSummaryRange(principal.id, {
+    const summary = await queryOr('usageSummary', {
+      principalId: principal.id,
       from: req.query.from,
       to: req.query.to,
       messageLimit,
       pricing,
-    })
+    }, () => appStore.usageSummaryRange(principal.id, {
+      from: req.query.from,
+      to: req.query.to,
+      messageLimit,
+      pricing,
+    }))
     const names = new Map(listSessions(principal.id).map(item => [item.sessionId, item.name]))
     summary.sessionList = Object.values(summary.bySession || {})
       .map(item => ({ ...item, name: names.get(item.sessionId) || '' }))
@@ -1163,12 +1130,17 @@ function buildServer() {
     res.json({ ok: true, summary })
   })
 
-  app.get('/api/v1/usage/message', auth, (req, res) => {
+  app.get('/api/v1/usage/message', auth, async (req, res) => {
     const { principal } = appPrincipalFor(req)
     const turnId = typeof req.query.turnId === 'string' ? req.query.turnId.slice(0, 160) : ''
     if (!turnId) return res.status(400).json({ ok: false, error: 'turnId required' })
     const pricing = appStore.readUsagePricing(principal.id)
-    res.json({ ok: true, records: appStore.listUsageByTurn(principal.id, turnId, pricing) })
+    const records = await queryOr('usageByTurn', {
+      principalId: principal.id,
+      turnId,
+      pricing,
+    }, () => appStore.listUsageByTurn(principal.id, turnId, pricing))
+    res.json({ ok: true, records })
   })
 
   app.get('/api/v1/usage/pricing', auth, (req, res) => {
@@ -1226,7 +1198,9 @@ function buildServer() {
   app.use(express.static(APP_WEB_DIR, {
     extensions: ['html'],
     setHeaders: (res, filePath) => {
-      if (/\.(html|js|css)$/i.test(filePath)) res.setHeader('Cache-Control', 'no-store')
+      // no-cache：每次都校验 ETag，文件没变返回 304（不再重复传 173KB 的 app.js），
+      // 文件变了立即拿到新版本；兼顾「秒开」和「自更新后不缓存旧页面」。
+      if (/\.(html|js|css)$/i.test(filePath)) res.setHeader('Cache-Control', 'no-cache')
     },
   }))
   app.use((_req, res) => res.status(404).json({ ok: false, error: 'not found' }))
