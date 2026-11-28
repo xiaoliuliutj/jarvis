@@ -133,6 +133,16 @@ function auth(req, res, next) {
   next()
 }
 
+/** 异步路由兜底：Express 4 不会接管 Promise 拒绝，这里统一转成 500，避免进程崩溃。 */
+function asyncRoute(handler) {
+  return (req, res, next) => {
+    Promise.resolve(handler(req, res, next)).catch(err => {
+      logError('app.route.fail', err.message, { path: req.path })
+      if (!res.headersSent) res.status(500).json({ ok: false, error: '服务器错误' })
+    })
+  }
+}
+
 function checkRate(deviceId) {
   const now = Date.now()
   const bucket = (rateBuckets.get(deviceId) || []).filter(t => now - t < 60_000)
@@ -815,7 +825,7 @@ function buildServer() {
     }
   })
 
-  app.get('/api/v1/session/current', auth, async (req, res) => {
+  app.get('/api/v1/session/current', auth, asyncRoute(async (req, res) => {
     const { principal } = appPrincipalFor(req)
     const owner = ownerTokenOk(req)
     const session = getCurrentSession(principal.id)
@@ -852,10 +862,10 @@ function buildServer() {
       context: appStore.getSessionContext(principal.id, session.sessionId),
       running: getTurnStatus(principal.id),
     })
-  })
+  }))
 
   /** 向上翻历史：before 是当前最老消息的 seq，返回更早的一页。 */
-  app.get('/api/v1/session/history', auth, async (req, res) => {
+  app.get('/api/v1/session/history', auth, asyncRoute(async (req, res) => {
     const { principal } = appPrincipalFor(req)
     const session = getCurrentSession(principal.id)
     if (!session) return res.json({ ok: true, session: null, messages: [], hasMore: false, oldestSeq: 0 })
@@ -877,13 +887,13 @@ function buildServer() {
       hasMore: data.hasMore,
       oldestSeq: data.oldestSeq,
     })
-  })
+  }))
 
   /**
    * App 增量同步：WebSocket 只负责实时提醒，断线/重连后以这里为准。
    * after 是上一次看到的 seq+1；返回 sessionId、消息和新的 cursor。
    */
-  app.get('/api/v1/sync', auth, async (req, res) => {
+  app.get('/api/v1/sync', auth, asyncRoute(async (req, res) => {
     const { principal } = appPrincipalFor(req)
     const session = getCurrentSession(principal.id)
     if (!session) return res.json({ ok: true, session: null, sessionId: null, messages: [], cursor: 0, readCursor: 0, unread: 0 })
@@ -908,9 +918,9 @@ function buildServer() {
       lastSeq: data.lastSeq,
       serverTime: new Date().toISOString(),
     })
-  })
+  }))
 
-  app.post('/api/v1/read', auth, async (req, res) => {
+  app.post('/api/v1/read', auth, asyncRoute(async (req, res) => {
     const { principal } = appPrincipalFor(req)
     const session = getCurrentSession(principal.id)
     if (!session) return res.json({ ok: true, readCursor: 0, unread: 0 })
@@ -928,7 +938,7 @@ function buildServer() {
       readCursor,
       unread: info.unread,
     })
-  })
+  }))
 
   app.post('/api/v1/session/message', auth, handleIncomingMessage)
 
@@ -1042,13 +1052,13 @@ function buildServer() {
     res.json({ ok: removed })
   })
 
-  app.post('/api/v1/settings/models/:id/test', auth, async (req, res) => {
+  app.post('/api/v1/settings/models/:id/test', auth, asyncRoute(async (req, res) => {
     const { principal } = appPrincipalFor(req)
     const model = appStore.getModel(principal.id, req.params.id)
     if (!model) return res.status(404).json({ ok: false, error: '模型不存在' })
     const result = await testModelConnection(principal.id, model)
     res.json({ ok: result.ok, ...result })
-  })
+  }))
 
   app.get('/api/v1/tools', auth, (req, res) => {
     const { principal } = appPrincipalFor(req)
@@ -1103,7 +1113,7 @@ function buildServer() {
     })
   })
 
-  app.get('/api/v1/usage/summary', auth, async (req, res) => {
+  app.get('/api/v1/usage/summary', auth, asyncRoute(async (req, res) => {
     const { principal } = appPrincipalFor(req)
     const messageLimit = Math.min(500, Math.max(20, Number(req.query.messageLimit) || 200))
     const pricing = appStore.readUsagePricing(principal.id)
@@ -1128,9 +1138,9 @@ function buildServer() {
       sessionName: names.get(item.sessionId) || '',
     }))
     res.json({ ok: true, summary })
-  })
+  }))
 
-  app.get('/api/v1/usage/message', auth, async (req, res) => {
+  app.get('/api/v1/usage/message', auth, asyncRoute(async (req, res) => {
     const { principal } = appPrincipalFor(req)
     const turnId = typeof req.query.turnId === 'string' ? req.query.turnId.slice(0, 160) : ''
     if (!turnId) return res.status(400).json({ ok: false, error: 'turnId required' })
@@ -1141,7 +1151,7 @@ function buildServer() {
       pricing,
     }, () => appStore.listUsageByTurn(principal.id, turnId, pricing))
     res.json({ ok: true, records })
-  })
+  }))
 
   app.get('/api/v1/usage/pricing', auth, (req, res) => {
     const { principal } = appPrincipalFor(req)
