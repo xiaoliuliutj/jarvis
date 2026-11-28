@@ -131,7 +131,7 @@ function resolveChatModel({ principalId, principal }) {
         : sanitizeForUser(principal, '未配置 API Key（config/agent.json 或 config/credentials.json）'),
     }
   }
-  return { apiKey, baseUrl, authMode, activeModel, agentEnv }
+  return { apiKey, baseUrl, authMode, activeModel, agentEnv, provider: userModel?.provider || '' }
 }
 
 /**
@@ -188,7 +188,7 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
         sessionId: resumeId,
       }
     }
-    const { apiKey, baseUrl, authMode, activeModel, agentEnv } = modelConfig
+    const { apiKey, baseUrl, authMode, activeModel, agentEnv, provider } = modelConfig
 
     // 长期记忆预算按当前上下文窗口的 2%-4% 计算：
     // 低于 4% 原样保留，超过 4% 压缩到 2%，保证摘要/偏好始终有一席之地。
@@ -601,8 +601,8 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
             messagePreview: callIndex === 0 ? messagePreview : '',
             source,
             capability: 'chat',
-            model: event.model || userModel?.model || activeModel,
-            provider: userModel?.provider || '',
+            model: event.model || activeModel,
+            provider,
             inputTokens: usage.input_tokens ?? usage.prompt_tokens ?? 0,
             outputTokens: usage.output_tokens ?? usage.completion_tokens ?? 0,
             cacheReadTokens: usage.cache_read_input_tokens ?? 0,
@@ -633,8 +633,8 @@ export async function runTurn({ principalId, prompt, displayText = null, userAtt
           messagePreview,
           source,
           capability: 'chat',
-          model: userModel?.model || activeModel,
-          provider: userModel?.provider || '',
+          model: activeModel,
+          provider,
           inputTokens: result.usage?.input_tokens ?? result.usage?.prompt_tokens ?? 0,
           outputTokens: result.usage?.output_tokens ?? result.usage?.completion_tokens ?? 0,
           cacheReadTokens: result.usage?.cache_read_input_tokens ?? 0,
