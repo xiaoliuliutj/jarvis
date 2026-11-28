@@ -38,10 +38,11 @@ server.tool(
     startAt: z.string().describe('日程时间，本地时间字符串或 ISO 8601，例如 2026-11-20 15:00'),
     remindBeforeMinutes: z.number().int().min(0).max(10080).optional().describe('提前多少分钟提醒，默认 0；1 天 = 1440'),
     notes: z.string().optional().describe('备注'),
+    priority: z.enum(['low', 'normal', 'high']).optional().describe('优先级，默认 normal'),
   },
-  async ({ title, startAt, remindBeforeMinutes = 0, notes }) => {
+  async ({ title, startAt, remindBeforeMinutes = 0, notes, priority = 'normal' }) => {
     try {
-      const item = addSchedule(principalId, { title, startAt, remindBeforeMinutes, notes })
+      const item = addSchedule(principalId, { title, startAt, remindBeforeMinutes, notes, priority })
       return {
         content: [{
           type: 'text',
@@ -56,13 +57,15 @@ server.tool(
 
 server.tool(
   'schedule__list',
-  '列出当前用户自己的日程。默认只看未开始的；includePast=true 可以看到历史日程。',
+  '列出当前用户自己还活着的日程（schedules.json）。默认只看未完成的未来日程；includePast=true 看历史，includeDone=true 包含已完成，includeCancelled=true 包含已取消。已归档的完成/取消记录不在这里：最近 30 条在长期记忆「日程」区，更早的在当前用户工作区「日程历史.md」。',
   {
     includePast: z.boolean().optional().describe('是否包含已经开始的日程，默认 false'),
+    includeDone: z.boolean().optional().describe('是否包含已完成（status=done）的日程，默认 false'),
+    includeCancelled: z.boolean().optional().describe('是否包含已取消（status=cancelled）的日程，默认 false'),
   },
-  async ({ includePast = false } = {}) => {
+  async ({ includePast = false, includeDone = false, includeCancelled = false } = {}) => {
     try {
-      const items = listSchedules(principalId, { includePast })
+      const items = listSchedules(principalId, { includePast, includeDone, includeCancelled })
       if (!items.length) return { content: [{ type: 'text', text: '📅 暂无日程' }] }
       return {
         content: [{
@@ -78,13 +81,16 @@ server.tool(
 
 server.tool(
   'schedule__update',
-  '修改当前用户自己的日程。修改时间或提前提醒后会重新等待提醒。',
+  '修改当前用户自己的日程。修改时间或提前提醒后会重新等待提醒。用户说“做完了/完成了”时把 status 设为 done，并可在 outcome 里记一句结果；不要为此写长期记忆。',
   {
     id: z.string().describe('日程 id，先用 schedule__list 查看'),
     title: z.string().optional(),
     startAt: z.string().optional().describe('本地时间字符串或 ISO 8601'),
     remindBeforeMinutes: z.number().int().min(0).max(10080).optional(),
     notes: z.string().optional(),
+    status: z.enum(['pending', 'done', 'cancelled']).optional().describe('日程状态；done=已完成，cancelled=已取消，pending=恢复待办'),
+    outcome: z.string().max(500).optional().describe('完成结果/简短备注（可选）'),
+    priority: z.enum(['low', 'normal', 'high']).optional().describe('优先级，默认 normal'),
   },
   async ({ id, ...updates } = {}) => {
     try {

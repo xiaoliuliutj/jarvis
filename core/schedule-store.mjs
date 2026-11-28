@@ -8,9 +8,12 @@
  *     startAt,              ISO 时间
  *     remindBeforeMinutes,  提前多少分钟提醒（0-10080）
  *     reminderSentAt,       已提醒时间；null 表示待提醒
+ *     status, doneAt, outcome, priority,
  *     createdAt, updatedAt
  *   }
  *
+ * 这里只放「活着的日程」（提醒扫描只看这里）；已完成的日程在上下文压缩时
+ * 由 core/schedule-memory.mjs 移进长期记忆「日程」区（超限再进日程历史）。
  * 日程只属于当前 principal；工具没有跨用户参数。
  */
 
@@ -21,6 +24,33 @@ import { schedulesFile, ensureDir } from './paths.mjs'
 import { ensureUser } from './user-store.mjs'
 
 const MAX_REMIND_MINUTES = 7 * 24 * 60
+const STATUSES = new Set(['pending', 'done', 'cancelled'])
+const PRIORITIES = new Set(['low', 'normal', 'high'])
+
+/** 兼容旧数据：缺 status 的按 pending；补齐常用标记。 */
+function normalizeSchedule(item) {
+  return {
+    ...item,
+    status: STATUSES.has(item.status) ? item.status : 'pending',
+    doneAt: item.doneAt || null,
+    outcome: typeof item.outcome === 'string' ? item.outcome : '',
+    priority: PRIORITIES.has(item.priority) ? item.priority : 'normal',
+    source: typeof item.source === 'string' ? item.source : 'manual',
+  }
+}
+
+function normalizeStatus(value) {
+  const status = String(value || '').trim()
+  if (!STATUSES.has(status)) throw new Error('status 只能是 pending / done / cancelled')
+  return status
+}
+
+function normalizePriority(value) {
+  if (value === undefined || value === null || value === '') return 'normal'
+  const priority = String(value).trim()
+  if (!PRIORITIES.has(priority)) throw new Error('priority 只能是 low / normal / high')
+  return priority
+}
 
 function readJson(file, fallback) {
   if (!fs.existsSync(file)) return fallback
@@ -62,6 +92,7 @@ function normalizeNotes(value) {
 export function readSchedules(principalId) {
   ensureUser(principalId)
   return readJson(schedulesFile(principalId), [])
+    .map(normalizeSchedule)
     .sort((a, b) => new Date(a.startAt) - new Date(b.startAt))
 }
 
@@ -70,9 +101,15 @@ export function writeSchedules(principalId, schedules) {
   writeJson(schedulesFile(principalId), schedules)
 }
 
-export function listSchedules(principalId, { includePast = false } = {}) {
+export function listSchedules(principalId, {
+  includePast = false,
+  includeDone = false,
+  includeCancelled = false,
+} = {}) {
   const now = Date.now()
   return readSchedules(principalId).filter(item => {
+    if (item.status === 'done' && !includeDone) return false
+    if (item.status === 'cancelled' && !includeCancelled) return false
     if (includePast) return true
     return new Date(item.startAt).getTime() >= now
   })
@@ -87,6 +124,12 @@ export function addSchedule(principalId, input) {
     startAt: parseStartAt(input.startAt),
     remindBeforeMinutes: normalizeRemindBefore(input.remindBeforeMinutes),
     reminderSentAt: null,
+    // 完成状态先留在日程本身，压缩时再归档进长期记忆
+    status: 'pending',
+    doneAt: null,
+    outcome: '',
+    priority: normalizePriority(input.priority),
+    source: String(input.source || 'manual').slice(0, 40),
     createdAt: now,
     updatedAt: now,
   }
@@ -112,6 +155,13 @@ export function updateSchedule(principalId, id, updates) {
     schedule.remindBeforeMinutes = normalizeRemindBefore(updates.remindBeforeMinutes)
     schedule.reminderSentAt = null
   }
+  if (updates.status !== undefined) {
+    const status = normalizeStatus(updates.status)
+    schedule.status = status
+    schedule.doneAt = status === 'pending' ? null : new Date().toISOString()
+  }
+  if (updates.outcome !== undefined) schedule.outcome = String(updates.outcome || '').trim().slice(0, 500)
+  if (updates.priority !== undefined) schedule.priority = normalizePriority(updates.priority)
   schedule.updatedAt = new Date().toISOString()
 
   writeSchedules(principalId, schedules)
@@ -162,9 +212,17 @@ export function formatAdvance(minutes = 0) {
 }
 
 export function formatScheduleLine(item, index = 0) {
-  const status = item.reminderSentAt ? '已提醒' : '待提醒'
+  const status = item.status === 'done'
+    ? `已完成${item.doneAt ? `（${formatDateTime(item.doneAt)}）` : ''}`
+    : item.status === 'cancelled'
+      ? '已取消'
+      : (item.reminderSentAt ? '已提醒' : '待提醒')
+  const priority = item.priority && item.priority !== 'normal'
+    ? `｜优先级：${item.priority === 'high' ? '高' : '低'}`
+    : ''
   const notes = item.notes ? `\n   ${item.notes}` : ''
-  return `${index + 1}. ${item.title}\n   时间：${formatDateTime(item.startAt)}｜提前：${formatAdvance(item.remindBeforeMinutes)}｜${status}\n   id: ${item.id}${notes}`
+  const outcome = item.outcome ? `\n   结果：${item.outcome}` : ''
+  return `${index + 1}. ${item.title}\n   时间：${formatDateTime(item.startAt)}｜提前：${formatAdvance(item.remindBeforeMinutes)}｜${status}${priority}\n   id: ${item.id}${notes}${outcome}`
 }
 
 export function formatScheduleReminder(item) {

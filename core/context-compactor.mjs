@@ -10,6 +10,7 @@ import {
   writeSessionDigestState,
   upsertSessionSummary,
 } from './user-store.mjs'
+import { syncScheduleMemory, listArchivedScheduleLines } from './schedule-memory.mjs'
 import { logInfo, logWarn } from './logger.mjs'
 
 const RECENT_TAIL = 6
@@ -147,6 +148,15 @@ export async function compactSessionContext({
   if (end <= 0) return null
 
   const handoffBlock = formatHandoff(allMessages.slice(end))
+  // 已完成日程会单独归档（长期记忆「日程」区 / 日程历史）：摘要里不再重复罗列。
+  let scheduleNote = ''
+  const scheduleLines = listArchivedScheduleLines(principalId)
+  if (scheduleLines.length) {
+    scheduleNote = [
+      '【以下终态日程（已完成/已取消）已单独归档（长期记忆「日程」区或日程历史），摘要中不要重复罗列（可保留与之相关的偏好/决定）】',
+      ...scheduleLines.map(line => `- ${line}`),
+    ].join('\n')
+  }
   let digest = state.digest
   // 从上次处理到的位置开始逐批推进，绝不跳过中间消息。
   const startAt = Math.min(Math.max(Number(state.compactedUpto) || 0, 0), end)
@@ -166,6 +176,7 @@ export async function compactSessionContext({
       const prompt = [
         digest ? `【已有长期摘要】\n${digest}` : '',
         `【本次需要压缩的对话】\n${conversation}`,
+        scheduleNote,
         '更早的历史消息如果不在上面，视为已由长期记忆覆盖。',
         '请输出更新后的长期记忆摘要。',
       ].filter(Boolean).join('\n\n')
@@ -198,6 +209,12 @@ export async function compactSessionContext({
   }
 
   upsertSessionSummary(principalId, displaySessionId, `【会话压缩摘要】\n${digest}`)
+  // 只在压缩时同步日程三区：完成 → 长期记忆（30 条上限）→ 超限 → 日程历史
+  try {
+    syncScheduleMemory(principalId)
+  } catch (err) {
+    logWarn('schedule.memory.sync.fail', err.message, { principalId })
+  }
   writeSessionDigestState(principalId, displaySessionId, {
     digest,
     compactedUpto: cursor,
