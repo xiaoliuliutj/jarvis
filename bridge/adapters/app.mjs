@@ -1114,11 +1114,13 @@ function buildServer() {
   })
 
   app.get('/api/v1/usage/summary', auth, asyncRoute(async (req, res) => {
+    const started = Date.now()
     const { principal } = appPrincipalFor(req)
     // messageLimit=0：只要总量统计，不带明细（App 端首屏用，明细按需分页拉）
+    // 首屏只需要最近一页；旧前端传 200 也最多给 60，避免 Tailscale 下拖大响应
     const messageLimit = req.query.messageLimit === '0'
       ? 0
-      : Math.min(500, Math.max(20, Number(req.query.messageLimit) || 200))
+      : Math.min(60, Math.max(20, Number(req.query.messageLimit) || 200))
     const pricing = appStore.readUsagePricing(principal.id)
     const summary = await queryOr('usageSummary', {
       principalId: principal.id,
@@ -1141,10 +1143,17 @@ function buildServer() {
       sessionName: names.get(item.sessionId) || '',
     }))
     res.json({ ok: true, summary })
+    logInfo('usage.timing', 'summary', {
+      principalId: principal.id,
+      messageLimit,
+      messages: summary.messages.length,
+      ms: Date.now() - started,
+    })
   }))
 
   /** 对话明细分页：展开时才拉，滚动到底用 nextBefore 加载更早。 */
   app.get('/api/v1/usage/messages', auth, asyncRoute(async (req, res) => {
+    const started = Date.now()
     const { principal } = appPrincipalFor(req)
     const pricing = appStore.readUsagePricing(principal.id)
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20))
@@ -1158,9 +1167,16 @@ function buildServer() {
     }
     const data = await queryOr('usageMessages', args, () => appStore.usageMessagesPage(principal.id, args))
     res.json({ ok: true, ...data })
+    logInfo('usage.timing', 'messages', {
+      principalId: principal.id,
+      limit,
+      returned: data.messages.length,
+      ms: Date.now() - started,
+    })
   }))
 
   app.get('/api/v1/usage/message', auth, asyncRoute(async (req, res) => {
+    const started = Date.now()
     const { principal } = appPrincipalFor(req)
     const turnId = typeof req.query.turnId === 'string' ? req.query.turnId.slice(0, 160) : ''
     if (!turnId) return res.status(400).json({ ok: false, error: 'turnId required' })
@@ -1171,6 +1187,11 @@ function buildServer() {
       pricing,
     }, () => appStore.listUsageByTurn(principal.id, turnId, pricing))
     res.json({ ok: true, records })
+    logInfo('usage.timing', 'message', {
+      principalId: principal.id,
+      records: records.length,
+      ms: Date.now() - started,
+    })
   }))
 
   app.get('/api/v1/usage/pricing', auth, (req, res) => {
