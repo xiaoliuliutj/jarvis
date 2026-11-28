@@ -783,12 +783,43 @@ function summarizeRows(rows, { from = null, to = null, messageLimit = 200, prici
       + message.cacheWriteTokens,
   })).sort((a, b) => String(b.firstTs || '').localeCompare(String(a.firstTs || '')))
   summary.messageTotal = messages.length
-  const limit = Math.max(1, Math.min(500, Number(messageLimit) || 200))
-  summary.messages = messages.slice(0, limit)
+  const includeMessages = Number(messageLimit) !== 0
+  const limit = Math.max(1, Math.min(5000, Number(messageLimit) || 200))
+  summary.messages = includeMessages ? messages.slice(0, limit) : []
   return summary
 }
 
-export function usageSummaryRange(principalId, { from, to, messageLimit = 200, pricing = null } = {}) {
+// ── 用量汇总缓存 ────────────────────────────────────────────────────────────
+// 统计允许几分钟延迟：首次计算后落盘，TTL 内直接读缓存，避免每次打开用量页重算。
+const USAGE_SUMMARY_TTL_MS = 3 * 60 * 1000
+
+function usageCacheDir(principalId) {
+  return path.join(usageDir(principalId), 'cache')
+}
+
+function usageSummaryCacheKey({ fromIso, toIso, messageLimit, pricing }) {
+  return crypto.createHash('sha1').update(JSON.stringify([
+    fromIso,
+    toIso,
+    messageLimit,
+    pricing ? [pricing.currency, pricing.input, pricing.output, pricing.cacheRead, pricing.cacheWrite] : null,
+  ])).digest('hex').slice(0, 16)
+}
+
+function pruneUsageCache(dir) {
+  try {
+    const now = Date.now()
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.endsWith('.json')) continue
+      const file = path.join(dir, name)
+      try {
+        if (now - fs.statSync(file).mtimeMs > 7 * 24 * 3600 * 1000) fs.unlinkSync(file)
+      } catch {}
+    }
+  } catch {}
+}
+
+export function usageSummaryRange(principalId, { from, to, messageLimit = 200, pricing = null, skipCache = false } = {}) {
   const now = new Date()
   const fallback = monthBounds(monthKey(now))
   let fromDate = from instanceof Date ? from : new Date(from)
@@ -799,9 +830,57 @@ export function usageSummaryRange(principalId, { from, to, messageLimit = 200, p
     fromDate = fallback.from
     toDate = fallback.to
   }
-  const rows = readUsageRowsInRange(principalId, { from: fromDate, to: toDate })
   const rate = pricing || readUsagePricing(principalId)
-  return summarizeRows(rows, { from: fromDate, to: toDate, messageLimit, pricing: rate })
+  const key = usageSummaryCacheKey({
+    fromIso: fromDate.toISOString(),
+    toIso: toDate.toISOString(),
+    messageLimit,
+    pricing: rate,
+  })
+  const cacheFile = path.join(usageCacheDir(principalId), `summary-${key}.json`)
+
+  if (!skipCache) {
+    try {
+      const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf-8'))
+      const age = Date.now() - (Date.parse(cached?.generatedAt) || 0)
+      if (cached?.v === 1 && cached.summary && age >= 0 && age < USAGE_SUMMARY_TTL_MS) {
+        return cached.summary
+      }
+    } catch {}
+  }
+
+  const rows = readUsageRowsInRange(principalId, { from: fromDate, to: toDate })
+  const summary = summarizeRows(rows, { from: fromDate, to: toDate, messageLimit, pricing: rate })
+  summary.generatedAt = new Date().toISOString()
+
+  try {
+    ensureDir(usageCacheDir(principalId))
+    const tmp = `${cacheFile}.tmp-${process.pid}-${crypto.randomBytes(3).toString('hex')}`
+    fs.writeFileSync(tmp, JSON.stringify({ v: 1, generatedAt: summary.generatedAt, key, summary }), 'utf-8')
+    fs.renameSync(tmp, cacheFile)
+    pruneUsageCache(usageCacheDir(principalId))
+  } catch {}
+
+  return summary
+}
+
+/** 用量「对话明细」分页：按 firstTs 倒序，before 传上一页最后一条的 firstTs。 */
+export function usageMessagesPage(principalId, { from, to, before = null, limit = 20, pricing = null } = {}) {
+  const summary = usageSummaryRange(principalId, { from, to, messageLimit: 5000, pricing })
+  const all = Array.isArray(summary.messages) ? summary.messages : []
+  const cut = before ? String(before) : ''
+  const filtered = cut
+    ? all.filter(item => String(item.firstTs || '') < cut)
+    : all
+  const size = Math.max(1, Math.min(100, Number(limit) || 20))
+  const page = filtered.slice(0, size)
+  return {
+    messages: page,
+    messageTotal: summary.messageTotal,
+    hasMore: filtered.length > page.length,
+    nextBefore: page.length ? (page[page.length - 1].firstTs || null) : null,
+    generatedAt: summary.generatedAt || null,
+  }
 }
 
 export function usageSummary(principalId, { month = monthKey() } = {}) {

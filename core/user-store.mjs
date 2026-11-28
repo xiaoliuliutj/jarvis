@@ -280,17 +280,50 @@ export function writeSessionDigestState(principalId, sessionId, { digest = '', c
   })
 }
 
+/**
+ * 会话消息读缓存。
+ *
+ * 每次 App 刷新都会读整个 messages.jsonl（当前主会话 7000+ 条 / 5MB），
+ * 全量解析会占住主线程，执行中的会话就更卡。这里按 size+mtime 失效缓存，
+ * 写路径（appendMessage）增量更新，查询直接命中。
+ *
+ * 返回的 rows 视为只读快照：写路径会替换为新数组，不会原地修改已返回的数组。
+ */
+const messagesCache = new Map()
+
 export function appendMessage(principalId, sessionId, record) {
   ensureUser(principalId)
   const entry = record?.id ? record : { ...record, id: `msg_${randomUUID()}` }
-  fs.appendFileSync(messagesFile(principalId, sessionId), JSON.stringify(entry) + '\n', 'utf-8')
+  const file = messagesFile(principalId, sessionId)
+  let before = null
+  try { before = fs.statSync(file) } catch {}
+  const line = JSON.stringify(entry) + '\n'
+  fs.appendFileSync(file, line, 'utf-8')
+  // 增量更新读缓存：只有确认追加前缓存与文件完全同步时才安全。跨进程写入
+  // （Electron 主会话）会让 size 对不上，此时直接失效，下次读时重新解析。
+  try {
+    const after = fs.statSync(file)
+    const cached = messagesCache.get(file)
+    if (cached && before && cached.size === before.size && after.size === before.size + Buffer.byteLength(line)) {
+      const rows = cached.rows.concat([{ ...entry, seq: cached.rows.length }])
+      messagesCache.set(file, { size: after.size, mtimeMs: after.mtimeMs, rows })
+    } else {
+      messagesCache.delete(file)
+    }
+  } catch {
+    messagesCache.delete(file)
+  }
   return entry
 }
 
 export function readMessages(principalId, sessionId) {
   const file = messagesFile(principalId, sessionId)
-  if (!fs.existsSync(file)) return []
-  return fs.readFileSync(file, 'utf-8')
+  let stat = null
+  try { stat = fs.statSync(file) } catch { return [] }
+  const cached = messagesCache.get(file)
+  if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return cached.rows
+
+  const rows = fs.readFileSync(file, 'utf-8')
     .split('\n')
     .filter(l => l.trim())
     .map((line, index) => {
@@ -302,6 +335,8 @@ export function readMessages(principalId, sessionId) {
         seq: index,
       }
     })
+  messagesCache.set(file, { size: stat.size, mtimeMs: stat.mtimeMs, rows })
+  return rows
 }
 
 /** 扫描所有 principal 目录（跳过 tools/_legacy 等非用户目录）。 */

@@ -10,6 +10,7 @@
     notify: 'jarvis.app.notify',
     outbox: 'jarvis.app.outbox',
     localFiles: 'jarvis.app.localFiles',
+    sessionCache: 'jarvis.app.sessionCache.v1',
   }
   const MAX_ATTACHMENTS = 3
   const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
@@ -54,6 +55,13 @@
     usageDetailsOpen: false,
     usageMessageOpen: {},
     usageMessageCalls: {},
+    usageMessages: [],
+    usageMessagesLoaded: false,
+    usageMessagesLoading: false,
+    usageMessagesMore: false,
+    usageMessagesBefore: null,
+    usageMessagesError: '',
+    usageMessageTotal: 0,
     usageRequestKey: '',
     context: null,
     editingModelId: null,
@@ -299,6 +307,57 @@
   function remove(key) {
     try { localStorage.removeItem(key) } catch {}
   }
+
+  // ── 会话本地缓存（被杀后台后先出画面，再后台增量同步） ────────────────
+  const SESSION_CACHE_MAX = 120
+  let sessionCacheTimer = null
+
+  function saveSessionCache() {
+    if (!state.url || !state.sessionId || !state.messages.length) return
+    try {
+      write(KEYS.sessionCache, JSON.stringify({
+        v: 1,
+        url: state.url,
+        sessionId: state.sessionId,
+        cursor: state.syncCursor || 0,
+        oldestSeq: state.oldestSeq || 0,
+        hasMore: !!state.hasMore,
+        messages: state.messages.slice(-SESSION_CACHE_MAX),
+        savedAt: new Date().toISOString(),
+      }))
+    } catch {}
+  }
+
+  function scheduleSessionCacheSave(delay = 1500) {
+    clearTimeout(sessionCacheTimer)
+    sessionCacheTimer = setTimeout(() => { sessionCacheTimer = null; saveSessionCache() }, delay)
+  }
+
+  function loadSessionCache() {
+    try {
+      const raw = read(KEYS.sessionCache, '')
+      if (!raw) return null
+      const data = JSON.parse(raw)
+      if (!data || data.v !== 1 || !Array.isArray(data.messages) || !data.messages.length) return null
+      if (data.url !== state.url) return null
+      return data
+    } catch { return null }
+  }
+
+  /** 首屏先渲染本地缓存，网络同步失败也不会白屏。 */
+  function restoreSessionCache() {
+    const cached = loadSessionCache()
+    if (!cached) return null
+    state.sessionId = cached.sessionId || ''
+    state.syncCursor = Number(cached.cursor || 0)
+    state.oldestSeq = Number(cached.oldestSeq || 0)
+    state.hasMore = !!cached.hasMore
+    state.messages = cached.messages
+    renderMessages(state.messages)
+    nativePageReady()
+    return cached
+  }
+
   function mask(value) {
     if (!value) return '未配置'
     if (value.length <= 8) return '已配置'
@@ -634,7 +693,76 @@
   function refreshCurrentSessionSoon() {
     if (!state.token) return
     clearTimeout(sessionRefreshTimer)
-    sessionRefreshTimer = setTimeout(() => { loadSession().catch(() => {}) }, 180)
+    // 有游标就只拉增量；游标缺失/会话切换时 syncCurrentSession 会自行回退到全量
+    sessionRefreshTimer = setTimeout(() => { syncCurrentSession().catch(() => {}) }, 180)
+  }
+
+  function sortChatMessages(list) {
+    list.sort((a, b) => {
+      const at = Date.parse(a.ts || '') || 0
+      const bt = Date.parse(b.ts || '') || 0
+      if (at !== bt) return at - bt
+      const as = Number.isInteger(a.seq) ? a.seq : Number.MAX_SAFE_INTEGER
+      const bs = Number.isInteger(b.seq) ? b.seq : Number.MAX_SAFE_INTEGER
+      return as - bs
+    })
+    return list
+  }
+
+  /** 增量同步：只拉上次 cursor 之后的新消息；失败时回退全量 loadSession。 */
+  async function syncCurrentSession() {
+    if (!state.token) return
+    const cursor = Number(state.syncCursor || 0)
+    if (!cursor || !state.sessionId) {
+      await loadSession()
+      return
+    }
+    try {
+      const limit = 200
+      const data = await api(`/api/v1/sync?after=${encodeURIComponent(cursor)}&limit=${limit}`)
+      if (!data?.ok) throw new Error('sync failed')
+      const sid = data.session?.sessionId || data.sessionId || ''
+      if (sid && state.sessionId && sid !== state.sessionId) {
+        await loadSession()
+        return
+      }
+      if (sid && !state.sessionId) state.sessionId = sid
+      const incoming = Array.isArray(data.messages) ? data.messages : []
+      // 超过一页说明中间还有，交给全量刷新保证不漏
+      if (incoming.length >= limit) {
+        await loadSession()
+        return
+      }
+      const known = new Set(state.messages.map(m => m.id).filter(Boolean))
+      const fresh = []
+      for (const m of incoming) {
+        if (!m || !m.id || known.has(m.id)) continue
+        // 本地乐观消息没有 seq；服务端回显后用服务端版本替换，避免同一句话出现两次
+        if (m.role === 'user') {
+          const idx = state.messages.findIndex(x => x.role === 'user'
+            && !Number.isInteger(x.seq)
+            && String(x.text || '').trim() === String(m.text || '').trim()
+            && Math.abs((Date.parse(x.ts) || 0) - (Date.parse(m.ts) || 0)) < 120000)
+          if (idx >= 0) {
+            state.messages[idx] = m
+            known.add(m.id)
+            continue
+          }
+        }
+        fresh.push(m)
+      }
+      if (fresh.length) {
+        state.messages.push(...fresh)
+        sortChatMessages(state.messages)
+        renderMessages(state.messages)
+        scheduleSessionCacheSave(400)
+      }
+      const nextCursor = Number(data.cursor || 0)
+      if (Number.isFinite(nextCursor) && nextCursor > state.syncCursor) state.syncCursor = nextCursor
+      if (typeof data.unread === 'number') setUnread(data.unread)
+    } catch {
+      await loadSession()
+    }
   }
 
   async function flushOutbox() {
@@ -887,6 +1015,7 @@
     setUnread(0)
     remove(KEYS.token)
     remove(KEYS.ownerToken)
+    remove(KEYS.sessionCache)
     try { const bridge = notifyBridge(); if (bridge) bridge.setEnabled(false) } catch {}
     if (state.ws) { try { state.ws.close() } catch {} state.ws = null }
     renderMessages([])
@@ -2274,6 +2403,7 @@
     el.messages.appendChild(buildMessageEl(item))
     if (wasAtBottom) scrollToBottom()
     else requestAnimationFrame(updateChatScrollbar)
+    scheduleSessionCacheSave()
   }
 
   function updateChatScrollbar() {
@@ -2523,13 +2653,15 @@
       else clearRunStatus()
       markReadSoon()
       loadMood().catch(() => {})
+      saveSessionCache()
     } catch (err) {
       try {
         const data = await api('/api/history')
         state.messages = Array.isArray(data.messages) ? data.messages : []
         renderMessages(state.messages)
       } catch {
-        renderMessages([])
+        // 网络差时保留本地缓存视图，不要清空成白屏
+        if (!state.messages.length) renderMessages([])
         appendMessage({ role: 'system', text: `会话加载失败：${err.message}`, ts: new Date().toISOString() })
       }
     }
@@ -3586,8 +3718,19 @@
   })
   el.usageDetailsToggle.addEventListener('click', () => {
     state.usageDetailsOpen = !state.usageDetailsOpen
+    if (state.usageDetailsOpen && !state.usageMessagesLoaded) {
+      loadUsageMessagesPage(true).catch(() => {})
+    }
     renderUsage()
   })
+
+  el.views.usage?.addEventListener('scroll', () => {
+    if (!state.usageDetailsOpen || state.usageMessagesLoading || !state.usageMessagesMore || !state.usageMessagesLoaded) return
+    const node = el.views.usage
+    if (node.scrollTop + node.clientHeight >= node.scrollHeight - 160) {
+      loadUsageMessagesPage(false).catch(() => {})
+    }
+  }, { passive: true })
 
   el.usagePriceSave?.addEventListener('click', () => { saveUsagePricing() })
 
@@ -3597,6 +3740,13 @@
     state.usageDetailsOpen = false
     state.usageMessageOpen = {}
     state.usageMessageCalls = {}
+    state.usageMessages = []
+    state.usageMessagesLoaded = false
+    state.usageMessagesLoading = false
+    state.usageMessagesMore = false
+    state.usageMessagesBefore = null
+    state.usageMessagesError = ''
+    state.usageMessageTotal = 0
     renderUsage()
     loadUsage()
   }
@@ -3733,10 +3883,11 @@
     loadUsagePricing().catch(() => {})
     if (!state.usageSummary) renderUsage()
     const { from, to } = usagePeriodRange(state.usageGranularity, state.usageAnchor)
+    // 首屏只取统计 + 最近 20 轮（点开明细直接显示）；更早的用分页接口再拉
     const query = new URLSearchParams({
       from: from.toISOString(),
       to: to.toISOString(),
-      messageLimit: '200',
+      messageLimit: '20',
     })
     const requestKey = query.toString()
     state.usageRequestKey = requestKey
@@ -3745,6 +3896,15 @@
       if (state.usageRequestKey !== requestKey) return
       state.usageSummary = data.summary
       state.usageError = ''
+      if (!state.usageMessagesLoaded) {
+        const first = Array.isArray(data.summary?.messages) ? data.summary.messages : []
+        const total = Number(data.summary?.messageTotal || 0)
+        state.usageMessages = first
+        state.usageMessagesLoaded = first.length > 0 || total === 0
+        state.usageMessagesMore = total > first.length
+        state.usageMessagesBefore = first.length ? (first[first.length - 1].firstTs || null) : null
+        state.usageMessageTotal = total
+      }
       renderUsage()
     } catch (err) {
       if (state.usageRequestKey !== requestKey) return
@@ -3794,6 +3954,7 @@
       if (data.legacyTurns) parts.push(`历史部分按 ${formatTokenExact(data.legacyTurns)} 轮整轮汇总`)
       if (data.cacheWriteTokens) parts.push(`缓存写 ${formatTokens(data.cacheWriteTokens)}`)
       if (data.errors) parts.push(`失败 ${data.errors} 次`)
+      if (data.generatedAt) parts.push(`统计截至 ${formatTime(data.generatedAt)}`)
       parts.push(pricing ? '费用按价格表估算' : '未配置价格')
       el.usageMeta.textContent = parts.join(' · ')
     } else {
@@ -3844,15 +4005,64 @@
       }
     }
 
-    const messageList = Array.isArray(data.messages) ? data.messages : []
-    const messageNote = s && (data.messageTotal || 0) > messageList.length
-      ? ` · 最近 ${messageList.length} 轮`
-      : ''
-    el.usageMessageCount.textContent = s ? `共 ${data.messageTotal || 0} 轮${messageNote}` : ''
+    const total = Number(data.messageTotal || state.usageMessageTotal || 0)
+    updateUsageMessageHead()
     el.usageDetailsToggle.textContent = state.usageDetailsOpen ? '收起' : '查看详情'
-    el.usageDetailsToggle.disabled = !s || !(data.messageTotal)
+    el.usageDetailsToggle.disabled = !s || !total
     el.usageMessages.classList.toggle('hidden', !state.usageDetailsOpen)
     renderUsageMessages()
+  }
+
+  function updateUsageMessageHead() {
+    const data = state.usageSummary
+    const total = Number(data?.messageTotal || state.usageMessageTotal || 0)
+    const loadedCount = state.usageMessages.length
+    const note = state.usageDetailsOpen && loadedCount && total > loadedCount
+      ? ` · 已加载最近 ${loadedCount} 轮`
+      : ''
+    el.usageMessageCount.textContent = data ? `共 ${total} 轮${note}` : ''
+  }
+
+  /** 对话明细分页：reset=true 拉第一页，否则用 before 加载更早。 */
+  async function loadUsageMessagesPage(reset = false) {
+    if (!state.token || state.usageMessagesLoading) return
+    if (!reset && !state.usageMessagesMore) return
+    state.usageMessagesLoading = true
+    if (reset) {
+      state.usageMessages = []
+      state.usageMessagesLoaded = false
+      state.usageMessagesMore = false
+      state.usageMessagesBefore = null
+      state.usageMessagesError = ''
+    }
+    renderUsageMessages()
+    const { from, to } = usagePeriodRange(state.usageGranularity, state.usageAnchor)
+    const query = new URLSearchParams({
+      from: from.toISOString(),
+      to: to.toISOString(),
+      limit: '20',
+    })
+    if (!reset && state.usageMessagesBefore) query.set('before', state.usageMessagesBefore)
+    try {
+      const data = await api(`/api/v1/usage/messages?${query.toString()}`)
+      const page = Array.isArray(data.messages) ? data.messages : []
+      state.usageMessages = reset ? page : state.usageMessages.concat(page)
+      state.usageMessagesMore = !!data.hasMore
+      state.usageMessagesBefore = data.nextBefore || (page.length ? page[page.length - 1].firstTs : null)
+      state.usageMessagesLoaded = true
+      state.usageMessageTotal = Number(data.messageTotal || state.usageMessageTotal || 0)
+    } catch (err) {
+      if (reset) {
+        state.usageMessages = []
+        state.usageMessagesError = err.message
+        state.usageMessagesLoaded = true
+      }
+    } finally {
+      state.usageMessagesLoading = false
+      // 只更新明细列表和计数，避免每次翻页都重绘统计卡片与图表
+      updateUsageMessageHead()
+      renderUsageMessages()
+    }
   }
 
   function renderUsageMessages() {
@@ -3866,7 +4076,15 @@
         : '正在加载消息明细…')
       return
     }
-    const messages = Array.isArray(data.messages) ? data.messages : []
+    if (state.usageMessagesError) {
+      usageEmpty(el.usageMessages, `对话明细加载失败：${state.usageMessagesError}`)
+      return
+    }
+    if (!state.usageMessagesLoaded) {
+      usageEmpty(el.usageMessages, '正在加载对话明细…')
+      return
+    }
+    const messages = state.usageMessages
     if (!messages.length) {
       usageEmpty(el.usageMessages, '这个时间段还没有消息')
       return
@@ -3947,6 +4165,12 @@
         card.appendChild(detail)
       }
       el.usageMessages.appendChild(card)
+    }
+    if (state.usageMessagesMore || state.usageMessagesLoading) {
+      const hint = document.createElement('div')
+      hint.className = 'usage-more-hint'
+      hint.textContent = state.usageMessagesLoading ? '正在加载更早…' : '上滑加载更早的对话'
+      el.usageMessages.appendChild(hint)
     }
   }
 
@@ -4538,6 +4762,8 @@
     showLogin('')
     nativePageReady()
   } else {
+    const cached = restoreSessionCache()
+    if (cached) setStatus('连接中…（本地缓存）', '')
     connect()
     loadMe()
     loadPersona()
