@@ -18,7 +18,7 @@ const GRACE_MS = 15 * 60 * 1000
 
 /** 提醒窗口：[startAt - remindBefore, startAt + 15 分钟] */
 export function isScheduleDue(item, now = Date.now()) {
-  if (!item || item.reminderSentAt) return false
+  if (!item || item.status !== 'pending' || item.reminderSentAt) return false
   const start = new Date(item.startAt).getTime()
   if (Number.isNaN(start)) return false
   const remindAt = start - (item.remindBeforeMinutes || 0) * 60_000
