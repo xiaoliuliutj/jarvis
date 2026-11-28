@@ -68,6 +68,7 @@
     usageRequestKey: '',
     usageFetchedAt: 0,
     context: null,
+    compactRunning: false,
     editingModelId: null,
     updateInfo: null,
     approvals: new Map(),
@@ -496,6 +497,7 @@
       hint.className = 'context-popover-row'
       hint.textContent = '等待下一次回复后显示上下文明细'
       el.contextPopover.appendChild(hint)
+      appendContextActions()
       return
     }
 
@@ -561,6 +563,58 @@
       rowEl.appendChild(name)
       rowEl.appendChild(value)
       el.contextPopover.appendChild(rowEl)
+    }
+    appendContextActions()
+  }
+
+  /** 上下文弹层底部：主动压缩按钮（下一回合生效，不删除聊天记录）。 */
+  function appendContextActions() {
+    if (!el.contextPopover) return
+    const divider = document.createElement('div')
+    divider.className = 'context-popover-divider'
+    el.contextPopover.appendChild(divider)
+    const hint = document.createElement('div')
+    hint.className = 'context-popover-hint'
+    hint.textContent = '压缩后下一轮对话生效，不会删除聊天记录'
+    el.contextPopover.appendChild(hint)
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'context-compact-btn'
+    button.disabled = !!state.compactRunning
+    button.textContent = state.compactRunning ? '正在压缩上下文…' : '压缩上下文'
+    button.addEventListener('click', event => {
+      event.stopPropagation()
+      requestContextCompact(button)
+    })
+    el.contextPopover.appendChild(button)
+  }
+
+  async function requestContextCompact(button) {
+    if (state.compactRunning) return
+    if (state.runStatus.raw) {
+      toast('等这一轮回复完再压缩喵～')
+      return
+    }
+    state.compactRunning = true
+    button.disabled = true
+    button.textContent = '正在压缩上下文…'
+    try {
+      const data = await api('/api/v1/session/compact', { method: 'POST', body: {} })
+      if (data.partial) {
+        toast('旧消息比较多，已经压了一部分，再点一次继续喵')
+      } else {
+        toast('压缩完成喵～下一轮对话会带着摘要继续')
+        el.contextPopover.classList.add('hidden')
+        await refreshContext()
+      }
+    } catch (err) {
+      toast(`压缩失败：${err.message}`)
+    } finally {
+      state.compactRunning = false
+      if (button.isConnected) {
+        button.disabled = false
+        button.textContent = '压缩上下文'
+      }
     }
   }
 
